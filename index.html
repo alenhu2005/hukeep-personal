@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f4f1e8" />
+    <meta name="description" content="簡單、離線優先的個人記帳工作台" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <link rel="manifest" href="./manifest.json" />
+    <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
+    <title>小帳｜個人記帳</title>
+    <script type="module" crossorigin src="/hukeep-personal/assets/index-D9Yjbb67.js"></script>
+    <link rel="stylesheet" crossorigin href="/hukeep-personal/assets/index-h73Ckb1w.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#app-main">跳到主要內容</a>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#overview" aria-label="小帳首頁">
+          <span class="brand-mark" aria-hidden="true">小</span>
+          <span>
+            <strong>小帳</strong>
+            <small>只屬於我的錢包地圖</small>
+          </span>
+        </a>
+        <div class="topbar-actions">
+          <span id="month-title" class="month-chip"></span>
+          <button id="theme-toggle" class="icon-button" type="button" aria-label="切換深淺色主題"></button>
+          <button id="tools-button" class="icon-button" type="button" aria-label="備份與設定"></button>
+        </div>
+      </header>
+
+      <main id="app-main" tabindex="-1"></main>
+
+      <button id="quick-add-button" class="quick-add" type="button" aria-label="快速記一筆">
+        <span aria-hidden="true">+</span>
+        <span>快速記一筆</span>
+      </button>
+
+      <nav class="bottom-nav" aria-label="主要導覽">
+        <button type="button" data-nav-view="overview" aria-label="總覽">
+          <span class="nav-icon" data-icon="home" aria-hidden="true"></span>
+          <span>總覽</span>
+        </button>
+        <button type="button" data-nav-view="history" aria-label="紀錄">
+          <span class="nav-icon" data-icon="list" aria-hidden="true"></span>
+          <span>紀錄</span>
+        </button>
+        <button type="button" data-nav-view="budgets" aria-label="預算">
+          <span class="nav-icon" data-icon="target" aria-hidden="true"></span>
+          <span>預算</span>
+        </button>
+        <button type="button" data-nav-view="insights" aria-label="趨勢">
+          <span class="nav-icon" data-icon="chart" aria-hidden="true"></span>
+          <span>趨勢</span>
+        </button>
+      </nav>
+    </div>
+
+    <dialog id="transaction-dialog" class="app-dialog">
+      <form id="transaction-form" novalidate>
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">新增流水</p>
+            <h2 id="transaction-dialog-title">記一筆</h2>
+          </div>
+          <button class="icon-button dialog-close" type="button" aria-label="關閉">×</button>
+        </div>
+
+        <input id="transaction-id" name="id" type="hidden" />
+        <input id="transaction-type" name="type" type="hidden" value="expense" />
+        <div class="type-switch" role="group" aria-label="交易類型">
+          <button type="button" data-transaction-type="expense" aria-pressed="true">支出</button>
+          <button type="button" data-transaction-type="income" aria-pressed="false">收入</button>
+          <button type="button" data-transaction-type="transfer" aria-pressed="false">轉帳</button>
+        </div>
+
+        <details id="voice-entry" class="voice-entry">
+          <summary><span aria-hidden="true">●</span> 口語記帳</summary>
+          <div class="voice-entry-body">
+            <div class="voice-input-row">
+              <input id="voice-transcript" type="text" maxlength="240" aria-label="口語記帳內容" placeholder="例如：昨天搭高鐵 1490 元刷卡" />
+              <button id="voice-listen-button" class="secondary-button" type="button">開始說話</button>
+              <button id="voice-parse-button" class="secondary-button" type="button">解析</button>
+            </div>
+            <p id="voice-status" role="status">會先產生可編輯草稿，不會直接儲存。支援時優先使用裝置內辨識；其他瀏覽器可能使用其線上語音服務。</p>
+          </div>
+        </details>
+
+        <label class="amount-field" for="transaction-amount">
+          <span>金額</span>
+          <span class="amount-input-wrap">
+            <small>NT$</small>
+            <input id="transaction-amount" name="amount" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required />
+          </span>
+        </label>
+
+        <div class="form-grid">
+          <div id="classification-status" class="classification-status form-grid-wide" role="status">
+            <span aria-hidden="true">✦</span>
+            <div><strong>背景智慧分類</strong><small>新增時不顯示分類；儲存後若發現有誤，可到紀錄中編輯。</small></div>
+          </div>
+          <label id="category-field">
+            <span>大分類</span>
+            <select id="transaction-category" name="category" required></select>
+          </label>
+          <label id="subcategory-field">
+            <span>小分類</span>
+            <select id="transaction-subcategory" name="subcategory" required></select>
+          </label>
+          <fieldset id="account-field" class="account-choice-field form-grid-wide">
+            <legend>帳戶</legend>
+            <select id="transaction-account" class="visually-hidden" name="account" tabindex="-1" aria-hidden="true" required></select>
+            <div class="account-choice-buttons" data-account-for="transaction-account"></div>
+          </fieldset>
+          <fieldset id="to-account-field" class="account-choice-field form-grid-wide" hidden>
+            <legend>目的帳戶</legend>
+            <select id="transaction-to-account" class="visually-hidden" name="toAccount" tabindex="-1" aria-hidden="true"></select>
+            <div class="account-choice-buttons" data-account-for="transaction-to-account"></div>
+          </fieldset>
+          <label>
+            <span>日期</span>
+            <input id="transaction-date" name="date" type="date" required />
+          </label>
+          <label class="form-grid-wide">
+            <span>備註</span>
+            <input id="transaction-note" name="note" type="text" maxlength="240" placeholder="例如：巷口的午餐" />
+          </label>
+        </div>
+        <p id="transaction-error" class="form-error" role="alert" hidden></p>
+        <button class="primary-button dialog-submit" type="submit">儲存這筆</button>
+      </form>
+    </dialog>
+
+    <dialog id="tools-dialog" class="app-dialog tools-dialog">
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow">本機工具</p>
+          <h2>備份與資料</h2>
+        </div>
+        <button class="icon-button dialog-close" type="button" aria-label="關閉">×</button>
+      </div>
+      <p class="tools-intro">資料只存在這台裝置。建議定期匯出 JSON，換機時就能完整還原。</p>
+      <div class="tool-actions">
+        <button id="smart-import-button" class="tool-action featured" type="button">
+          <strong>智慧匯入</strong><span>發票載具 · 截圖 OCR · AI 細分類</span>
+        </button>
+        <button id="export-json" class="tool-action" type="button">
+          <strong>匯出完整備份</strong><span>JSON · 可還原</span>
+        </button>
+        <button id="export-csv" class="tool-action" type="button">
+          <strong>匯出交易明細</strong><span>CSV · 可用試算表開啟</span>
+        </button>
+        <label class="tool-action file-action" for="import-json">
+          <strong>匯入備份</strong><span>JSON · 會先請你確認</span>
+          <input id="import-json" type="file" accept="application/json,.json" />
+        </label>
+      </div>
+      <div class="privacy-note">
+        <span aria-hidden="true">●</span>
+        <p><strong>離線優先</strong><br />帳本只存在裝置；只有你主動同步時才連到私人代理。</p>
+      </div>
+    </dialog>
+
+    <dialog id="smart-import-dialog" class="app-dialog smart-import-dialog">
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow">不用重複輸入</p>
+          <h2>智慧匯入</h2>
+        </div>
+        <button class="icon-button dialog-close" type="button" aria-label="關閉">×</button>
+      </div>
+
+      <div class="smart-import-grid">
+        <section class="import-card" aria-labelledby="ocr-title">
+          <div class="import-card-heading">
+            <span class="import-step">01</span>
+            <div><h3 id="ocr-title">截圖自動記帳</h3><p>圖片只在這台裝置 OCR，不會上傳。</p></div>
+          </div>
+          <label class="image-drop" for="receipt-image">
+            <strong>選擇發票或付款截圖</strong>
+            <span>JPG、PNG、WebP · 最大 12 MB</span>
+            <input id="receipt-image" type="file" accept="image/jpeg,image/png,image/webp,image/bmp" />
+          </label>
+          <p id="ocr-progress" class="import-progress" role="status">選擇圖片後，會先辨識再讓你確認。</p>
+
+          <form id="ocr-draft-form" class="import-draft" hidden>
+            <div class="classification-pill"><span aria-hidden="true">✦</span><span id="ocr-classification-hint">已自動分類</span></div>
+            <div class="import-form-grid">
+              <label class="wide"><span>商家</span><input name="merchant" maxlength="120" required /></label>
+              <label><span>金額</span><input name="amount" type="number" min="1" step="1" required /></label>
+              <label><span>日期</span><input name="date" type="date" required /></label>
+              <label><span>大分類</span><select name="category" required></select></label>
+              <label><span>小分類</span><select name="subcategory" required></select></label>
+              <fieldset class="account-choice-field wide">
+                <legend>帳戶</legend>
+                <select id="ocr-account" class="visually-hidden" name="account" tabindex="-1" aria-hidden="true" required></select>
+                <div class="account-choice-buttons compact" data-account-for="ocr-account"></div>
+              </fieldset>
+              <label><span>發票號碼</span><input name="invoiceNumber" maxlength="12" placeholder="AB12345678" /></label>
+            </div>
+            <details class="ocr-raw"><summary>查看 OCR 原文</summary><textarea name="rawText" rows="5"></textarea></details>
+            <div class="import-form-actions">
+              <button id="ocr-ai-classify" class="secondary-button" type="button">用 AI 再分類</button>
+              <button class="primary-button" type="submit">確認記帳</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="import-card" aria-labelledby="carrier-title">
+          <div class="import-card-heading">
+            <span class="import-step">02</span>
+            <div><h3 id="carrier-title">財政部載具同步</h3><p>載具資料會補齊品項，並自動合併重複 OCR。</p></div>
+          </div>
+          <form id="carrier-form" class="carrier-form">
+            <label class="wide"><span>私人代理網址</span><input name="endpoint" type="url" placeholder="https://script.google.com/macros/s/.../exec" required /></label>
+            <label class="wide"><span>代理通行碼</span><input name="proxyToken" type="password" autocomplete="off" required /><small>只保留在此分頁記憶體，重新整理即清除。</small></label>
+            <label><span>手機條碼</span><input name="cardNo" maxlength="40" autocomplete="username" placeholder="/ABC+123" required /></label>
+            <label><span>載具驗證碼</span><input name="cardEncrypt" type="password" maxlength="100" autocomplete="current-password" required /></label>
+            <label><span>同步月份</span><input name="month" type="month" required /></label>
+            <fieldset class="account-choice-field wide">
+              <legend>記入帳戶</legend>
+              <select id="carrier-account" class="visually-hidden" name="account" tabindex="-1" aria-hidden="true" required></select>
+              <div class="account-choice-buttons compact" data-account-for="carrier-account"></div>
+            </fieldset>
+            <button id="carrier-sync-button" class="primary-button wide" type="submit">同步並自動去重</button>
+          </form>
+          <p id="carrier-progress" class="import-progress" role="status">需先部署自己的安全代理；App 不保存載具驗證碼。</p>
+          <div class="dedupe-note">
+            <strong>自動去重順序</strong>
+            <span>發票號碼 → 日期＋金額＋商家。載具命中 OCR 時，以載具明細取代。</span>
+          </div>
+        </section>
+      </div>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  </body>
+</html>
