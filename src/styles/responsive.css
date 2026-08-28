@@ -1,0 +1,238 @@
+@media (max-width: 980px) {
+  .overview-grid,
+  .lower-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .lower-grid .recent-panel {
+    grid-row: 1;
+  }
+
+  .quick-add {
+    right: 24px;
+  }
+}
+
+@media (max-width: 760px) {
+  .topbar,
+  #app-main {
+    width: min(calc(100% - 28px), var(--content-width));
+  }
+
+  .topbar {
+    min-height: 64px;
+  }
+
+  .brand small,
+  .month-chip {
+    display: none;
+  }
+
+  #app-main {
+    padding-top: 38px;
+  }
+
+  .hero-heading,
+  .page-heading {
+    align-items: flex-start;
+    margin-bottom: 24px;
+  }
+
+  .hero-heading h1,
+  .page-heading h1 {
+    font-size: clamp(32px, 10vw, 44px);
+  }
+
+  .hero-heading h1 span {
+    display: block;
+  }
+
+  .cashflow-card {
+    grid-template-columns: 1fr;
+    gap: 22px;
+    padding: 26px 24px;
+  }
+
+  .cashflow-rail {
+    align-self: auto;
+  }
+
+  .cashflow-metrics {
+    grid-column: auto;
+  }
+
+  .cashflow-metrics > div + div {
+    padding-left: 14px;
+  }
+
+  .account-list {
+    grid-template-columns: 1fr;
+  }
+
+  .account-item {
+    padding: 12px;
+  }
+
+  .filter-bar {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .search-field {
+    grid-column: 1 / -1;
+  }
+
+  .budgets-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .insight-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .insight-card {
+    min-height: 130px;
+  }
+
+  .bottom-nav {
+    right: 14px;
+    left: 14px;
+    justify-content: space-around;
+    transform: none;
+  }
+
+  .bottom-nav button {
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+    padding: 5px 4px;
+  }
+
+  .quick-add {
+    right: 20px;
+    bottom: calc(max(16px, env(safe-area-inset-bottom)) + 69px);
+    width: 54px;
+    height: 54px;
+    min-height: 54px;
+    padding: 0;
+    justify-content: center;
+    border-radius: 18px;
+  }
+
+  .quick-add > span:first-child {
+    width: auto;
+    height: auto;
+    background: transparent;
+    font-size: 30px;
+  }
+
+  .quick-add > span:last-child {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .row-actions {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 540px) {
+  .hero-heading {
+    display: grid;
+  }
+
+  .month-stepper {
+    justify-self: start;
+  }
+
+  .panel {
+    padding: 20px 17px;
+  }
+
+  .cashflow-main strong {
+    font-size: 37px;
+  }
+
+  .cashflow-metrics {
+    grid-template-columns: 1fr 1fr;
+    gap: 15px 0;
+  }
+
+  .cashflow-metrics > div + div {
+    border-left: 0;
+  }
+
+  .cashflow-metrics > div:nth-child(2) {
+    padding-left: 16px;
+    border-left: 1px solid var(--line);
+  }
+
+  .cashflow-metrics > div:nth-child(3) {
+    grid-column: 1 / -1;
+    padding: 13px 0 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .transaction-row {
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+    gap: 9px;
+  }
+
+  .row-actions {
+    grid-column: 2 / -1;
+    justify-content: flex-end;
+    margin-top: -5px;
+  }
+
+  .filter-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .search-field {
+    grid-column: auto;
+  }
+
+  .trend-chart {
+    gap: 8px;
+    height: 240px;
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .form-grid-wide {
+    grid-column: auto;
+  }
+
+  .account-choice-buttons {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .app-dialog {
+    width: calc(100% - 18px);
+    padding: 22px 18px;
+    border-radius: 21px;
+  }
+
+  .amount-field input {
+    font-size: 42px;
+  }
+
+  .toast {
+    right: 14px;
+    top: 74px;
+    max-width: calc(100% - 28px);
+  }
+}
+
+@media (hover: none) {
+  .row-actions {
+    opacity: 1;
+  }
+}

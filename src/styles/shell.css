@@ -1,0 +1,374 @@
+.bottom-nav {
+  position: fixed;
+  right: 50%;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: 30;
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(18px) saturate(140%);
+  transform: translateX(50%);
+}
+
+.bottom-nav button {
+  display: flex;
+  min-width: 74px;
+  min-height: 50px;
+  padding: 6px 14px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.bottom-nav button.active {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.nav-icon {
+  display: grid;
+  place-items: center;
+}
+
+.quick-add {
+  position: fixed;
+  right: max(24px, calc((100vw - var(--content-width)) / 2));
+  bottom: max(22px, calc(env(safe-area-inset-bottom) + 6px));
+  z-index: 31;
+  display: flex;
+  min-height: 50px;
+  padding: 0 18px 0 8px;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--surface);
+  box-shadow: var(--shadow-lg);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.quick-add > span:first-child {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--primary);
+  color: var(--surface);
+  font-size: 23px;
+  font-weight: 400;
+}
+
+.app-dialog {
+  width: min(580px, calc(100% - 28px));
+  max-height: min(760px, calc(100vh - 28px));
+  padding: 27px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow-lg);
+}
+
+.app-dialog::backdrop {
+  background: rgb(16 20 17 / 55%);
+  backdrop-filter: blur(4px);
+}
+
+.dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 22px;
+}
+
+.dialog-header h2 {
+  margin: 0;
+  font-family: ui-serif, Georgia, serif;
+  font-size: 29px;
+}
+
+.dialog-close {
+  flex: 0 0 auto;
+  font-size: 22px;
+}
+
+.type-switch {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 4px;
+  border-radius: 13px;
+  background: var(--surface-muted);
+}
+
+.type-switch button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.type-switch button.active {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 7%);
+}
+
+.amount-field {
+  display: block;
+  margin: 23px 0 18px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.amount-input-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.amount-input-wrap small {
+  color: var(--muted);
+  font-size: 17px;
+}
+
+.amount-field input {
+  min-width: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font-family: ui-serif, Georgia, serif;
+  font-size: 48px;
+  font-weight: 650;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 15px;
+}
+
+.form-grid label {
+  display: grid;
+  gap: 7px;
+}
+
+.form-grid-wide {
+  grid-column: 1 / -1;
+}
+
+.account-choice-field {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.account-choice-field legend {
+  margin-bottom: 7px;
+  padding: 0;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.account-choice-buttons {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.account-choice-buttons button {
+  display: grid;
+  min-width: 0;
+  min-height: 58px;
+  padding: 8px 5px;
+  place-items: center;
+  align-content: center;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 780;
+}
+
+.account-choice-buttons button:hover:not(:disabled) {
+  border-color: var(--primary);
+}
+
+.account-choice-buttons button[aria-pressed='true'] {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 22%, transparent);
+}
+
+.account-choice-buttons button:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.account-choice-icon {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--surface-muted);
+  color: inherit;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.account-choice-buttons button[aria-pressed='true'] .account-choice-icon {
+  background: var(--surface);
+}
+
+.account-choice-buttons.compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.account-choice-buttons.compact button {
+  min-height: 50px;
+}
+
+.form-error {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: var(--expense-soft);
+  color: var(--expense);
+  font-size: 12px;
+}
+
+.dialog-submit {
+  width: 100%;
+  margin-top: 20px;
+}
+
+.tools-intro {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.tool-actions {
+  display: grid;
+  gap: 9px;
+}
+
+.tool-action {
+  display: flex;
+  min-height: 66px;
+  padding: 13px 15px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-strong);
+  text-align: left;
+}
+
+.tool-action:hover {
+  border-color: var(--primary);
+}
+
+.tool-action strong {
+  margin-bottom: 4px;
+  font-size: 13px;
+}
+
+.tool-action span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.file-action {
+  position: relative;
+}
+
+.file-action input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.privacy-note {
+  display: flex;
+  gap: 11px;
+  margin-top: 18px;
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.privacy-note > span {
+  font-size: 8px;
+}
+
+.privacy-note p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.toast {
+  position: fixed;
+  right: 24px;
+  top: 88px;
+  z-index: 80;
+  display: flex;
+  max-width: min(400px, calc(100% - 48px));
+  min-height: 46px;
+  padding: 11px 14px;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--ink);
+  color: var(--surface);
+  box-shadow: var(--shadow-lg);
+  font-size: 12px;
+}
+
+.toast.error {
+  background: #7e3427;
+  color: white;
+}
+
+.toast button {
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--primary);
+  color: var(--surface);
+  font-weight: 800;
+}

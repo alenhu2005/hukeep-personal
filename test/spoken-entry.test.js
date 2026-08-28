@@ -1,0 +1,94 @@
+import { describe, expect, it } from 'vitest';
+import { parseSpokenTransaction } from '../src/domain/spoken-entry.js';
+
+const today = '2026-08-29';
+
+describe('口語記帳解析', () => {
+  it('從自然口語取得今日支出、金額、信用卡與詳細分類', () => {
+    expect(
+      parseSpokenTransaction('今天午餐吃鼎王麻辣鍋 680 元，刷卡', { today }),
+    ).toMatchObject({
+      type: 'expense',
+      amount: 680,
+      date: '2026-08-29',
+      account: 'sinopac',
+      category: '飲食',
+      subcategory: '火鍋',
+    });
+  });
+
+  it('理解昨天與高鐵分類', () => {
+    expect(
+      parseSpokenTransaction('昨天搭高鐵 1490 塊用信用卡', { today }),
+    ).toMatchObject({
+      type: 'expense',
+      amount: 1490,
+      date: '2026-08-28',
+      account: 'sinopac',
+      category: '交通',
+      subcategory: '高鐵火車',
+    });
+  });
+
+  it('理解收入與入帳帳戶', () => {
+    expect(parseSpokenTransaction('今天薪水 50000 元入台銀', { today })).toMatchObject({
+      type: 'income',
+      amount: 50000,
+      date: '2026-08-29',
+      account: 'bot',
+      category: '薪資',
+      subcategory: '固定薪資',
+    });
+  });
+
+  it.each([
+    ['LINE 收到零用錢 3000 元', 'line'],
+    ['永豐刷卡吃火鍋 680 元', 'sinopac'],
+    ['郵局收到家教費 1200 元', 'post'],
+    ['現金買咖啡 65 元', 'cash'],
+  ])('理解客製帳戶 %#', (text, account) => {
+    expect(parseSpokenTransaction(text, { today }).account).toBe(account);
+  });
+
+  it.each([
+    ['收到零用錢 3000 元存銀行', '零用與贈與', '零用錢'],
+    ['今天家教費 1200 元現金', '接案', '家教'],
+    ['發票中獎 1000 元入帳', '中獎', '發票中獎'],
+  ])('理解常見收入方案 %#', (text, category, subcategory) => {
+    expect(parseSpokenTransaction(text, { today })).toMatchObject({
+      type: 'income',
+      category,
+      subcategory,
+    });
+  });
+
+  it('理解常見中文金額', () => {
+    expect(parseSpokenTransaction('剛剛買咖啡六十五元付現', { today })).toMatchObject({
+      amount: 65,
+      account: 'cash',
+      category: '飲食',
+      subcategory: '咖啡',
+    });
+    expect(parseSpokenTransaction('收到獎金五萬元進銀行', { today }).amount).toBe(50000);
+  });
+
+  it('理解明確月日與帳戶轉帳', () => {
+    expect(parseSpokenTransaction('8月15日從永豐轉 3000 元到郵局', { today })).toMatchObject({
+      type: 'transfer',
+      amount: 3000,
+      date: '2026-08-15',
+      account: 'sinopac',
+      toAccount: 'post',
+      category: null,
+      subcategory: null,
+    });
+  });
+
+  it('資訊不足仍回傳可編輯草稿，不自行捏造金額', () => {
+    const result = parseSpokenTransaction('今天去一間新開的店', { today });
+
+    expect(result.amount).toBeNull();
+    expect(result.note).toBe('今天去一間新開的店');
+    expect(result.confidence).toBeLessThan(0.5);
+  });
+});
