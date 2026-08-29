@@ -52,6 +52,43 @@ async function postProxy(endpoint, payload, options = {}) {
   return envelope.data;
 }
 
+function normalizePairingCode(value) {
+  const code = cleanText(value, 20).normalize('NFKC').toUpperCase().replace(/[\s-]+/g, '');
+  if (!/^[A-HJ-NP-Z2-9]{8}$/.test(code)) throw new Error('手機綁定碼格式不正確');
+  return code;
+}
+
+export async function createDevicePairingCode(input, options = {}) {
+  const data = await postProxy(
+    input?.endpoint,
+    {
+      action: 'createDevicePairingCode',
+      proxyToken: cleanText(input?.proxyToken, 300),
+    },
+    options,
+  );
+  const code = cleanText(data?.code, 9).toUpperCase();
+  const expiresAt = cleanText(data?.expiresAt, 40);
+  if (!/^[A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4}$/.test(code) || !Number.isFinite(Date.parse(expiresAt))) {
+    throw new Error('手機綁定碼回傳格式不正確');
+  }
+  return { code, expiresAt };
+}
+
+export async function claimDevicePairingCode(input, options = {}) {
+  const data = await postProxy(
+    input?.endpoint,
+    {
+      action: 'claimDeviceBinding',
+      code: normalizePairingCode(input?.code),
+    },
+    options,
+  );
+  const proxyToken = cleanText(data?.proxyToken, 300);
+  if (!proxyToken) throw new Error('手機綁定資料回傳不完整');
+  return { proxyToken };
+}
+
 export async function classifyExpenseWithAi(input, options = {}) {
   const fallback = input?.fallback;
   const type = input?.type === 'income' ? 'income' : 'expense';

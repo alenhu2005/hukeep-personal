@@ -345,8 +345,39 @@ test('手機掃描綁定連結後可直接連線，並會清除網址中的綁�
 
   await page.getByRole('button', { name: '備份與設定' }).click();
   await expect(page.getByText('這台裝置已安全綁定 Sheet')).toBeVisible();
+  await page.route('https://proxy.example/mobile', async route => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        data: { code: 'ABCD-EFGH', expiresAt: '2026-08-29T16:30:00.000Z' },
+      }),
+    });
+  });
   await page.getByRole('button', { name: '綁定手機' }).click();
   await expect(page.locator('#device-binding-qr')).toHaveAttribute('src', /^data:image\/png;base64,/);
+  await expect(page.getByText('ABCD-EFGH', { exact: true })).toBeVisible();
+});
+
+test('手機可直接輸入一次性短碼完成綁定', async ({ page }) => {
+  let receivedBody;
+  await page.route('https://script.google.com/**', async route => {
+    receivedBody = route.request().postDataJSON();
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        data: { proxyToken: 'paired-mobile-value' },
+      }),
+    });
+  });
+
+  await page.getByRole('button', { name: '備份與設定' }).click();
+  await page.getByLabel('手機綁定碼').fill('abcd-efgh');
+  await page.getByRole('button', { name: '使用綁定碼' }).click();
+
+  await expect(page.getByText('這台裝置已安全綁定 Sheet')).toBeVisible();
+  expect(receivedBody).toEqual({ action: 'claimDeviceBinding', code: 'ABCDEFGH' });
 });
 
 test('可設定帳戶初始金額並安全同步到 Google Sheet', async ({ page }) => {
@@ -395,6 +426,88 @@ test('可設定帳戶初始金額並安全同步到 Google Sheet', async ({ page
       budgets: [],
     },
   });
+});
+
+test('Sheet 刪除既有交易後，從 Sheet 讀取會同步移除網頁資料', async ({ page }) => {
+  await page.route('https://proxy.example/authoritative', async route => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        data: {
+          schemaVersion: 1,
+          accounts: [
+            { id: 'cash', name: '現金', icon: '現', openingBalance: 0 },
+            { id: 'line', name: 'LINE', icon: 'L', openingBalance: 0 },
+            { id: 'sinopac', name: '永豐', icon: '永', openingBalance: 0 },
+            { id: 'bot', name: '台銀', icon: '台', openingBalance: 0 },
+            { id: 'post', name: '郵局', icon: '郵', openingBalance: 0 },
+          ],
+          transactions: [
+            {
+              id: 'sheet-kept',
+              type: 'expense',
+              name: 'Sheet 保留資料',
+              amount: 80,
+              category: '飲食',
+              subcategory: '早餐',
+              account: 'cash',
+              date: '2026-08-29',
+              source: 'manual',
+              createdAt: '2026-08-29T01:00:00.000Z',
+              updatedAt: '2026-08-29T01:00:00.000Z',
+            },
+          ],
+          budgets: [],
+        },
+      }),
+    });
+  });
+  await page.evaluate(() => {
+    const transaction = (id, name, amount) => ({
+      id,
+      type: 'expense',
+      name,
+      amount,
+      category: '飲食',
+      subcategory: '早餐',
+      account: 'cash',
+      date: '2026-08-29',
+      source: 'manual',
+      createdAt: '2026-08-29T01:00:00.000Z',
+      updatedAt: '2026-08-29T01:00:00.000Z',
+    });
+    localStorage.setItem('hukeep_personal_state_v1', JSON.stringify({
+      schemaVersion: 1,
+      accounts: [
+        { id: 'cash', name: '現金', icon: '現', openingBalance: 0 },
+        { id: 'line', name: 'LINE', icon: 'L', openingBalance: 0 },
+        { id: 'sinopac', name: '永豐', icon: '永', openingBalance: 0 },
+        { id: 'bot', name: '台銀', icon: '台', openingBalance: 0 },
+        { id: 'post', name: '郵局', icon: '郵', openingBalance: 0 },
+      ],
+      transactions: [
+        transaction('sheet-kept', 'Sheet 保留資料', 80),
+        transaction('deleted-in-sheet', 'Sheet 已刪資料', 120),
+      ],
+      budgets: [],
+      preferences: { theme: 'system' },
+    }));
+    localStorage.setItem('hukeep_device_binding_endpoint_v1', 'https://proxy.example/authoritative');
+    localStorage.setItem('hukeep_device_binding_token_v1', 'session-token');
+  });
+  await page.reload();
+  await expect(page.getByText('Sheet 已刪資料')).toBeVisible();
+
+  await page.getByRole('button', { name: '備份與設定' }).click();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: '從 Sheet 讀取' }).click();
+
+  await expect(page.getByText('讀取完成：5 個帳戶、1 筆交易、0 筆預算。')).toBeVisible();
+  const ids = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('hukeep_personal_state_v1')).transactions.map(item => item.id),
+  );
+  expect(ids).toEqual(['sheet-kept']);
 });
 
 test('PWA 在正式 build 路徑註冊獨立 service worker', async ({ page }) => {

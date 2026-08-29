@@ -56,7 +56,14 @@ function doPost(event) {
     if (rawBody.length > 524288) throw new Error('請求內容過大');
     var body = JSON.parse(rawBody);
     if (body.action !== 'syncLedgerState' && rawBody.length > 65536) throw new Error('請求內容過大');
+    if (body.action === 'claimDeviceBinding') {
+      enforcePairingClaimRateLimit_();
+      return jsonOutput_({ ok: true, data: claimDeviceBinding_(body.code) });
+    }
     authorize_(body.proxyToken);
+    if (body.action === 'createDevicePairingCode') {
+      return jsonOutput_({ ok: true, data: createDevicePairingCode_() });
+    }
     if (body.action === 'syncCarrierInvoices') {
       return jsonOutput_({ ok: true, data: syncCarrierInvoices_(body) });
     }
@@ -87,6 +94,77 @@ function doPost(event) {
 function authorize_(providedToken) {
   var expectedToken = requiredProperty_('PROXY_TOKEN');
   if (!providedToken || String(providedToken) !== expectedToken) throw new Error('代理通行碼不正確');
+}
+
+function pairingCodeHash_(code) {
+  var bytes = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    String(code),
+    Utilities.Charset.UTF_8
+  );
+  return Utilities.base64EncodeWebSafe(bytes);
+}
+
+function createDevicePairingCode_() {
+  var alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  var entropy = Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    Utilities.getUuid() + ':' + new Date().toISOString() + ':' + Math.random(),
+    Utilities.Charset.UTF_8
+  );
+  var code = '';
+  for (var index = 0; index < 8; index += 1) {
+    code += alphabet.charAt((entropy[index] + 256) % alphabet.length);
+  }
+  var expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  var properties = PropertiesService.getScriptProperties();
+  var lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    properties.setProperty('DEVICE_PAIRING_CODE_HASH', pairingCodeHash_(code));
+    properties.setProperty('DEVICE_PAIRING_EXPIRES_AT', expiresAt);
+  } finally {
+    lock.releaseLock();
+  }
+  return { code: code.slice(0, 4) + '-' + code.slice(4), expiresAt: expiresAt };
+}
+
+function claimDeviceBinding_(rawCode) {
+  var code = boundedText_(rawCode, 20).toUpperCase().replace(/[\s-]+/g, '');
+  if (!/^[A-HJ-NP-Z2-9]{8}$/.test(code)) throw new Error('綁定碼無效或已過期');
+  var properties = PropertiesService.getScriptProperties();
+  var lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    var expectedHash = properties.getProperty('DEVICE_PAIRING_CODE_HASH') || '';
+    var expiresAt = Date.parse(properties.getProperty('DEVICE_PAIRING_EXPIRES_AT') || '');
+    if (!expectedHash || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      properties.deleteProperty('DEVICE_PAIRING_CODE_HASH');
+      properties.deleteProperty('DEVICE_PAIRING_EXPIRES_AT');
+      throw new Error('綁定碼無效或已過期');
+    }
+    if (pairingCodeHash_(code) !== expectedHash) throw new Error('綁定碼無效或已過期');
+    properties.deleteProperty('DEVICE_PAIRING_CODE_HASH');
+    properties.deleteProperty('DEVICE_PAIRING_EXPIRES_AT');
+    return { proxyToken: requiredProperty_('PROXY_TOKEN') };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function enforcePairingClaimRateLimit_() {
+  var bucket = Utilities.formatDate(new Date(), 'GMT', 'yyyyMMddHHmm');
+  var key = 'pairing-claim:' + bucket;
+  var lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    var cache = CacheService.getScriptCache();
+    var count = Number(cache.get(key) || 0);
+    if (count >= 30) throw new Error('綁定嘗試過於頻繁，請稍後再試');
+    cache.put(key, String(count + 1), 120);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function requiredProperty_(name) {

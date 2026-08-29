@@ -10,7 +10,10 @@ import {
   getSubcategories,
 } from './domain/category-taxonomy.js';
 import { parseSpokenTransaction } from './domain/spoken-entry.js';
-import { mergeLedgerStates } from './domain/ledger-sync.js';
+import {
+  reconcileLedgerFromSheet,
+  updatePendingSheetChanges,
+} from './domain/ledger-sync.js';
 import {
   ValidationError,
   createTransaction,
@@ -23,6 +26,8 @@ import { hydrateIcons, icon } from './icons.js';
 import { createLedgerRepository } from './storage/ledger-repository.js';
 import { createSmartImportController } from './smart-import-controller.js';
 import {
+  claimDevicePairingCode,
+  createDevicePairingCode,
   enqueueSpokenEntry,
   loadLedgerStateFromSheet,
   syncLedgerStateToSheet,
@@ -35,6 +40,7 @@ import {
 import { renderView } from './views.js';
 
 const LAST_SHEET_SYNC_KEY = 'hukeep_last_sheet_sync_at';
+const PENDING_SHEET_CHANGES_KEY = 'hukeep_pending_sheet_changes_v1';
 const BACKGROUND_PULL_INTERVAL_MS = 5 * 60 * 1000;
 const RESUME_PULL_THRESHOLD_MS = 60 * 1000;
 
@@ -138,6 +144,7 @@ export function createApp() {
       ? '這台裝置已安全綁定 Sheet，現在可直接同步。'
       : '這台裝置尚未完成安全綁定。';
     document.querySelector('#device-binding-share').hidden = !binding.bound;
+    document.querySelector('#device-pairing-claim').hidden = binding.bound;
   }
 
   async function openDeviceBindingDialog() {
@@ -146,15 +153,47 @@ export function createApp() {
       showToast('這台裝置尚未綁定 Sheet，無法產生手機 QR。', 'error');
       return;
     }
-    const payload = createDeviceBindingPayload(credentials);
-    const appUrl = new URL(import.meta.env.BASE_URL, location.origin);
-    deviceBindingLink = `${appUrl.href}#bind=${payload}`;
-    document.querySelector('#device-binding-qr').src = await QRCode.toDataURL(deviceBindingLink, {
-      errorCorrectionLevel: 'M',
-      margin: 2,
-      width: 640,
-    });
-    document.querySelector('#device-binding-dialog').showModal();
+    const codeElement = document.querySelector('#device-binding-code');
+    codeElement.textContent = '正在產生…';
+    try {
+      const pairing = await createDevicePairingCode(credentials);
+      const payload = createDeviceBindingPayload(credentials);
+      const appUrl = new URL(import.meta.env.BASE_URL, location.origin);
+      deviceBindingLink = `${appUrl.href}#bind=${payload}`;
+      document.querySelector('#device-binding-qr').src = await QRCode.toDataURL(deviceBindingLink, {
+        errorCorrectionLevel: 'M',
+        margin: 2,
+        width: 640,
+      });
+      codeElement.textContent = pairing.code;
+      document.querySelector('#device-binding-code-expiry').textContent = '一次使用，10 分鐘後失效';
+      document.querySelector('#device-binding-dialog').showModal();
+    } catch (error) {
+      showToast(error.message, 'error');
+    }
+  }
+
+  async function claimDeviceBinding() {
+    const input = document.querySelector('#device-pairing-code');
+    const button = document.querySelector('#device-pairing-claim-button');
+    const endpoint = proxySession().endpoint;
+    if (!endpoint) {
+      showToast('這個版本尚未設定 Sheet 連線網址。', 'error');
+      return;
+    }
+    button.disabled = true;
+    try {
+      const result = await claimDevicePairingCode({ endpoint, code: input.value });
+      rememberProxySession(endpoint, result.proxyToken);
+      input.value = '';
+      updateDeviceBindingStatus();
+      setSyncStatus('local', { detail: '手機已綁定，可從 Sheet 讀取最新資料' });
+      showToast('手機已完成 Sheet 綁定。');
+    } catch (error) {
+      showToast(error.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
   }
 
   async function copyDeviceBindingLink() {
@@ -173,6 +212,34 @@ export function createApp() {
       return Number.isFinite(value) && value > 0 ? value : 0;
     } catch {
       return 0;
+    }
+  }
+
+  function readPendingSheetChanges() {
+    try {
+      const value = JSON.parse(localStorage.getItem(PENDING_SHEET_CHANGES_KEY) || '{}');
+      return {
+        upserts: Array.isArray(value?.upserts) ? value.upserts : [],
+        deletes: Array.isArray(value?.deletes) ? value.deletes : [],
+      };
+    } catch {
+      return { upserts: [], deletes: [] };
+    }
+  }
+
+  function writePendingSheetChanges(value) {
+    try {
+      localStorage.setItem(PENDING_SHEET_CHANGES_KEY, JSON.stringify(value));
+    } catch {
+      // Ledger storage errors are handled by persist; this journal is best effort.
+    }
+  }
+
+  function clearPendingSheetChanges() {
+    try {
+      localStorage.removeItem(PENDING_SHEET_CHANGES_KEY);
+    } catch {
+      // A stale journal is safer than discarding unsynced local changes.
     }
   }
 
@@ -210,9 +277,16 @@ export function createApp() {
     setSyncStatus('synced', { lastAt: now });
   }
 
-  function persist(nextState) {
+  function persist(nextState, options = {}) {
     try {
-      state = repository.save(nextState);
+      const previousState = state;
+      const savedState = repository.save(nextState);
+      if (!options.sheetSourced) {
+        writePendingSheetChanges(
+          updatePendingSheetChanges(readPendingSheetChanges(), previousState, savedState),
+        );
+      }
+      state = savedState;
       return true;
     } catch (error) {
       showToast('無法儲存，請先匯出備份並檢查瀏覽器空間。', 'error');
@@ -466,7 +540,7 @@ export function createApp() {
         const transactions = exists
           ? state.transactions.map(item => (item.id === transaction.id ? transaction : item))
           : [...state.transactions, transaction];
-        if (!persist({ ...state, transactions })) return;
+        if (!persist({ ...state, transactions }, { sheetSourced: true })) return;
       }
       rememberProxySession(credentials.endpoint, credentials.proxyToken);
       document.querySelector('#voice-transcript').value = '';
@@ -647,6 +721,7 @@ export function createApp() {
         return;
       }
       rememberProxySession(credentials.endpoint, credentials.proxyToken);
+      clearPendingSheetChanges();
       rememberSuccessfulSync();
       status.textContent = `同步完成：${result.accountCount} 個帳戶、${result.transactionCount} 筆交易、${result.budgetCount} 筆預算。`;
       showToast('Google Sheet 同步完成。');
@@ -665,7 +740,7 @@ export function createApp() {
     const loadButton = document.querySelector('#sheet-load-button');
     const status = document.querySelector('#sheet-sync-status');
     const credentials = proxySession();
-    if (!confirm('要從 Sheet 取回最新資料並與本機合併嗎？同一筆資料會保留較新版本。')) return;
+    if (!confirm('要從 Sheet 取回最新資料嗎？Sheet 已刪除的紀錄也會從網頁移除；尚未上傳的本機修改會保留。')) return;
     syncButton.disabled = true;
     loadButton.disabled = true;
     setSyncStatus('syncing');
@@ -675,11 +750,11 @@ export function createApp() {
       const sheetState = await loadLedgerStateFromSheet({
         ...credentials,
       });
-      const merged = mergeLedgerStates(state, sheetState);
+      const merged = reconcileLedgerFromSheet(state, sheetState, readPendingSheetChanges());
       if (!persist({
         ...merged,
         preferences: { ...merged.preferences, carrierEndpoint: credentials.endpoint },
-      })) {
+      }, { sheetSourced: true })) {
         return;
       }
       rememberProxySession(credentials.endpoint, credentials.proxyToken);
@@ -714,7 +789,8 @@ export function createApp() {
     setSyncStatus('syncing');
     try {
       const remote = await loadLedgerStateFromSheet(credentials);
-      if (!persist(mergeLedgerStates(state, remote))) return;
+      const reconciled = reconcileLedgerFromSheet(state, remote, readPendingSheetChanges());
+      if (!persist(reconciled, { sheetSourced: true })) return;
       rememberSuccessfulSync();
       render();
     } catch (error) {
@@ -739,6 +815,13 @@ export function createApp() {
   });
   document.querySelector('#device-binding-share').addEventListener('click', openDeviceBindingDialog);
   document.querySelector('#device-binding-copy').addEventListener('click', copyDeviceBindingLink);
+  document.querySelector('#device-pairing-claim-button').addEventListener('click', claimDeviceBinding);
+  document.querySelector('#device-pairing-code').addEventListener('keydown', event => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      claimDeviceBinding();
+    }
+  });
   document.querySelector('#smart-import-button').addEventListener('click', () => {
     smartImportController?.configureForms();
     toolsDialog.close();

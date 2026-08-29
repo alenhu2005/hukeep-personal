@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  claimDevicePairingCode,
   classifyExpenseWithAi,
+  createDevicePairingCode,
   enqueueSpokenEntry,
   loadLedgerStateFromSheet,
   syncCarrierInvoices,
@@ -14,6 +16,55 @@ describe('智慧匯入代理', () => {
     expect(validateProxyEndpoint('http://localhost:8787')).toBe('http://localhost:8787/');
     expect(() => validateProxyEndpoint('http://example.com')).toThrow('HTTPS');
     expect(() => validateProxyEndpoint('javascript:alert(1)')).toThrow('網址');
+  });
+
+  it('已綁定裝置可產生一次性手機短碼', async () => {
+    const expiresAt = '2026-08-29T16:30:00.000Z';
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        data: { code: 'ABCD-EFGH', expiresAt },
+      }),
+    });
+
+    await expect(
+      createDevicePairingCode(
+        {
+          endpoint: 'https://example.com/proxy',
+          proxyToken: 'bound-device-value',
+        },
+        { fetchImpl },
+      ),
+    ).resolves.toEqual({ code: 'ABCD-EFGH', expiresAt });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+      action: 'createDevicePairingCode',
+      proxyToken: 'bound-device-value',
+    });
+  });
+
+  it('手機可輸入短碼兑換裝置綁定，不先傳長期權杖', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        data: { proxyToken: 'new-mobile-device-value' },
+      }),
+    });
+
+    await expect(
+      claimDevicePairingCode(
+        {
+          endpoint: 'https://example.com/proxy',
+          code: 'abcd efgh',
+        },
+        { fetchImpl },
+      ),
+    ).resolves.toEqual({ proxyToken: 'new-mobile-device-value' });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+      action: 'claimDeviceBinding',
+      code: 'ABCDEFGH',
+    });
   });
 
   it('AI 分類只傳商家與品項，不傳發票號碼或載具密碼', async () => {

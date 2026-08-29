@@ -393,6 +393,26 @@
   color: var(--primary);
 }
 
+.device-pairing-claim {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-muted);
+}
+
+.device-pairing-claim .primary-button {
+  width: auto;
+  min-height: 38px;
+}
+
+.device-pairing-claim .settings-status {
+  grid-column: 1 / -1;
+}
+
 .device-binding-dialog {
   width: min(390px, calc(100vw - 28px));
 }
@@ -403,6 +423,28 @@
   gap: 14px;
   padding: 4px 2px 2px;
   text-align: center;
+}
+
+.device-binding-code-panel {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.device-binding-code-panel span,
+.device-binding-code-panel small {
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.device-binding-code-panel strong {
+  font-size: clamp(24px, 9vw, 34px);
+  letter-spacing: 0.14em;
 }
 
 .device-binding-content img {

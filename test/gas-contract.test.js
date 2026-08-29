@@ -39,6 +39,20 @@ describe('GAS 同步合約', () => {
     expect(source).toContain("SpreadsheetApp.openById(requiredProperty_('SPREADSHEET_ID'))");
   });
 
+  it('手機綁定碼只能由已授權裝置產生，兑換後立即作廢', () => {
+    const claimIndex = source.indexOf("body.action === 'claimDeviceBinding'");
+    const authorizeIndex = source.indexOf('authorize_(body.proxyToken)');
+    const createIndex = source.indexOf("body.action === 'createDevicePairingCode'");
+
+    expect(claimIndex).toBeGreaterThan(0);
+    expect(claimIndex).toBeLessThan(authorizeIndex);
+    expect(createIndex).toBeGreaterThan(authorizeIndex);
+    expect(source).toContain("setProperty('DEVICE_PAIRING_CODE_HASH'");
+    expect(source).toContain("deleteProperty('DEVICE_PAIRING_CODE_HASH')");
+    expect(source).toContain('enforcePairingClaimRateLimit_');
+    expect(source).not.toContain("setProperty('DEVICE_PAIRING_CODE',");
+  });
+
   it('口語條目先入 Sheet 佇列，再由背景 AI 更新且尊重手動鎖定', () => {
     expect(source).toContain("body.action === 'enqueueSpokenEntry'");
     expect(source).toContain('小帳_語音佇列');
