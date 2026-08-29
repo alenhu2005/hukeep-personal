@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSpokenTransaction } from '../src/domain/spoken-entry.js';
+import { conciseSpokenNote, parseSpokenTransaction } from '../src/domain/spoken-entry.js';
 
 const today = '2026-08-29';
 
@@ -87,17 +87,31 @@ describe('口語記帳解析', () => {
     expect(parseSpokenTransaction('8月15日要研究 0050 ETF', { today }).amount).toBeNull();
   });
 
-  it('同時擷取主要名稱、原始口語備註與中文日期', () => {
+  it('同時擷取主要名稱、精簡備註與中文日期', () => {
     const result = parseSpokenTransaction('八月十五號在鼎王吃麻辣鍋一千二用永豐', { today });
     expect(result).toMatchObject({
       amount: 1200,
       date: '2026-08-15',
       name: '鼎王吃麻辣鍋',
-      note: '八月十五號在鼎王吃麻辣鍋一千二用永豐',
+      note: '',
       account: 'sinopac',
       category: '飲食',
       subcategory: '火鍋',
     });
+    expect(result.note).not.toBe(result.transcript);
+  });
+
+  it('把口語中有用但不屬於主要名稱的情境整理成短備註', () => {
+    expect(
+      conciseSpokenNote(
+        '昨天跟小明在鼎王吃麻辣鍋一千二用永豐',
+        '跟小明在鼎王吃麻辣鍋',
+      ),
+    ).toBe('與小明');
+  });
+
+  it('沒有主要名稱時仍移除日期、金額與付款資訊，只保留摘要', () => {
+    expect(conciseSpokenNote('昨天搭高鐵 1490 元刷卡')).toBe('搭高鐵');
   });
 
   it.each([
@@ -140,7 +154,7 @@ describe('口語記帳解析', () => {
     const result = parseSpokenTransaction('今天去一間新開的店', { today });
 
     expect(result.amount).toBeNull();
-    expect(result.note).toBe('今天去一間新開的店');
+    expect(result.note).toBe('');
     expect(result.confidence).toBeLessThan(0.5);
   });
 });

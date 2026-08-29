@@ -14,6 +14,7 @@ test('可新增收支、重新整理仍保留並透過歷史搜尋', async ({ pa
   await expect(page.getByRole('heading', { name: '這個月，把錢用在哪裡？' })).toBeVisible();
 
   await page.getByRole('button', { name: '快速記一筆' }).click();
+  await page.getByText('需要手動輸入？展開詳細記帳').click();
   const transactionForm = page.locator('#transaction-form');
   await expect(page.locator('#category-field')).toBeHidden();
   await expect(page.locator('#subcategory-field')).toBeHidden();
@@ -63,8 +64,50 @@ test('可新增收支、重新整理仍保留並透過歷史搜尋', async ({ pa
   expect(corrected.subcategory).toBe('便當');
 });
 
+test('手機記帳移除多餘分類提示，且長對話框仍固定保留關閉按鈕', async ({ page }) => {
+  await page.setViewportSize({ width: 399, height: 784 });
+  await page.getByRole('button', { name: '快速記一筆' }).click();
+  await expect(page.locator('#classification-status')).toHaveCount(0);
+  await expect(page.locator('#manual-entry')).not.toHaveAttribute('open', '');
+  await expect(page.getByText('需要手動輸入？展開詳細記帳')).toBeVisible();
+  await expect(page.locator('[data-account-for="transaction-account"] button')).toHaveCount(5);
+  await expect
+    .poll(() =>
+      page.locator('div[data-account-for="transaction-account"]').evaluate(element =>
+        getComputedStyle(element).gridTemplateColumns.split(' ').length,
+      ),
+    )
+    .toBe(5);
+  await page.locator('#transaction-dialog .dialog-close').click();
+
+  await page.getByRole('button', { name: '紀錄', exact: true }).click();
+  await expect(page.locator('#history-type, #history-account')).toHaveCount(0);
+  await expect(page.locator('[data-history-filter="type"]')).toHaveCount(4);
+  await expect(page.locator('[data-history-filter="account"]')).toHaveCount(6);
+  await page.locator('[data-history-filter="type"][data-history-value="expense"]').click();
+  await expect(
+    page.locator('[data-history-filter="type"][data-history-value="expense"]'),
+  ).toHaveAttribute('aria-pressed', 'true');
+
+  await page.getByRole('button', { name: '備份與設定' }).click();
+  const dialog = page.locator('#tools-dialog');
+  await dialog.evaluate(element => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect
+    .poll(() =>
+      page.locator('#tools-dialog .dialog-close').evaluate(button => {
+        const dialogBox = button.closest('dialog').getBoundingClientRect();
+        const buttonBox = button.getBoundingClientRect();
+        return buttonBox.top >= dialogBox.top && buttonBox.bottom <= dialogBox.top + 72;
+      }),
+    )
+    .toBe(true);
+});
+
 test('收入也在背景分類，事後編輯才顯示分類', async ({ page }) => {
   await page.getByRole('button', { name: '快速記一筆' }).click();
+  await page.getByText('需要手動輸入？展開詳細記帳').click();
   await page.getByRole('button', { name: '收入', exact: true }).click();
   const form = page.locator('#transaction-form');
   await expect(page.locator('#category-field')).toBeHidden();
@@ -136,7 +179,14 @@ test('載具同步會以發票號碼取代重複 OCR，並保留細分類', asyn
   await page.reload();
   await page.route('https://proxy.example/**', route =>
     {
-      carrierRequests.push(route.request().postDataJSON());
+      const request = route.request().postDataJSON();
+      if (request.action !== 'syncCarrierInvoices') {
+        return route.fulfill({
+          contentType: 'application/json',
+          body: JSON.stringify({ ok: false, error: '略過背景 Sheet 讀取' }),
+        });
+      }
+      carrierRequests.push(request);
       return route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
@@ -250,7 +300,7 @@ test('口語內容直接上傳 Sheet，不等待 AI 審查', async ({ page }) =>
             account: 'sinopac',
             toAccount: '',
             date: '2026-08-28',
-            note: '昨天搭高鐵 1490 元刷卡',
+            note: '',
             source: 'voice',
             sourceId: 'queue-e2e',
             aiStatus: 'pending',
@@ -305,6 +355,7 @@ test('口語內容直接上傳 Sheet，不等待 AI 審查', async ({ page }) =>
     action: 'enqueueSpokenEntry',
     proxyToken: 'session-token',
     transcript: '昨天搭高鐵 1490 元刷卡',
+    draft: { note: '' },
   });
 });
 

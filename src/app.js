@@ -372,13 +372,6 @@ export function createApp() {
     classificationReady = transfer || ready;
     document.querySelector('#category-field').hidden = transfer || !editing;
     document.querySelector('#subcategory-field').hidden = transfer || !editing;
-    document.querySelector('#classification-status').hidden = transfer || editing;
-  }
-
-  function setClassificationMessage(title, detail) {
-    const status = document.querySelector('#classification-status');
-    status.querySelector('strong').textContent = title;
-    status.querySelector('small').textContent = detail;
   }
 
   function setTransactionType(
@@ -418,6 +411,7 @@ export function createApp() {
 
   function openTransactionDialog(transaction = null) {
     transactionForm.reset();
+    document.querySelector('#manual-entry').open = Boolean(transaction);
     document.querySelector('#transaction-error').hidden = true;
     transactionForm.elements.id.value = transaction?.id || '';
     transactionForm.elements.name.value = transaction?.name || transaction?.note || '';
@@ -430,12 +424,6 @@ export function createApp() {
       transaction?.category || '',
       transaction?.subcategory || '',
       { classificationReady: Boolean(transaction) },
-    );
-    setClassificationMessage(
-      transaction ? '目前分類' : '背景智慧分類',
-      transaction
-        ? '你可以直接修改大分類或小分類。'
-        : '新增時不顯示分類；儲存後若發現有誤，可到紀錄中編輯。',
     );
     if (transaction?.toAccount) updateDestinationAccounts(transaction.toAccount);
     document.querySelector('#transaction-dialog-title').textContent = transaction ? '編輯這筆' : '記一筆';
@@ -455,11 +443,9 @@ export function createApp() {
     const note = transactionForm.elements.note.value.trim();
     const classificationInput = `${name} ${note}`.trim();
     if (!classificationInput && !force) {
-      setClassificationMessage('背景智慧分類', '輸入用途後會自動判斷；分類不會在新增畫面展開。');
       return false;
     }
     const request = ++classificationRequest;
-    setClassificationMessage('正在智慧分類…', '先由本機判斷，再於已授權時交給 AI 複判。');
 
     const local =
       type === 'income'
@@ -478,12 +464,6 @@ export function createApp() {
     setTransactionType(type, classification.topCategory, classification.subcategory, {
       classificationReady: true,
     });
-    setClassificationMessage(
-      classification.ai
-        ? `AI 已完成${type === 'income' ? '收入' : ''}分類`
-        : `已完成本機${type === 'income' ? '收入' : ''}預分類`,
-      '儲存後若發現有誤，可到紀錄中編輯。',
-    );
     return true;
   }
 
@@ -604,6 +584,18 @@ export function createApp() {
   function handleMainClick(event) {
     const target = event.target.closest('button');
     if (!target) return;
+    if (target.dataset.historyFilter) {
+      const key = target.dataset.historyFilter;
+      const value = target.dataset.historyValue || '';
+      historyFilters = { ...historyFilters, [key]: value };
+      render();
+      requestAnimationFrame(() =>
+        main
+          .querySelector(`[data-history-filter="${key}"][data-history-value="${value}"]`)
+          ?.focus(),
+      );
+      return;
+    }
     if (target.dataset.goView) navigate(target.dataset.goView);
     if (target.dataset.monthShift) {
       selectedMonth = shiftMonth(selectedMonth, Number(target.dataset.monthShift));
@@ -621,11 +613,11 @@ export function createApp() {
   }
 
   function handleHistoryFilters(event) {
-    if (!['history-search', 'history-type', 'history-account'].includes(event.target.id)) return;
+    if (event.target.id !== 'history-search') return;
     historyFilters = {
       query: document.querySelector('#history-search')?.value || '',
-      type: document.querySelector('#history-type')?.value || '',
-      account: document.querySelector('#history-account')?.value || '',
+      type: historyFilters.type,
+      account: historyFilters.account,
     };
     render();
     if (event.target.id === 'history-search') {
@@ -851,10 +843,6 @@ export function createApp() {
     const button = event.target.closest('[data-transaction-type]');
     if (button) {
       setTransactionType(button.dataset.transactionType);
-      setClassificationMessage(
-        '背景智慧分類',
-        '新增時不顯示分類；儲存後若發現有誤，可到紀錄中編輯。',
-      );
       scheduleTransactionClassification();
     }
     const accountButton = event.target.closest('[data-account-value]');

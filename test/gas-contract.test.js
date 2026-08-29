@@ -62,6 +62,19 @@ describe('GAS 同步合約', () => {
     expect(source).toContain('使用者鎖定');
   });
 
+  it('口語備註會精簡原文，完整原文只保留在 rawTranscript', () => {
+    const conciseNote = new Function(`${source}\nreturn conciseSpokenNote_;`)();
+
+    expect(
+      conciseNote('昨天跟小明在鼎王吃麻辣鍋一千二用永豐', '跟小明在鼎王吃麻辣鍋', 'expense'),
+    ).toBe('與小明');
+    expect(source).toContain('conciseSpokenNote_(transcript');
+    expect(source).toContain("if (note === transcript) note = ''");
+    expect(source).toContain("if (reviewedNote === transcript) reviewedNote = ''");
+    expect(source).toContain('rawTranscript: transcript');
+    expect(source).toContain('不可逐字照抄口語原文');
+  });
+
   it('寫入口語佇列不會因觸發器尚未授權而報錯', () => {
     const enqueueBody = source.match(/function enqueueSpokenEntry_\([\s\S]*?\n}\n\nfunction normalizeSpokenDraft_/)?.[0] || '';
     const installerBody = source.match(/function installBackgroundProcessing\(\)[\s\S]*?\n}/)?.[0] || '';

@@ -108,24 +108,44 @@ export async function classifyExpenseWithAi(input, options = {}) {
   return validateClassification(data, { fallback, type });
 }
 
+function carrierSetupError(error) {
+  const message = cleanText(error?.message, 200);
+  if (message.includes('EINVOICE_APP_ID')) {
+    return new Error(
+      '載具代理尚未完成設定：請在 GAS 的「專案設定 → 指令碼屬性」加入財政部核發的 AppID（EINVOICE_APP_ID）。',
+    );
+  }
+  if (message.includes('EINVOICE_UUID')) {
+    return new Error(
+      '載具代理尚未完成設定：請在 GAS 的「專案設定 → 指令碼屬性」加入此私人服務固定使用的 UUID（EINVOICE_UUID）。',
+    );
+  }
+  return error;
+}
+
 export async function syncCarrierInvoices(input, options = {}) {
   const month = cleanText(input?.month, 7);
   if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('同步月份格式不正確');
   const syncStartDate = cleanText(input?.syncStartDate, 10);
   if (syncStartDate && !isValidDateText(syncStartDate)) throw new Error('自動同步起始日期格式不正確');
-  const data = await postProxy(
-    input?.endpoint,
-    {
-      action: 'syncCarrierInvoices',
-      proxyToken: cleanText(input?.proxyToken, 300),
-      cardNo: cleanText(input?.cardNo, 40),
-      cardEncrypt: cleanText(input?.cardEncrypt, 100),
-      month,
-      rememberCarrier: input?.rememberCarrier === true,
-      syncStartDate,
-    },
-    options,
-  );
+  let data;
+  try {
+    data = await postProxy(
+      input?.endpoint,
+      {
+        action: 'syncCarrierInvoices',
+        proxyToken: cleanText(input?.proxyToken, 300),
+        cardNo: cleanText(input?.cardNo, 40),
+        cardEncrypt: cleanText(input?.cardEncrypt, 100),
+        month,
+        rememberCarrier: input?.rememberCarrier === true,
+        syncStartDate,
+      },
+      options,
+    );
+  } catch (error) {
+    throw carrierSetupError(error);
+  }
   if (!Array.isArray(data?.invoices)) throw new Error('代理回傳的發票格式不正確');
   return {
     invoices: data.invoices.slice(0, 1000),

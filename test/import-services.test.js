@@ -245,6 +245,24 @@ describe('智慧匯入代理', () => {
     ).rejects.toThrow('載具驗證失敗');
   });
 
+  it('缺少財政部 AppID 時提供設定位置，而不是只顯示技術欄位名稱', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: false, error: '代理尚未完成必要設定：EINVOICE_APP_ID' }),
+    });
+
+    await expect(
+      syncCarrierInvoices(
+        {
+          endpoint: 'https://example.com/proxy',
+          proxyToken: 'token',
+          month: '2026-08',
+        },
+        { fetchImpl },
+      ),
+    ).rejects.toThrow('GAS 的「專案設定 → 指令碼屬性」加入財政部核發的 AppID');
+  });
+
   it('只將記帳內容同步至 Sheet，不傳偏好或載具資料', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
@@ -380,7 +398,7 @@ describe('智慧匯入代理', () => {
       account: 'sinopac',
       toAccount: null,
       date: '2026-08-28',
-      note: '昨天用永豐在鼎王吃麻辣鍋一千二',
+      note: '',
       source: 'voice',
       sourceId: 'queue-1',
       aiStatus: 'pending',
@@ -425,7 +443,7 @@ describe('智慧匯入代理', () => {
         toAccount: '',
         date: '2026-08-28',
         name: '鼎王麻辣鍋',
-        note: '昨天用永豐在鼎王吃麻辣鍋一千二',
+        note: '',
       },
     });
   });

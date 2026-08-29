@@ -20,7 +20,7 @@
   }
 
   .topbar {
-    min-height: 64px;
+    min-height: 58px;
   }
 
   .brand small,
@@ -29,13 +29,13 @@
   }
 
   #app-main {
-    padding-top: 38px;
+    padding-top: 24px;
   }
 
   .hero-heading,
   .page-heading {
     align-items: flex-start;
-    margin-bottom: 24px;
+    margin-bottom: 17px;
   }
 
   .hero-heading h1,
@@ -49,8 +49,8 @@
 
   .cashflow-card {
     grid-template-columns: 1fr;
-    gap: 22px;
-    padding: 26px 24px;
+    gap: 16px;
+    padding: 21px 19px;
   }
 
   .cashflow-rail {
@@ -66,11 +66,11 @@
   }
 
   .account-list {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .account-item {
-    padding: 12px;
+    padding: 10px;
   }
 
   .filter-bar {
@@ -149,31 +149,32 @@
   }
 
   .panel {
-    padding: 20px 17px;
+    padding: 16px 14px;
   }
 
   .cashflow-main strong {
-    font-size: 37px;
+    font-size: 34px;
   }
 
   .cashflow-metrics {
-    grid-template-columns: 1fr 1fr;
-    gap: 15px 0;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0;
+    padding-top: 16px;
   }
 
   .cashflow-metrics > div + div {
-    border-left: 0;
-  }
-
-  .cashflow-metrics > div:nth-child(2) {
-    padding-left: 16px;
+    padding-left: 9px;
     border-left: 1px solid var(--line);
   }
 
+  .cashflow-metrics > div:nth-child(2) {
+    padding-left: 9px;
+  }
+
   .cashflow-metrics > div:nth-child(3) {
-    grid-column: 1 / -1;
-    padding: 13px 0 0;
-    border-top: 1px solid var(--line);
+    grid-column: auto;
+    padding: 0 0 0 9px;
+    border-top: 0;
   }
 
   .transaction-row {
@@ -211,17 +212,107 @@
   }
 
   .account-choice-buttons {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 5px;
+  }
+
+  .account-choice-buttons button {
+    min-height: 48px;
+    padding: 5px 2px;
+    gap: 3px;
+    font-size: 9px;
+  }
+
+  .account-choice-icon {
+    width: 21px;
+    height: 21px;
+    border-radius: 7px;
   }
 
   .app-dialog {
-    width: calc(100% - 18px);
-    padding: 22px 18px;
-    border-radius: 21px;
+    width: calc(100% - 12px);
+    max-height: calc(100dvh - 12px);
+    padding: 14px;
+    border-radius: 18px;
+    scroll-padding-block: 62px 16px;
+  }
+
+  .dialog-header {
+    top: -14px;
+    gap: 12px;
+    margin: -14px -14px 12px;
+    padding: 12px 14px 10px;
+  }
+
+  .dialog-header .eyebrow {
+    margin-bottom: 4px;
+    font-size: 9px;
+  }
+
+  .dialog-header h2 {
+    font-size: 23px;
+  }
+
+  .dialog-close {
+    width: 40px;
+    height: 40px;
+  }
+
+  .type-switch button {
+    min-height: 40px;
+  }
+
+  .voice-entry {
+    margin-top: 8px;
+  }
+
+  .voice-entry-title {
+    padding: 9px 10px;
+  }
+
+  .voice-entry-body {
+    padding: 0 10px 10px;
+  }
+
+  .voice-entry p {
+    margin-top: 6px;
+    line-height: 1.4;
+  }
+
+  .manual-entry {
+    margin-top: 8px;
+  }
+
+  .manual-entry summary {
+    min-height: 42px;
+    padding: 10px;
+  }
+
+  .manual-entry-body {
+    padding: 10px;
+  }
+
+  .transaction-name-field {
+    gap: 5px;
+    margin-top: 10px;
+  }
+
+  .amount-field {
+    margin: 14px 0 12px;
+    padding-bottom: 12px;
   }
 
   .amount-field input {
-    font-size: 42px;
+    font-size: 38px;
+  }
+
+  .form-grid {
+    gap: 10px;
+  }
+
+  .dialog-submit {
+    min-height: 46px;
+    margin-top: 13px;
   }
 
   .toast {

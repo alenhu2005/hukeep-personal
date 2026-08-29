@@ -10,19 +10,15 @@
   background: var(--surface-muted);
 }
 
-.voice-entry summary {
+.voice-entry-title {
+  margin: 0;
   padding: 11px 13px;
   color: var(--ink-soft);
   font-size: 12px;
   font-weight: 800;
-  list-style: none;
 }
 
-.voice-entry summary::-webkit-details-marker {
-  display: none;
-}
-
-.voice-entry summary span {
+.voice-entry-title span {
   display: inline-block;
   margin-right: 7px;
   color: var(--expense);
@@ -56,10 +52,33 @@
   line-height: 1.5;
 }
 
+.manual-entry {
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.manual-entry summary {
+  min-height: 44px;
+  padding: 12px 13px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 780;
+}
+
+.manual-entry[open] summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.manual-entry-body {
+  padding: 12px;
+}
+
 .transaction-name-field {
   display: grid;
   gap: 7px;
-  margin-top: 16px;
+  margin-top: 13px;
 }
 
 .transaction-name-field > span {
@@ -75,39 +94,6 @@
   border-radius: 10px;
   background: var(--surface);
   color: var(--ink);
-}
-
-.classification-status {
-  display: flex;
-  min-height: 58px;
-  padding: 11px 12px;
-  align-items: center;
-  gap: 10px;
-  border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--line));
-  border-radius: 11px;
-  background: var(--primary-soft);
-}
-
-.classification-status > span {
-  color: var(--primary);
-  font-size: 15px;
-}
-
-.classification-status strong,
-.classification-status small {
-  display: block;
-}
-
-.classification-status strong {
-  color: var(--ink-soft);
-  font-size: 11px;
-}
-
-.classification-status small {
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.4;
 }
 
 .smart-import-dialog {

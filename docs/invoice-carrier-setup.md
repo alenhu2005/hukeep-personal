@@ -21,7 +21,7 @@
 
 ## 2. 建立 Gemini API key
 
-在 [Google AI Studio](https://aistudio.google.com/app/apikey) 建立 Gemini API key。代理使用穩定版 `gemini-2.5-flash` 的 structured output，輸出只能落在小帳的大小分類 taxonomy。
+在 [Google AI Studio](https://aistudio.google.com/app/apikey) 建立 Gemini API key。代理預設使用較強的 `gemini-3.7-flash` structured output，輸出只能落在小帳的大小分類 taxonomy；可用 GAS 指令碼屬性 `GEMINI_MODEL` 覆寫。
 
 ## 3. 部署 GAS 代理
 

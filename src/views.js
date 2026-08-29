@@ -153,13 +153,31 @@ export function renderOverview(state, month) {
 
 export function renderHistory(state, month, filters) {
   const results = filterTransactions(state.transactions, { month, ...filters });
+  const typeButtons = [
+    ['', '全部'],
+    ...Object.entries(TYPE_LABELS),
+  ]
+    .map(
+      ([value, label]) =>
+        `<button type="button" data-history-filter="type" data-history-value="${escapeHtml(value)}" aria-pressed="${filters.type === value}">${escapeHtml(label)}</button>`,
+    )
+    .join('');
+  const accountButtons = [
+    ['', '全部'],
+    ...state.accounts.map(account => [account.id, account.name]),
+  ]
+    .map(
+      ([value, label]) =>
+        `<button type="button" data-history-filter="account" data-history-value="${escapeHtml(value)}" aria-pressed="${filters.account === value}">${escapeHtml(label)}</button>`,
+    )
+    .join('');
   return `<section class="view history-view" aria-labelledby="history-title">
     <div class="page-heading"><div><p class="eyebrow">${monthLabel(month)}</p><h1 id="history-title">每一筆，都有跡可循</h1><p>搜尋備註、分類或帳戶，快速回到當時的決定。</p></div></div>
     <section class="panel history-panel">
       <div class="filter-bar">
         <label class="search-field"><span class="visually-hidden">搜尋紀錄</span><span aria-hidden="true">⌕</span><input id="history-search" aria-label="搜尋紀錄" type="search" value="${escapeHtml(filters.query)}" placeholder="搜尋備註、分類、帳戶" /></label>
-        <select id="history-type" aria-label="篩選類型"><option value="">全部類型</option>${Object.entries(TYPE_LABELS).map(([value, label]) => `<option value="${value}" ${filters.type === value ? 'selected' : ''}>${label}</option>`).join('')}</select>
-        <select id="history-account" aria-label="篩選帳戶"><option value="">全部帳戶</option>${state.accounts.map(account => `<option value="${account.id}" ${filters.account === account.id ? 'selected' : ''}>${escapeHtml(account.name)}</option>`).join('')}</select>
+        <div class="history-filter-group" role="group" aria-label="篩選類型"><span>類型</span><div class="filter-chip-scroll">${typeButtons}</div></div>
+        <div class="history-filter-group" role="group" aria-label="篩選帳戶"><span>帳戶</span><div class="filter-chip-scroll">${accountButtons}</div></div>
       </div>
       <div class="history-result-meta"><strong>${results.length} 筆紀錄</strong><span>以日期由新到舊</span></div>
       <div id="history-list" class="transaction-list">${transactionRows(results, state.accounts)}</div>
