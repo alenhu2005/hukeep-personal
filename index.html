@@ -10,8 +10,8 @@
     <link rel="manifest" href="./manifest.json" />
     <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
     <title>小帳｜個人記帳</title>
-    <script type="module" crossorigin src="/hukeep-personal/assets/index-BF8Muu0t.js"></script>
-    <link rel="stylesheet" crossorigin href="/hukeep-personal/assets/index-Ca1GxlPm.css">
+    <script type="module" crossorigin src="/hukeep-personal/assets/index-_F2bI3Va.js"></script>
+    <link rel="stylesheet" crossorigin href="/hukeep-personal/assets/index-_OWbwl16.css">
   </head>
   <body>
     <a class="skip-link" href="#app-main">跳到主要內容</a>
@@ -183,6 +183,24 @@
           <div id="device-binding-status" class="device-binding-status" role="status">
             正在確認這台裝置的 Sheet 連線…
           </div>
+          <div id="device-pairing-claim" class="device-pairing-claim">
+            <label for="device-pairing-code">
+              <span>手機綁定碼</span>
+              <input
+                id="device-pairing-code"
+                name="devicePairingCode"
+                type="text"
+                inputmode="text"
+                maxlength="9"
+                autocomplete="off"
+                autocapitalize="characters"
+                spellcheck="false"
+                placeholder="ABCD-EFGH"
+              />
+            </label>
+            <button id="device-pairing-claim-button" class="primary-button" type="button">使用綁定碼</button>
+            <p class="settings-status">請在已綁定的電腦按「綁定手機」，再把顯示的 8 碼輸入這裡。</p>
+          </div>
           <button id="device-binding-share" class="secondary-button" type="button">綁定手機</button>
           <div class="sheet-sync-actions">
             <button id="sheet-sync-button" class="primary-button" type="submit">同步到 Google Sheet</button>
@@ -206,8 +224,13 @@
         <button class="icon-button dialog-close" type="button" aria-label="關閉">×</button>
       </div>
       <div class="device-binding-content">
+        <div class="device-binding-code-panel">
+          <span>手機綁定碼</span>
+          <strong id="device-binding-code">正在產生…</strong>
+          <small id="device-binding-code-expiry">一次使用，10 分鐘後失效</small>
+        </div>
         <img id="device-binding-qr" alt="手機裝置綁定 QR Code" />
-        <p>用手機相機掃描後開啟「小帳」，就會自動完成綁定。掃描後網址會立即清除綁定資料。</p>
+        <p>手機可直接輸入上方 8 碼；也可掃描 QR 開啟「小帳」。短碼使用一次後就會立即失效。</p>
         <button id="device-binding-copy" class="secondary-button" type="button">複製手機綁定連結</button>
       </div>
     </dialog>
