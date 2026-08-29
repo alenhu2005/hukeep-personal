@@ -10,8 +10,8 @@
     <link rel="manifest" href="./manifest.json" />
     <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
     <title>小帳｜個人記帳</title>
-    <script type="module" crossorigin src="/hukeep-personal/assets/index-_F2bI3Va.js"></script>
-    <link rel="stylesheet" crossorigin href="/hukeep-personal/assets/index-_OWbwl16.css">
+    <script type="module" crossorigin src="/hukeep-personal/assets/index-DAd6Zr_m.js"></script>
+    <link rel="stylesheet" crossorigin href="/hukeep-personal/assets/index-DDg5Xy4y.css">
   </head>
   <body>
     <a class="skip-link" href="#app-main">跳到主要內容</a>
@@ -73,14 +73,9 @@
 
         <input id="transaction-id" name="id" type="hidden" />
         <input id="transaction-type" name="type" type="hidden" value="expense" />
-        <div class="type-switch" role="group" aria-label="交易類型">
-          <button type="button" data-transaction-type="expense" aria-pressed="true">支出</button>
-          <button type="button" data-transaction-type="income" aria-pressed="false">收入</button>
-          <button type="button" data-transaction-type="transfer" aria-pressed="false">轉帳</button>
-        </div>
 
-        <details id="voice-entry" class="voice-entry" open>
-          <summary><span aria-hidden="true">●</span> 口語直接記帳</summary>
+        <section id="voice-entry" class="voice-entry" aria-labelledby="voice-entry-title">
+          <h3 id="voice-entry-title" class="voice-entry-title"><span aria-hidden="true">●</span> 口語直接記帳</h3>
           <div class="voice-entry-body">
             <div class="voice-input-row">
               <input id="voice-transcript" type="text" maxlength="240" aria-label="口語記帳內容" placeholder="例如：昨天用永豐在鼎王吃麻辣鍋一千二" />
@@ -88,55 +83,62 @@
             </div>
             <p id="voice-status" role="status">用 iPhone 鍵盤麥克風輸入後直接送出；Sheet 會先收到，AI 再從後台補齊名稱、金額、日期與分類。</p>
           </div>
-        </details>
+        </section>
 
-        <label class="transaction-name-field" for="transaction-name">
-          <span>名稱</span>
-          <input id="transaction-name" name="name" type="text" maxlength="120" placeholder="例如：鼎王麻辣鍋" required />
-        </label>
+        <details id="manual-entry" class="manual-entry">
+          <summary>需要手動輸入？展開詳細記帳</summary>
+          <div class="manual-entry-body">
+            <div class="type-switch" role="group" aria-label="交易類型">
+              <button type="button" data-transaction-type="expense" aria-pressed="true">支出</button>
+              <button type="button" data-transaction-type="income" aria-pressed="false">收入</button>
+              <button type="button" data-transaction-type="transfer" aria-pressed="false">轉帳</button>
+            </div>
 
-        <label class="amount-field" for="transaction-amount">
-          <span>金額</span>
-          <span class="amount-input-wrap">
-            <small>NT$</small>
-            <input id="transaction-amount" name="amount" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required />
-          </span>
-        </label>
+            <label class="transaction-name-field" for="transaction-name">
+              <span>名稱</span>
+              <input id="transaction-name" name="name" type="text" maxlength="120" placeholder="例如：鼎王麻辣鍋" required />
+            </label>
 
-        <div class="form-grid">
-          <div id="classification-status" class="classification-status form-grid-wide" role="status">
-            <span aria-hidden="true">✦</span>
-            <div><strong>背景智慧分類</strong><small>新增時不顯示分類；儲存後若發現有誤，可到紀錄中編輯。</small></div>
+            <label class="amount-field" for="transaction-amount">
+              <span>金額</span>
+              <span class="amount-input-wrap">
+                <small>NT$</small>
+                <input id="transaction-amount" name="amount" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required />
+              </span>
+            </label>
+
+            <div class="form-grid">
+              <label id="category-field">
+                <span>大分類</span>
+                <select id="transaction-category" name="category" required></select>
+              </label>
+              <label id="subcategory-field">
+                <span>小分類</span>
+                <select id="transaction-subcategory" name="subcategory" required></select>
+              </label>
+              <fieldset id="account-field" class="account-choice-field form-grid-wide">
+                <legend>帳戶</legend>
+                <select id="transaction-account" class="visually-hidden" name="account" tabindex="-1" aria-hidden="true" required></select>
+                <div class="account-choice-buttons" data-account-for="transaction-account"></div>
+              </fieldset>
+              <fieldset id="to-account-field" class="account-choice-field form-grid-wide" hidden>
+                <legend>目的帳戶</legend>
+                <select id="transaction-to-account" class="visually-hidden" name="toAccount" tabindex="-1" aria-hidden="true"></select>
+                <div class="account-choice-buttons" data-account-for="transaction-to-account"></div>
+              </fieldset>
+              <label>
+                <span>日期</span>
+                <input id="transaction-date" name="date" type="date" required />
+              </label>
+              <label class="form-grid-wide">
+                <span>備註</span>
+                <input id="transaction-note" name="note" type="text" maxlength="240" placeholder="例如：巷口的午餐" />
+              </label>
+            </div>
+            <p id="transaction-error" class="form-error" role="alert" hidden></p>
+            <button class="primary-button dialog-submit" type="submit">儲存這筆</button>
           </div>
-          <label id="category-field">
-            <span>大分類</span>
-            <select id="transaction-category" name="category" required></select>
-          </label>
-          <label id="subcategory-field">
-            <span>小分類</span>
-            <select id="transaction-subcategory" name="subcategory" required></select>
-          </label>
-          <fieldset id="account-field" class="account-choice-field form-grid-wide">
-            <legend>帳戶</legend>
-            <select id="transaction-account" class="visually-hidden" name="account" tabindex="-1" aria-hidden="true" required></select>
-            <div class="account-choice-buttons" data-account-for="transaction-account"></div>
-          </fieldset>
-          <fieldset id="to-account-field" class="account-choice-field form-grid-wide" hidden>
-            <legend>目的帳戶</legend>
-            <select id="transaction-to-account" class="visually-hidden" name="toAccount" tabindex="-1" aria-hidden="true"></select>
-            <div class="account-choice-buttons" data-account-for="transaction-to-account"></div>
-          </fieldset>
-          <label>
-            <span>日期</span>
-            <input id="transaction-date" name="date" type="date" required />
-          </label>
-          <label class="form-grid-wide">
-            <span>備註</span>
-            <input id="transaction-note" name="note" type="text" maxlength="240" placeholder="例如：巷口的午餐" />
-          </label>
-        </div>
-        <p id="transaction-error" class="form-error" role="alert" hidden></p>
-        <button class="primary-button dialog-submit" type="submit">儲存這筆</button>
+        </details>
       </form>
     </dialog>
 
