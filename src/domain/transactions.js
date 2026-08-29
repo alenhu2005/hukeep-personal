@@ -6,7 +6,7 @@ export class ValidationError extends Error {
 }
 
 const VALID_TYPES = new Set(['expense', 'income', 'transfer']);
-const VALID_SOURCES = new Set(['manual', 'ocr', 'carrier']);
+const VALID_SOURCES = new Set(['manual', 'ocr', 'carrier', 'voice']);
 const MAX_ID_LENGTH = 80;
 const MAX_TIMESTAMP_LENGTH = 40;
 
@@ -41,23 +41,27 @@ function normalizeInput(input) {
   const account = cleanText(input?.account);
   const date = cleanText(input?.date);
   const note = cleanText(input?.note).slice(0, 240);
+  const hasName = Object.prototype.hasOwnProperty.call(input ?? {}, 'name');
+  const name = cleanBoundedText(input?.name, 120);
 
   if (!VALID_TYPES.has(type)) throw new ValidationError('交易類型不正確');
   assertPositiveInteger(amount);
   if (!account) throw new ValidationError('請選擇帳戶');
   if (!isValidDate(date)) throw new ValidationError('日期格式不正確');
+  if (hasName && !name) throw new ValidationError('請輸入這筆記錄的名稱');
+  const identity = hasName ? { name } : {};
 
   if (type === 'transfer') {
     const toAccount = cleanText(input?.toAccount);
     if (!toAccount || toAccount === account) {
       throw new ValidationError('請選擇不同的目的帳戶');
     }
-    return { type, amount, category: null, account, toAccount, date, note };
+    return { type, amount, category: null, account, toAccount, date, ...identity, note };
   }
 
   const category = cleanText(input?.category);
   if (!category) throw new ValidationError('請選擇分類');
-  return { type, amount, category, account, toAccount: null, date, note };
+  return { type, amount, category, account, toAccount: null, date, ...identity, note };
 }
 
 function normalizeTimestamp(value, fallback) {
@@ -82,6 +86,9 @@ function normalizeOptionalMetadata(input) {
   const merchant = cleanBoundedText(input?.merchant, 120);
   const importedAt = cleanBoundedText(input?.importedAt, MAX_TIMESTAMP_LENGTH);
   const userEditedAt = cleanBoundedText(input?.userEditedAt, MAX_TIMESTAMP_LENGTH);
+  const aiStatus = cleanBoundedText(input?.aiStatus, 24);
+  const aiReviewedAt = cleanBoundedText(input?.aiReviewedAt, MAX_TIMESTAMP_LENGTH);
+  const rawTranscript = cleanBoundedText(input?.rawTranscript, 240);
   const ocrConfidence = Number(input?.ocrConfidence);
 
   if (input?.type !== 'transfer' && subcategory) metadata.subcategory = subcategory;
@@ -91,6 +98,9 @@ function normalizeOptionalMetadata(input) {
   if (merchant) metadata.merchant = merchant;
   if (importedAt) metadata.importedAt = importedAt;
   if (userEditedAt) metadata.userEditedAt = userEditedAt;
+  if (aiStatus) metadata.aiStatus = aiStatus;
+  if (aiReviewedAt) metadata.aiReviewedAt = aiReviewedAt;
+  if (rawTranscript) metadata.rawTranscript = rawTranscript;
   if (Number.isFinite(ocrConfidence)) {
     metadata.ocrConfidence = Math.min(1, Math.max(0, ocrConfidence));
   }
@@ -150,7 +160,7 @@ export function updateTransaction(transactions, id, changes, options = {}) {
     ...current,
     ...normalized,
     ...normalizeOptionalMetadata({ ...current, ...changes }),
-    ...(VALID_SOURCES.has(current.source) ? { userEditedAt: updatedAt } : {}),
+    userEditedAt: updatedAt,
     id: current.id,
     createdAt: current.createdAt,
     updatedAt,
@@ -181,6 +191,7 @@ export function filterTransactions(transactions, filters = {}) {
       if (!query) return true;
       return [
         transaction.note,
+        transaction.name,
         transaction.category,
         transaction.subcategory,
         transaction.merchant,

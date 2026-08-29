@@ -39,6 +39,7 @@ describe('ledger repository', () => {
       {
         id: '1',
         type: 'expense',
+        name: '午餐',
         amount: 10,
         category: '飲食',
         account: 'cash',
@@ -122,6 +123,8 @@ describe('ledger repository', () => {
       theme: 'dark',
       carrierEndpoint: 'http://localhost.evil.example/steal',
       carrierCardNo: '/ABC+123',
+      carrierBound: true,
+      carrierSyncStartDate: '2026-08-01',
       proxyToken: 'must-not-persist',
       cardEncrypt: 'must-not-persist',
     };
@@ -129,6 +132,8 @@ describe('ledger repository', () => {
     expect(repository.save(state).preferences).toEqual({
       theme: 'dark',
       carrierCardNo: '/ABC+123',
+      carrierBound: true,
+      carrierSyncStartDate: '2026-08-01',
     });
   });
 
@@ -223,6 +228,7 @@ describe('備份', () => {
       {
         id: '1',
         type: 'expense',
+        name: '午餐',
         amount: 120,
         category: '飲食',
         account: 'cash',
@@ -312,7 +318,8 @@ describe('備份', () => {
 
   it('CSV 會處理逗號、引號與公式注入', () => {
     const csv = transactionsToCsv(state.transactions);
-    expect(csv).toContain('類型,金額,分類,帳戶,目的帳戶,日期,備註');
+    expect(csv).toContain('類型,名稱,金額,分類,帳戶,目的帳戶,日期,備註');
+    expect(csv).toContain('expense,午餐,120');
     expect(csv).toContain("\"'=SUM(1,2) 「午餐」\"");
   });
 });

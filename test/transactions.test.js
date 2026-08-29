@@ -25,6 +25,16 @@ function expense(overrides = {}) {
 }
 
 describe('createTransaction', () => {
+  it('將主要名稱與補充備註分開儲存', () => {
+    expect(
+      createTransaction(
+        expense({ name: '  鼎王麻辣鍋  ', note: '  和朋友聚餐  ' }),
+        fixedOptions,
+      ),
+    ).toMatchObject({ name: '鼎王麻辣鍋', note: '和朋友聚餐' });
+    expect(() => createTransaction(expense({ name: '   ' }), fixedOptions)).toThrow('名稱');
+  });
+
   it('建立正規化的整數 TWD 支出且不改動輸入', () => {
     const input = expense({ category: '  飲食  ', note: '  午餐  ' });
     const result = createTransaction(input, fixedOptions);
@@ -121,6 +131,35 @@ describe('交易集合操作', () => {
     });
   });
 
+  it('手動建立的記錄一旦修改也會鎖定，背景 AI 不得覆蓋', () => {
+    const result = updateTransaction(original, 'tx-fixed', { note: '使用者最後決定' }, {
+      now: '2026-08-29T03:00:00.000Z',
+    });
+    expect(result[0].userEditedAt).toBe('2026-08-29T03:00:00.000Z');
+  });
+
+  it('保留口語後台審查狀態與原文', () => {
+    const transaction = createTransaction(
+      expense({
+        name: '鼎王麻辣鍋',
+        amount: 1200,
+        subcategory: '火鍋',
+        account: 'sinopac',
+        source: 'voice',
+        aiStatus: 'reviewed',
+        aiReviewedAt: '2026-08-29T06:01:00.000Z',
+        rawTranscript: '昨天用永豐在鼎王吃麻辣鍋一千二',
+      }),
+      { id: 'voice:1', now: '2026-08-29T06:00:00.000Z' },
+    );
+
+    expect(transaction).toMatchObject({
+      aiStatus: 'reviewed',
+      aiReviewedAt: '2026-08-29T06:01:00.000Z',
+      rawTranscript: '昨天用永豐在鼎王吃麻辣鍋一千二',
+    });
+  });
+
   it('找不到交易時明確失敗', () => {
     expect(() => updateTransaction(original, 'missing', { amount: 1 })).toThrow('找不到');
   });
@@ -139,5 +178,10 @@ describe('交易集合操作', () => {
     expect(filterTransactions(original, { account: 'bank' })).toHaveLength(1);
     expect(filterTransactions(original, { query: '薪資' })).toHaveLength(1);
     expect(filterTransactions(original, { query: '不存在' })).toEqual([]);
+  });
+
+  it('歷史搜尋也會搜尋主要名稱', () => {
+    const named = [createTransaction(expense({ name: '隱藏名稱', note: '其他備註' }), fixedOptions)];
+    expect(filterTransactions(named, { query: '隱藏名稱' })).toHaveLength(1);
   });
 });

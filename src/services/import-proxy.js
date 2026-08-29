@@ -1,6 +1,10 @@
 import { validateClassification } from '../domain/category-taxonomy.js';
 
 const REQUEST_TIMEOUT_MS = 30_000;
+const MAX_SHEET_ACCOUNTS = 20;
+const MAX_SHEET_TRANSACTIONS = 5000;
+const MAX_SHEET_BUDGETS = 100;
+const MAX_SHEET_AMOUNT = 1_000_000_000_000;
 
 function cleanText(value, maxLength) {
   return String(value ?? '')
@@ -70,6 +74,8 @@ export async function classifyExpenseWithAi(input, options = {}) {
 export async function syncCarrierInvoices(input, options = {}) {
   const month = cleanText(input?.month, 7);
   if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('同步月份格式不正確');
+  const syncStartDate = cleanText(input?.syncStartDate, 10);
+  if (syncStartDate && !isValidDateText(syncStartDate)) throw new Error('自動同步起始日期格式不正確');
   const data = await postProxy(
     input?.endpoint,
     {
@@ -78,9 +84,218 @@ export async function syncCarrierInvoices(input, options = {}) {
       cardNo: cleanText(input?.cardNo, 40),
       cardEncrypt: cleanText(input?.cardEncrypt, 100),
       month,
+      rememberCarrier: input?.rememberCarrier === true,
+      syncStartDate,
     },
     options,
   );
   if (!Array.isArray(data?.invoices)) throw new Error('代理回傳的發票格式不正確');
-  return data.invoices.slice(0, 1000);
+  return {
+    invoices: data.invoices.slice(0, 1000),
+    carrierBound: data.carrierBound === true,
+    syncStartDate: isValidDateText(data.syncStartDate) ? data.syncStartDate : '',
+  };
+}
+
+function isValidDateText(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+}
+
+function assertSheetInteger(value, label, options = {}) {
+  const amount = Number(value);
+  const minimum = options.allowNegative ? -MAX_SHEET_AMOUNT : 0;
+  if (!Number.isSafeInteger(amount) || amount < minimum || amount > MAX_SHEET_AMOUNT) {
+    throw new Error(`${label}格式不正確`);
+  }
+  return amount;
+}
+
+function projectAccount(account) {
+  const id = cleanText(account?.id, 40);
+  const name = cleanText(account?.name, 40);
+  if (!id || !name) throw new Error('帳戶資料格式不正確');
+  return {
+    id,
+    name,
+    openingBalance: assertSheetInteger(account?.openingBalance, `${name}初始金額`, {
+      allowNegative: true,
+    }),
+  };
+}
+
+function projectTransaction(transaction) {
+  const id = cleanText(transaction?.id, 80);
+  const type = cleanText(transaction?.type, 16);
+  const account = cleanText(transaction?.account, 40);
+  const date = cleanText(transaction?.date, 10);
+  if (!id || !['expense', 'income', 'transfer'].includes(type) || !account) {
+    throw new Error('交易資料格式不正確');
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('交易日期格式不正確');
+
+  const textFields = {
+    name: 120,
+    category: 60,
+    subcategory: 60,
+    toAccount: 40,
+    note: 240,
+    source: 16,
+    sourceId: 160,
+    invoiceNumber: 20,
+    merchant: 120,
+    createdAt: 40,
+    updatedAt: 40,
+    userEditedAt: 40,
+    importedAt: 40,
+    aiStatus: 24,
+    aiReviewedAt: 40,
+    rawTranscript: 240,
+  };
+  const projected = {
+    id,
+    type,
+    amount: assertSheetInteger(transaction?.amount, '交易金額'),
+    account,
+    toAccount: transaction?.toAccount == null ? null : cleanText(transaction.toAccount, 40),
+    date,
+  };
+  Object.entries(textFields).forEach(([field, maxLength]) => {
+    if (field === 'toAccount') return;
+    if (transaction?.[field] != null) projected[field] = cleanText(transaction[field], maxLength);
+  });
+  if (Array.isArray(transaction?.invoiceItems)) {
+    projected.invoiceItems = transaction.invoiceItems
+      .slice(0, 80)
+      .map(item => cleanText(item, 160))
+      .filter(Boolean);
+  }
+  return projected;
+}
+
+function projectBudget(budget) {
+  const category = cleanText(budget?.category, 40);
+  if (!category) throw new Error('預算資料格式不正確');
+  return {
+    category,
+    limit: assertSheetInteger(budget?.limit, `${category}預算`),
+  };
+}
+
+export function projectLedgerForSheet(state) {
+  const accounts = Array.isArray(state?.accounts) ? state.accounts : [];
+  const transactions = Array.isArray(state?.transactions) ? state.transactions : [];
+  const budgets = Array.isArray(state?.budgets) ? state.budgets : [];
+  if (accounts.length > MAX_SHEET_ACCOUNTS) throw new Error('帳戶資料過多');
+  if (transactions.length > MAX_SHEET_TRANSACTIONS) throw new Error('交易資料過多');
+  if (budgets.length > MAX_SHEET_BUDGETS) throw new Error('預算資料過多');
+
+  return {
+    schemaVersion: 1,
+    accounts: accounts.map(projectAccount),
+    transactions: transactions.map(projectTransaction),
+    budgets: budgets.map(projectBudget),
+  };
+}
+
+export async function syncLedgerStateToSheet(input, options = {}) {
+  const data = await postProxy(
+    input?.endpoint,
+    {
+      action: 'syncLedgerState',
+      proxyToken: cleanText(input?.proxyToken, 300),
+      state: projectLedgerForSheet(input?.state),
+    },
+    options,
+  );
+  const counts = ['accountCount', 'transactionCount', 'budgetCount'];
+  if (!counts.every(field => Number.isInteger(data?.[field]) && data[field] >= 0)) {
+    throw new Error('Sheet 同步回傳格式不正確');
+  }
+  return {
+    accountCount: data.accountCount,
+    transactionCount: data.transactionCount,
+    budgetCount: data.budgetCount,
+  };
+}
+
+export async function loadLedgerStateFromSheet(input, options = {}) {
+  const data = await postProxy(
+    input?.endpoint,
+    {
+      action: 'loadLedgerState',
+      proxyToken: cleanText(input?.proxyToken, 300),
+    },
+    options,
+  );
+  if (
+    data?.schemaVersion !== 1 ||
+    !Array.isArray(data.accounts) ||
+    !Array.isArray(data.transactions) ||
+    !Array.isArray(data.budgets) ||
+    data.accounts.length > MAX_SHEET_ACCOUNTS ||
+    data.transactions.length > MAX_SHEET_TRANSACTIONS ||
+    data.budgets.length > MAX_SHEET_BUDGETS
+  ) {
+    throw new Error('Sheet 回傳的帳本格式不正確');
+  }
+  return {
+    schemaVersion: 1,
+    accounts: data.accounts.map(account => ({ ...account })),
+    transactions: data.transactions.map(transaction => ({ ...transaction })),
+    budgets: data.budgets.map(budget => ({ ...budget })),
+  };
+}
+
+function projectSpokenDraft(draft) {
+  const type = ['expense', 'income', 'transfer'].includes(draft?.type)
+    ? draft.type
+    : 'expense';
+  const amount = Number(draft?.amount);
+  return {
+    type,
+    amount: Number.isSafeInteger(amount) && amount > 0 ? amount : null,
+    category: cleanText(draft?.category, 60),
+    subcategory: cleanText(draft?.subcategory, 60),
+    account: cleanText(draft?.account, 40),
+    toAccount: cleanText(draft?.toAccount, 40),
+    date: cleanText(draft?.date, 10),
+    name: cleanText(draft?.name, 120),
+    note: cleanText(draft?.note, 240),
+  };
+}
+
+export async function enqueueSpokenEntry(input, options = {}) {
+  const transcript = cleanText(input?.transcript, 240).normalize('NFKC');
+  if (!transcript) throw new Error('請輸入口語內容');
+  const data = await postProxy(
+    input?.endpoint,
+    {
+      action: 'enqueueSpokenEntry',
+      proxyToken: cleanText(input?.proxyToken, 300),
+      transcript,
+      timezone: 'Asia/Taipei',
+      draft: projectSpokenDraft(input?.draft),
+    },
+    options,
+  );
+  const queueId = cleanText(data?.queueId, 80);
+  const status = cleanText(data?.status, 24);
+  if (!queueId || !['pending', 'processing', 'reviewed'].includes(status)) {
+    throw new Error('口語記帳佇列回傳格式不正確');
+  }
+  return {
+    queueId,
+    status,
+    transaction:
+      data?.transaction && typeof data.transaction === 'object'
+        ? { ...data.transaction }
+        : null,
+  };
 }

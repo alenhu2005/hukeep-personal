@@ -13,10 +13,11 @@ function csvCell(value) {
 }
 
 export function transactionsToCsv(transactions) {
-  const header = ['類型', '金額', '分類', '帳戶', '目的帳戶', '日期', '備註', '小分類', '來源', '發票號碼'];
+  const header = ['類型', '名稱', '金額', '分類', '帳戶', '目的帳戶', '日期', '備註', '小分類', '來源', '發票號碼'];
   const rows = transactions.map(transaction =>
     [
       transaction.type,
+      transaction.name ?? '',
       transaction.amount,
       transaction.category ?? '',
       transaction.account,

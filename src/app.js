@@ -1,5 +1,8 @@
+import QRCode from 'qrcode';
+
 import { parseBackup, serializeBackup, transactionsToCsv } from './backup.js';
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from './config.js';
+import { updateOpeningBalances } from './domain/accounts.js';
 import { removeBudget, upsertBudget } from './domain/budgets.js';
 import {
   classifyIncomeLocally,
@@ -7,9 +10,11 @@ import {
   getSubcategories,
 } from './domain/category-taxonomy.js';
 import { parseSpokenTransaction } from './domain/spoken-entry.js';
+import { mergeLedgerStates } from './domain/ledger-sync.js';
 import {
   ValidationError,
   createTransaction,
+  normalizeStoredTransaction,
   removeTransaction,
   updateTransaction,
 } from './domain/transactions.js';
@@ -17,8 +22,21 @@ import { escapeHtml, monthLabel, todayInTaipei } from './format.js';
 import { hydrateIcons, icon } from './icons.js';
 import { createLedgerRepository } from './storage/ledger-repository.js';
 import { createSmartImportController } from './smart-import-controller.js';
-import { recognizeSpeechOnce } from './services/speech-recognition.js';
+import {
+  enqueueSpokenEntry,
+  loadLedgerStateFromSheet,
+  syncLedgerStateToSheet,
+} from './services/import-proxy.js';
+import {
+  createDeviceBindingPayload,
+  createDeviceBindingStore,
+  parseDeviceBindingHash,
+} from './services/device-binding.js';
 import { renderView } from './views.js';
+
+const LAST_SHEET_SYNC_KEY = 'hukeep_last_sheet_sync_at';
+const BACKGROUND_PULL_INTERVAL_MS = 5 * 60 * 1000;
+const RESUME_PULL_THRESHOLD_MS = 60 * 1000;
 
 function shiftMonth(month, offset) {
   const [year, monthNumber] = month.split('-').map(Number);
@@ -68,6 +86,12 @@ export function renderAccountButtons(accounts, selected, excluded = '', target =
 
 export function createApp() {
   const repository = createLedgerRepository(localStorage);
+  const deviceBinding = createDeviceBindingStore(localStorage, sessionStorage);
+  const incomingDeviceBinding = parseDeviceBindingHash(location.hash);
+  if (incomingDeviceBinding) {
+    deviceBinding.remember(incomingDeviceBinding);
+    history.replaceState(null, '', `${location.pathname}${location.search}#overview`);
+  }
   let state = repository.load();
   let view = safeViewFromHash();
   let selectedMonth = todayInTaipei().slice(0, 7);
@@ -78,12 +102,113 @@ export function createApp() {
   let classificationReady = false;
   let classificationTimer = null;
   let classificationRequest = 0;
+  let sheetPullInFlight = false;
+  let lastSheetPullAt = 0;
+  let deviceBindingLink = '';
 
   const main = document.querySelector('#app-main');
   const transactionDialog = document.querySelector('#transaction-dialog');
   const toolsDialog = document.querySelector('#tools-dialog');
   const transactionForm = document.querySelector('#transaction-form');
   const toast = document.querySelector('#toast');
+
+  function rememberProxySession(endpoint, proxyToken) {
+    return deviceBinding.remember({ endpoint, proxyToken });
+  }
+
+  function proxySession() {
+    const stored = deviceBinding.read();
+    const endpoint =
+      stored.endpoint ||
+      state.preferences.carrierEndpoint ||
+      import.meta.env.VITE_INVOICE_PROXY_URL ||
+      '';
+    if (endpoint && stored.proxyToken && !stored.bound) {
+      return rememberProxySession(endpoint, stored.proxyToken);
+    }
+    return { endpoint: endpoint.trim(), proxyToken: stored.proxyToken, bound: Boolean(endpoint && stored.proxyToken) };
+  }
+
+  function updateDeviceBindingStatus() {
+    const status = document.querySelector('#device-binding-status');
+    if (!status) return;
+    const binding = proxySession();
+    status.classList.toggle('bound', binding.bound);
+    status.textContent = binding.bound
+      ? '這台裝置已安全綁定 Sheet，現在可直接同步。'
+      : '這台裝置尚未完成安全綁定。';
+    document.querySelector('#device-binding-share').hidden = !binding.bound;
+  }
+
+  async function openDeviceBindingDialog() {
+    const credentials = proxySession();
+    if (!credentials.bound) {
+      showToast('這台裝置尚未綁定 Sheet，無法產生手機 QR。', 'error');
+      return;
+    }
+    const payload = createDeviceBindingPayload(credentials);
+    const appUrl = new URL(import.meta.env.BASE_URL, location.origin);
+    deviceBindingLink = `${appUrl.href}#bind=${payload}`;
+    document.querySelector('#device-binding-qr').src = await QRCode.toDataURL(deviceBindingLink, {
+      errorCorrectionLevel: 'M',
+      margin: 2,
+      width: 640,
+    });
+    document.querySelector('#device-binding-dialog').showModal();
+  }
+
+  async function copyDeviceBindingLink() {
+    if (!deviceBindingLink) return;
+    try {
+      await navigator.clipboard.writeText(deviceBindingLink);
+      showToast('手機綁定連結已複製。');
+    } catch {
+      showToast('無法複製，請直接用手機掃描 QR。', 'error');
+    }
+  }
+
+  function storedLastSyncAt() {
+    try {
+      const value = Number(localStorage.getItem(LAST_SHEET_SYNC_KEY));
+      return Number.isFinite(value) && value > 0 ? value : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  function setSyncStatus(status, options = {}) {
+    const indicator = document.querySelector('#sync-indicator');
+    const labels = {
+      local: '僅本機',
+      syncing: '同步中',
+      pending: 'AI 待審',
+      synced: '已同步',
+      error: '同步失敗',
+    };
+    const lastAt = options.lastAt || storedLastSyncAt();
+    const timeLabel = lastAt
+      ? new Intl.DateTimeFormat('zh-TW', { hour: '2-digit', minute: '2-digit' }).format(lastAt)
+      : '';
+    const label = labels[status] || labels.local;
+    indicator.dataset.status = status;
+    indicator.querySelector('strong').textContent = label;
+    indicator.setAttribute(
+      'aria-label',
+      options.detail || `${label}${timeLabel ? `，最後更新 ${timeLabel}` : ''}`,
+    );
+    indicator.title = indicator.getAttribute('aria-label');
+  }
+
+  function rememberSuccessfulSync() {
+    const now = Date.now();
+    lastSheetPullAt = now;
+    try {
+      localStorage.setItem(LAST_SHEET_SYNC_KEY, String(now));
+    } catch {
+      // The visual state still updates when timestamp persistence is unavailable.
+    }
+    setSyncStatus('synced', { lastAt: now });
+  }
 
   function persist(nextState) {
     try {
@@ -217,19 +342,11 @@ export function createApp() {
     syncAccountButtons(transactionForm.elements.account);
   }
 
-  function setTransactionAccount(selected) {
-    const fallback = state.accounts.some(account => account.id === 'cash')
-      ? 'cash'
-      : state.accounts[0]?.id;
-    const resolved = state.accounts.some(account => account.id === selected) ? selected : fallback;
-    transactionForm.elements.account.value = resolved;
-    updateDestinationAccounts(transactionForm.elements.toAccount.value);
-  }
-
   function openTransactionDialog(transaction = null) {
     transactionForm.reset();
     document.querySelector('#transaction-error').hidden = true;
     transactionForm.elements.id.value = transaction?.id || '';
+    transactionForm.elements.name.value = transaction?.name || transaction?.note || '';
     transactionForm.elements.amount.value = transaction?.amount || '';
     transactionForm.elements.date.value = transaction?.date || todayInTaipei();
     transactionForm.elements.note.value = transaction?.note || '';
@@ -250,16 +367,20 @@ export function createApp() {
     document.querySelector('#transaction-dialog-title').textContent = transaction ? '編輯這筆' : '記一筆';
     document.querySelector('#voice-transcript').value = '';
     document.querySelector('#voice-status').textContent =
-      '會先產生可編輯草稿，不會直接儲存。支援時優先使用裝置內辨識。';
+      '用鍵盤麥克風輸入後直接送出；Sheet 會先收到，AI 再從後台審查。';
     transactionDialog.showModal();
-    requestAnimationFrame(() => transactionForm.elements.amount.focus());
+    requestAnimationFrame(() =>
+      (transaction ? transactionForm.elements.name : document.querySelector('#voice-transcript')).focus(),
+    );
   }
 
   async function classifyTransactionNote({ force = false } = {}) {
     const type = transactionForm.elements.type.value;
     if (type === 'transfer') return true;
+    const name = transactionForm.elements.name.value.trim();
     const note = transactionForm.elements.note.value.trim();
-    if (!note && !force) {
+    const classificationInput = `${name} ${note}`.trim();
+    if (!classificationInput && !force) {
       setClassificationMessage('背景智慧分類', '輸入用途後會自動判斷；分類不會在新增畫面展開。');
       return false;
     }
@@ -268,10 +389,10 @@ export function createApp() {
 
     const local =
       type === 'income'
-        ? classifyIncomeLocally(note)
-        : classifyLocally({ merchant: note, items: [note] });
+        ? classifyIncomeLocally(classificationInput)
+        : classifyLocally({ merchant: name, items: [note] });
     const classificationText =
-      parseSpokenTransaction(note, { today: todayInTaipei() }).classificationText || note;
+      parseSpokenTransaction(classificationInput, { today: todayInTaipei() }).classificationText || classificationInput;
     const classification = smartImportController
       ? await smartImportController.classifyDraft({
           type,
@@ -299,81 +420,74 @@ export function createApp() {
     classificationTimer = setTimeout(() => classifyTransactionNote(), 650);
   }
 
-  async function applySpokenDraft(value, recognitionMode = '') {
+  function applyLocalTransactionClassification() {
+    const type = transactionForm.elements.type.value;
+    if (type === 'transfer') {
+      classificationReady = true;
+      return;
+    }
+    const text = `${transactionForm.elements.name.value} ${transactionForm.elements.note.value}`.trim();
+    const classification =
+      type === 'income'
+        ? classifyIncomeLocally(text)
+        : classifyLocally({ merchant: text, items: [text] });
+    setTransactionType(type, classification.topCategory, classification.subcategory, {
+      classificationReady: true,
+    });
+  }
+
+  async function submitSpokenEntry(value) {
     const transcript = String(value ?? '').trim();
     if (!transcript) {
       showToast('請先說一句或輸入口語內容。', 'error');
       return;
     }
     const status = document.querySelector('#voice-status');
-    const draft = parseSpokenTransaction(transcript, { today: todayInTaipei() });
-    setTransactionType(draft.type, draft.category || '', draft.subcategory || '', {
-      classificationReady: true,
-    });
-    transactionForm.elements.amount.value = draft.amount || '';
-    transactionForm.elements.date.value = draft.date;
-    transactionForm.elements.note.value = draft.note;
-    setTransactionAccount(draft.account);
-    if (draft.type === 'transfer') updateDestinationAccounts(draft.toAccount);
-
-    if (draft.type !== 'transfer' && smartImportController) {
-      status.textContent = '已理解內容，正在確認細分類…';
-      const classification = await smartImportController.classifyDraft({
-        type: draft.type,
-        text: draft.classificationText,
-        fallback: {
-          topCategory: draft.category,
-          subcategory: draft.subcategory,
-          confidence: draft.confidence,
-        },
-      });
-      setTransactionType(draft.type, classification.topCategory, classification.subcategory, {
-        classificationReady: true,
-      });
-      setTransactionAccount(draft.account);
-      setClassificationMessage(
-        classification.ai
-          ? `AI 已完成${draft.type === 'income' ? '收入' : ''}分類`
-          : `已完成本機${draft.type === 'income' ? '收入' : ''}預分類`,
-        '儲存後若發現有誤，可到紀錄中編輯。',
-      );
-      status.textContent = `${recognitionMode ? `${recognitionMode} · ` : ''}${classification.ai ? 'AI' : '本機'}分類完成${draft.amount ? '，請確認金額後儲存。' : '；金額未辨識，請手動補上。'}`;
-    } else {
-      const label = draft.type === 'income' ? '收入' : '轉帳';
-      if (draft.type === 'income') {
-        setClassificationMessage(
-          '已完成收入分類',
-          '儲存後若發現有誤，可到紀錄中編輯。',
-        );
-      }
-      status.textContent = `${recognitionMode ? `${recognitionMode} · ` : ''}已解析${label}${draft.amount ? '，請確認後儲存。' : '；金額未辨識，請手動補上。'}`;
+    const button = document.querySelector('#voice-submit-button');
+    const credentials = proxySession();
+    if (!credentials.endpoint || !credentials.proxyToken) {
+      status.textContent = '這台裝置尚未綁定 Google Sheet，請先完成裝置授權。';
+      showToast('這台裝置尚未綁定 Sheet。', 'error');
+      return;
     }
-    if (!draft.amount) transactionForm.elements.amount.focus();
-  }
-
-  async function listenForSpokenEntry() {
-    const button = document.querySelector('#voice-listen-button');
-    const status = document.querySelector('#voice-status');
+    const draft = parseSpokenTransaction(transcript, { today: todayInTaipei() });
     button.disabled = true;
-    button.textContent = '聆聽中…';
-    status.textContent = '請說出日期、用途、金額與帳戶。';
+    setSyncStatus('syncing');
+    status.textContent = '正在上傳 Sheet…不需等待 AI 審查。';
     try {
-      const result = await recognizeSpeechOnce();
-      document.querySelector('#voice-transcript').value = result.transcript;
-      await applySpokenDraft(result.transcript, result.local ? '裝置內辨識' : '瀏覽器語音服務');
+      const result = await enqueueSpokenEntry({
+        ...credentials,
+        transcript,
+        draft,
+      });
+      const transaction = normalizeStoredTransaction(result.transaction);
+      if (transaction) {
+        const exists = state.transactions.some(item => item.id === transaction.id);
+        const transactions = exists
+          ? state.transactions.map(item => (item.id === transaction.id ? transaction : item))
+          : [...state.transactions, transaction];
+        if (!persist({ ...state, transactions })) return;
+      }
+      rememberProxySession(credentials.endpoint, credentials.proxyToken);
+      document.querySelector('#voice-transcript').value = '';
+      transactionDialog.close();
+      render();
+      setSyncStatus('pending', { detail: '已上傳 Sheet，AI 後台待審' });
+      showToast('已上傳 Sheet，AI 會在後台審查更新。');
     } catch (error) {
       status.textContent = error.message;
+      setSyncStatus('error', { detail: `Sheet 上傳失敗：${error.message}` });
+      showToast(error.message, 'error');
     } finally {
       button.disabled = false;
-      button.textContent = '開始說話';
     }
   }
 
-  async function saveTransaction(event) {
+  function saveTransaction(event) {
     event.preventDefault();
     const errorElement = document.querySelector('#transaction-error');
     if (transactionForm.elements.type.value !== 'transfer' && !classificationReady) {
-      await classifyTransactionNote({ force: true });
+      applyLocalTransactionClassification();
     }
     const values = Object.fromEntries(new FormData(transactionForm));
     const input = { ...values, amount: Number(values.amount) };
@@ -382,6 +496,7 @@ export function createApp() {
         ? updateTransaction(state.transactions, values.id, input)
         : [...state.transactions, createTransaction(input)];
       if (!persist({ ...state, transactions })) return;
+      setSyncStatus('local', { detail: '已儲存在本機，尚未同步這次修改' });
       transactionDialog.close();
       render();
       showToast(values.id ? '已更新這筆記錄。' : '記下來了。');
@@ -396,6 +511,7 @@ export function createApp() {
     if (!transaction) return;
     const index = state.transactions.findIndex(item => item.id === id);
     if (!persist({ ...state, transactions: removeTransaction(state.transactions, id) })) return;
+    setSyncStatus('local', { detail: '已從本機刪除，尚未同步這次修改' });
     lastDeleted = { transaction, index };
     render();
     showToast('已刪除一筆記錄。', 'default', {
@@ -484,6 +600,130 @@ export function createApp() {
     }
   }
 
+  function configureToolsForms() {
+    const fields = document.querySelector('#opening-balance-fields');
+    fields.innerHTML = state.accounts
+      .map(
+        account => `<label><span>${escapeHtml(account.name)}初始金額</span><input name="${escapeHtml(account.id)}" type="number" step="1" inputmode="numeric" value="${account.openingBalance}" required /></label>`,
+      )
+      .join('');
+    updateDeviceBindingStatus();
+  }
+
+  function saveOpeningBalances(event) {
+    event.preventDefault();
+    try {
+      const values = Object.fromEntries(new FormData(event.currentTarget));
+      const accounts = updateOpeningBalances(state.accounts, values);
+      if (!persist({ ...state, accounts })) return;
+      setSyncStatus('local', { detail: '初始金額已儲存在本機，尚未同步' });
+      render();
+      showToast('帳戶初始金額已儲存。');
+    } catch (error) {
+      showToast(error.message, 'error');
+    }
+  }
+
+  async function syncSheet(event) {
+    event.preventDefault();
+    const button = document.querySelector('#sheet-sync-button');
+    const status = document.querySelector('#sheet-sync-status');
+    const credentials = proxySession();
+    button.disabled = true;
+    setSyncStatus('syncing');
+    status.classList.remove('error');
+    status.textContent = '正在安全同步…';
+    try {
+      const result = await syncLedgerStateToSheet({
+        ...credentials,
+        state,
+      });
+      if (
+        !persist({
+          ...state,
+          preferences: { ...state.preferences, carrierEndpoint: credentials.endpoint },
+        })
+      ) {
+        return;
+      }
+      rememberProxySession(credentials.endpoint, credentials.proxyToken);
+      rememberSuccessfulSync();
+      status.textContent = `同步完成：${result.accountCount} 個帳戶、${result.transactionCount} 筆交易、${result.budgetCount} 筆預算。`;
+      showToast('Google Sheet 同步完成。');
+    } catch (error) {
+      setSyncStatus('error', { detail: `Sheet 同步失敗：${error.message}` });
+      status.classList.add('error');
+      status.textContent = error.message;
+      showToast(error.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  async function loadSheet() {
+    const syncButton = document.querySelector('#sheet-sync-button');
+    const loadButton = document.querySelector('#sheet-load-button');
+    const status = document.querySelector('#sheet-sync-status');
+    const credentials = proxySession();
+    if (!confirm('要從 Sheet 取回最新資料並與本機合併嗎？同一筆資料會保留較新版本。')) return;
+    syncButton.disabled = true;
+    loadButton.disabled = true;
+    setSyncStatus('syncing');
+    status.classList.remove('error');
+    status.textContent = '正在從 Sheet 讀取…';
+    try {
+      const sheetState = await loadLedgerStateFromSheet({
+        ...credentials,
+      });
+      const merged = mergeLedgerStates(state, sheetState);
+      if (!persist({
+        ...merged,
+        preferences: { ...merged.preferences, carrierEndpoint: credentials.endpoint },
+      })) {
+        return;
+      }
+      rememberProxySession(credentials.endpoint, credentials.proxyToken);
+      rememberSuccessfulSync();
+      render();
+      status.textContent = `讀取完成：${sheetState.accounts.length} 個帳戶、${sheetState.transactions.length} 筆交易、${sheetState.budgets.length} 筆預算。`;
+      showToast('Google Sheet 資料已更新到本機。');
+    } catch (error) {
+      setSyncStatus('error', { detail: `Sheet 讀取失敗：${error.message}` });
+      status.classList.add('error');
+      status.textContent = error.message;
+      showToast(error.message, 'error');
+    } finally {
+      syncButton.disabled = false;
+      loadButton.disabled = false;
+    }
+  }
+
+  async function refreshSheetInBackground(options = {}) {
+    const credentials = proxySession();
+    const now = Date.now();
+    if (
+      sheetPullInFlight ||
+      document.hidden ||
+      !credentials.endpoint ||
+      !credentials.proxyToken ||
+      (!options.force && now - lastSheetPullAt < RESUME_PULL_THRESHOLD_MS)
+    ) {
+      return;
+    }
+    sheetPullInFlight = true;
+    setSyncStatus('syncing');
+    try {
+      const remote = await loadLedgerStateFromSheet(credentials);
+      if (!persist(mergeLedgerStates(state, remote))) return;
+      rememberSuccessfulSync();
+      render();
+    } catch (error) {
+      setSyncStatus('error', { detail: `背景 Sheet 更新失敗：${error.message}` });
+    } finally {
+      sheetPullInFlight = false;
+    }
+  }
+
   document.querySelectorAll('[data-nav-view]').forEach(button =>
     button.addEventListener('click', () => navigate(button.dataset.navView)),
   );
@@ -493,7 +733,12 @@ export function createApp() {
     if (!persist({ ...state, preferences: { ...state.preferences, theme } })) return;
     applyTheme();
   });
-  document.querySelector('#tools-button').addEventListener('click', () => toolsDialog.showModal());
+  document.querySelector('#tools-button').addEventListener('click', () => {
+    configureToolsForms();
+    toolsDialog.showModal();
+  });
+  document.querySelector('#device-binding-share').addEventListener('click', openDeviceBindingDialog);
+  document.querySelector('#device-binding-copy').addEventListener('click', copyDeviceBindingLink);
   document.querySelector('#smart-import-button').addEventListener('click', () => {
     smartImportController?.configureForms();
     toolsDialog.close();
@@ -506,6 +751,14 @@ export function createApp() {
     importData(input.files?.[0]).finally(() => {
       input.value = '';
     });
+  });
+  document.querySelector('#opening-balance-form').addEventListener('submit', saveOpeningBalances);
+  document.querySelector('#sheet-sync-form').addEventListener('submit', syncSheet);
+  document.querySelector('#sheet-load-button').addEventListener('click', loadSheet);
+  document.querySelector('#sync-indicator').addEventListener('click', () => {
+    configureToolsForms();
+    toolsDialog.showModal();
+    document.querySelector('#sheet-sync-title').scrollIntoView({ block: 'center' });
   });
   document.querySelectorAll('.dialog-close').forEach(button =>
     button.addEventListener('click', () => button.closest('dialog').close()),
@@ -539,15 +792,15 @@ export function createApp() {
   transactionForm.elements.category.addEventListener('change', () =>
     setSubcategoryOptions(transactionForm.elements.type.value),
   );
+  transactionForm.elements.name.addEventListener('input', scheduleTransactionClassification);
   transactionForm.elements.note.addEventListener('input', scheduleTransactionClassification);
-  document.querySelector('#voice-listen-button').addEventListener('click', listenForSpokenEntry);
-  document.querySelector('#voice-parse-button').addEventListener('click', () =>
-    applySpokenDraft(document.querySelector('#voice-transcript').value),
+  document.querySelector('#voice-submit-button').addEventListener('click', () =>
+    submitSpokenEntry(document.querySelector('#voice-transcript').value),
   );
   document.querySelector('#voice-transcript').addEventListener('keydown', event => {
     if (event.key === 'Enter') {
       event.preventDefault();
-      applySpokenDraft(event.currentTarget.value);
+      submitSpokenEntry(event.currentTarget.value);
     }
   });
   main.addEventListener('click', handleMainClick);
@@ -558,6 +811,11 @@ export function createApp() {
     view = safeViewFromHash();
     render();
   });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && Date.now() - lastSheetPullAt >= RESUME_PULL_THRESHOLD_MS) {
+      refreshSheetInBackground();
+    }
+  });
 
   smartImportController = createSmartImportController({
     getState: () => state,
@@ -565,10 +823,17 @@ export function createApp() {
     render,
     showToast,
     getSelectedMonth: () => selectedMonth,
+    getProxyCredentials: proxySession,
+    rememberProxyCredentials: rememberProxySession,
   });
 
   hydrateIcons();
   document.querySelector('#tools-button').innerHTML = icon('settings', 19);
+  lastSheetPullAt = storedLastSyncAt();
+  setSyncStatus(lastSheetPullAt ? 'synced' : 'local', { lastAt: lastSheetPullAt });
   applyTheme();
   render();
+  if (incomingDeviceBinding) showToast('手機已完成 Sheet 與載具裝置綁定。');
+  setTimeout(() => refreshSheetInBackground(), 1200);
+  setInterval(() => refreshSheetInBackground({ force: true }), BACKGROUND_PULL_INTERVAL_MS);
 }

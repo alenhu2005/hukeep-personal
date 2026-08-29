@@ -35,7 +35,7 @@
 
 .voice-input-row {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: 1fr auto;
   gap: 7px;
 }
 
@@ -54,6 +54,27 @@
   color: var(--muted);
   font-size: 10px;
   line-height: 1.5;
+}
+
+.transaction-name-field {
+  display: grid;
+  gap: 7px;
+  margin-top: 16px;
+}
+
+.transaction-name-field > span {
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.transaction-name-field input {
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
 }
 
 .classification-status {
@@ -221,6 +242,58 @@
   grid-column: 1 / -1;
 }
 
+.carrier-binding-status {
+  margin: 0;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.carrier-binding-status.bound {
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 750;
+}
+
+.carrier-credentials {
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.carrier-credentials summary {
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.carrier-credentials-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px;
+  margin-top: 12px;
+}
+
+.carrier-remember {
+  display: flex !important;
+  grid-template-columns: auto 1fr;
+  align-items: flex-start;
+  gap: 8px !important;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.carrier-remember input {
+  width: 16px;
+  min-height: 16px;
+  margin: 0;
+}
+
 .import-form-grid label > span,
 .carrier-form label > span {
   color: var(--ink-soft);
@@ -330,10 +403,14 @@
   }
 
   .voice-input-row {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
   }
 
   .voice-input-row input {
-    grid-column: 1 / -1;
+    grid-column: auto;
+  }
+
+  .voice-input-row button {
+    width: 100%;
   }
 }

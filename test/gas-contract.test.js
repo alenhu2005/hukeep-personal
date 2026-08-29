@@ -1,0 +1,92 @@
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+
+const source = readFileSync(new URL('../gas/invoice-proxy.gs', import.meta.url), 'utf8');
+
+describe('GAS 同步合約', () => {
+  it('保持可解析的 JavaScript 語法', () => {
+    expect(() => new Function(source)).not.toThrow();
+  });
+
+  it('包含帳本 Sheet、載具綁定與每月排程，但不寫死試算表 ID', () => {
+    expect(source).toContain("body.action === 'syncLedgerState'");
+    expect(source).toContain("body.action === 'loadLedgerState'");
+    expect(source).toContain("requiredProperty_('SPREADSHEET_ID')");
+    expect(source).toContain("CARRIER_CARD_ENCRYPT");
+    expect(source).toContain("newTrigger('scheduledCarrierSync')");
+    expect(source).toContain('everyHours(2)');
+    expect(source).toContain('CARRIER_SYNC_START_DATE');
+    expect(source).toContain('小帳_帳戶');
+    expect(source).toContain('小帳_交易');
+    expect(source).toContain('小帳_載具同步');
+    expect(source).not.toContain('1nlUSUpk5F4fnhDRTPWS4KlIIfqAYWkT6xn3965Xl8N-eRKiFyVjqNO4w');
+  });
+
+  it('預設使用最新穩定的 Gemini 3.7 Flash，並允許以指令碼屬性覆寫', () => {
+    expect(source).toContain("var DEFAULT_GEMINI_MODEL = 'gemini-3.7-flash'");
+    expect(source).toContain("optionalProperty_('GEMINI_MODEL') || DEFAULT_GEMINI_MODEL");
+    expect(source).not.toContain("var GEMINI_MODEL = 'gemini-2.5-flash'");
+    expect(source).not.toContain('temperature:');
+  });
+
+  it('Gemini 結構化輸出的帳戶 enum 不包含無效空字串', () => {
+    expect(source).not.toContain("enum: [''].concat(ACCOUNT_IDS)");
+    expect(source).toContain("toAccount: { type: 'STRING', enum: ACCOUNT_IDS }");
+  });
+
+  it('提供只用來完成試算表 OAuth 的公開授權函式', () => {
+    expect(source).toContain('function authorizeSpreadsheetAccess()');
+    expect(source).toContain("SpreadsheetApp.openById(requiredProperty_('SPREADSHEET_ID'))");
+  });
+
+  it('口語條目先入 Sheet 佇列，再由背景 AI 更新且尊重手動鎖定', () => {
+    expect(source).toContain("body.action === 'enqueueSpokenEntry'");
+    expect(source).toContain('小帳_語音佇列');
+    expect(source).toContain("newTrigger('processPendingSpokenEntries')");
+    expect(source).toContain('function processPendingSpokenEntries()');
+    expect(source).toContain('userEditedAt');
+    expect(source).toContain('使用者鎖定');
+  });
+
+  it('寫入口語佇列不會因觸發器尚未授權而報錯', () => {
+    const enqueueBody = source.match(/function enqueueSpokenEntry_\([\s\S]*?\n}\n\nfunction normalizeSpokenDraft_/)?.[0] || '';
+    const installerBody = source.match(/function installBackgroundProcessing\(\)[\s\S]*?\n}/)?.[0] || '';
+
+    expect(enqueueBody).toContain('try {\n    ensureSpokenQueueTrigger_();');
+    expect(enqueueBody).toContain('口語佇列已寫入，但背景觸發器尚未授權');
+    expect(installerBody).not.toContain('catch (triggerError)');
+  });
+
+  it('自動修復舊版「日期在第一欄」的交易列', () => {
+    const normalizeRow = new Function(`${source}\nreturn normalizeLedgerTransactionRow_;`)();
+    const legacyRow = [
+      '2026-08-27', 'voice:test', 'income', '家教', 2500, '接案', '家教', 'bot', '', '口語原文',
+      'voice', 'test', '', '', '[]', 'created', 'updated', '', '', 'pending', '', '口語原文',
+    ];
+
+    expect(normalizeRow(legacyRow)).toEqual([
+      'voice:test', 'income', '家教', 2500, '接案', '家教', 'bot', '', '2026-08-27', '口語原文',
+      'voice', 'test', '', '', '[]', 'created', 'updated', '', '', 'pending', '', '口語原文',
+    ]);
+  });
+
+  it('從 Sheet 讀回日期儀存格時仍回傳 yyyy-MM-dd', () => {
+    const fromRow = new Function('Utilities', `${source}\nreturn ledgerTransactionFromRow_;`)({
+      formatDate: () => '2026-08-27',
+    });
+    const row = [
+      'voice:test', 'income', '家教', 2500, '接案', '家教', 'bot', '', new Date('2026-08-27T00:00:00+08:00'),
+      '備註', 'voice', 'test', '', '', '[]', 'created', 'updated', '', '', 'pending', '', '口語原文',
+    ];
+
+    expect(fromRow(row).date).toBe('2026-08-27');
+  });
+
+  it('AI 暫時錯誤會自動重試，但最多三次', () => {
+    const retryable = new Function(`${source}\nreturn retryableSpokenFailure_;`)();
+
+    expect(retryable('失敗', 'AI 審核暫時無法使用', 1)).toBe(true);
+    expect(retryable('失敗', 'AI 審核暫時無法使用', 3)).toBe(false);
+    expect(retryable('失敗', 'AI 無法辨識正確金額', 1)).toBe(false);
+  });
+});

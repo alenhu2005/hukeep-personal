@@ -31,22 +31,30 @@ export function transactionRows(transactions, accounts) {
         transaction.type === 'transfer'
           ? `${accountNames[transaction.account] || transaction.account} → ${accountNames[transaction.toAccount] || transaction.toAccount}`
           : [transaction.category, transaction.subcategory].filter(Boolean).join(' · ');
-      const note = transaction.note || label || TYPE_LABELS[transaction.type];
+      const primaryName =
+        transaction.name || transaction.note || label || TYPE_LABELS[transaction.type];
+      const secondary = [
+        transaction.note && transaction.note !== primaryName ? transaction.note : '',
+        label,
+        formatDate(transaction.date),
+      ]
+        .filter(Boolean)
+        .join(' · ');
       const sign = isExpense ? '-' : isIncome ? '+' : '';
       return `
         <article class="transaction-row" data-transaction-row data-type="${transaction.type}">
           ${categoryMark(transaction.category || '轉')}
           <div class="transaction-copy">
-            <strong>${escapeHtml(note)}</strong>
-            <span>${escapeHtml(label)} · ${formatDate(transaction.date)}</span>
+            <strong>${escapeHtml(primaryName)}</strong>
+            <span>${escapeHtml(secondary)}</span>
           </div>
           <div class="transaction-amount ${transaction.type}">
             <strong>${sign}${formatMoney(transaction.amount).replace('NT$ ', '')}</strong>
             <span>${escapeHtml(accountNames[transaction.account] || transaction.account)}</span>
           </div>
           <div class="row-actions">
-            <button type="button" data-edit-id="${escapeHtml(transaction.id)}" aria-label="編輯 ${escapeHtml(note)}">${icon('edit', 16)}</button>
-            <button type="button" data-delete-id="${escapeHtml(transaction.id)}" aria-label="刪除 ${escapeHtml(note)}">${icon('trash', 16)}</button>
+            <button type="button" data-edit-id="${escapeHtml(transaction.id)}" aria-label="編輯 ${escapeHtml(primaryName)}">${icon('edit', 16)}</button>
+            <button type="button" data-delete-id="${escapeHtml(transaction.id)}" aria-label="刪除 ${escapeHtml(primaryName)}">${icon('trash', 16)}</button>
           </div>
         </article>`;
     })

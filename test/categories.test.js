@@ -16,6 +16,9 @@ describe('階層分類 taxonomy', () => {
     expect(EXPENSE_TAXONOMY['交通']).toContain('高鐵火車');
     expect(EXPENSE_TAXONOMY['居家']).toContain('網路通訊');
     expect(EXPENSE_TAXONOMY['醫療']).toContain('藥品');
+    expect(EXPENSE_TAXONOMY['投資']).toEqual(
+      expect.arrayContaining(['股票', 'ETF', '基金', '債券', '加密資產', '交易手續費']),
+    );
   });
 
   it('支出與收入 taxonomy 分開，並可取得指定大分類的小分類', () => {
@@ -33,6 +36,9 @@ describe('階層分類 taxonomy', () => {
     expect(INCOME_TAXONOMY['零用與贈與']).toContain('零用錢');
     expect(INCOME_TAXONOMY['接案']).toContain('家教');
     expect(INCOME_TAXONOMY['中獎']).toContain('發票中獎');
+    expect(INCOME_TAXONOMY['投資']).toEqual(
+      expect.arrayContaining(['股票股息', 'ETF配息', '基金收益', '債券利息', '加密資產收益']),
+    );
     expect(getSubcategories('飲食')).toEqual(EXPENSE_TAXONOMY['飲食']);
     expect(getSubcategories('薪資', 'income')).toEqual(INCOME_TAXONOMY['薪資']);
     expect(getSubcategories('不存在')).toEqual([]);
@@ -51,6 +57,7 @@ describe('本機收入分類', () => {
     ['媽媽給的零用錢', { topCategory: '零用與贈與', subcategory: '零用錢' }],
     ['收到這週家教費', { topCategory: '接案', subcategory: '家教' }],
     ['統一發票中獎', { topCategory: '中獎', subcategory: '發票中獎' }],
+    ['收到 0050 ETF 配息', { topCategory: '投資', subcategory: 'ETF配息' }],
   ])('辨識收入來源 %#', (text, expected) => {
     expect(classifyIncomeLocally(text)).toMatchObject(expected);
   });
@@ -77,6 +84,10 @@ describe('本機分類', () => {
     [
       { merchant: '丁丁藥局', items: ['感冒藥', '退燒藥'] },
       { topCategory: '醫療', subcategory: '藥品' },
+    ],
+    [
+      { merchant: '永豐金證券', items: ['定期定額買入 0050 ETF'] },
+      { topCategory: '投資', subcategory: 'ETF' },
     ],
   ])('依商家與品項高信心分類 %#', (input, expected) => {
     const result = classifyLocally(input);

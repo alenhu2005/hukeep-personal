@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   classifyExpenseWithAi,
+  enqueueSpokenEntry,
+  loadLedgerStateFromSheet,
   syncCarrierInvoices,
+  syncLedgerStateToSheet,
   validateProxyEndpoint,
 } from '../src/services/import-proxy.js';
 
@@ -48,7 +51,10 @@ describe('智慧匯入代理', () => {
     const invoices = [{ invoiceNumber: 'AB12345678', amount: 120 }];
     const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ ok: true, data: { invoices } }),
+      json: async () => ({
+        ok: true,
+        data: { invoices, carrierBound: true, syncStartDate: '2026-08-01' },
+      }),
     });
 
     await expect(
@@ -59,17 +65,63 @@ describe('智慧匯入代理', () => {
           cardNo: '/ABC+123',
           cardEncrypt: 'password',
           month: '2026-08',
+          syncStartDate: '2026-08-01',
         },
         { fetchImpl },
       ),
-    ).resolves.toEqual(invoices);
+    ).resolves.toEqual({ invoices, carrierBound: true, syncStartDate: '2026-08-01' });
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
       action: 'syncCarrierInvoices',
       proxyToken: 'token',
       cardNo: '/ABC+123',
       cardEncrypt: 'password',
       month: '2026-08',
+      rememberCarrier: false,
+      syncStartDate: '2026-08-01',
     });
+  });
+
+  it('已綁定載具時可不再傳手機條碼與驗證碼', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        data: { invoices: [], carrierBound: true, syncStartDate: '2026-08-01' },
+      }),
+    });
+
+    await expect(
+      syncCarrierInvoices(
+        {
+          endpoint: 'https://example.com/proxy',
+          proxyToken: 'token',
+          month: '2026-08',
+          rememberCarrier: true,
+          syncStartDate: '2026-08-01',
+        },
+        { fetchImpl },
+      ),
+    ).resolves.toEqual({ invoices: [], carrierBound: true, syncStartDate: '2026-08-01' });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+      action: 'syncCarrierInvoices',
+      proxyToken: 'token',
+      cardNo: '',
+      cardEncrypt: '',
+      month: '2026-08',
+      rememberCarrier: true,
+      syncStartDate: '2026-08-01',
+    });
+  });
+
+  it('拒絕格式不正確的載具自動同步起始日', async () => {
+    await expect(
+      syncCarrierInvoices({
+        endpoint: 'https://example.com/proxy',
+        proxyToken: 'token',
+        month: '2026-08',
+        syncStartDate: '2026-02-30',
+      }),
+    ).rejects.toThrow('起始日期');
   });
 
   it('AI 無法判斷時保留本機分類，不降級成其他支出', async () => {
@@ -140,5 +192,201 @@ describe('智慧匯入代理', () => {
         { fetchImpl },
       ),
     ).rejects.toThrow('載具驗證失敗');
+  });
+
+  it('只將記帳內容同步至 Sheet，不傳偏好或載具資料', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        data: { accountCount: 1, transactionCount: 1, budgetCount: 1 },
+      }),
+    });
+    const state = {
+      schemaVersion: 1,
+      accounts: [{ id: 'cash', name: '現金', icon: '現', openingBalance: 5000 }],
+      transactions: [
+        {
+          id: 'tx-1',
+          type: 'expense',
+          amount: 120,
+          category: '飲食',
+          subcategory: '火鍋',
+          account: 'cash',
+          toAccount: null,
+          date: '2026-08-29',
+          note: '午餐',
+          source: 'ocr',
+          invoiceNumber: 'AB12345678',
+          invoiceItems: ['麻辣鍋'],
+          createdAt: '2026-08-29T04:00:00.000Z',
+          updatedAt: '2026-08-29T04:00:00.000Z',
+        },
+      ],
+      budgets: [{ category: '飲食', limit: 6000 }],
+      preferences: {
+        theme: 'dark',
+        carrierCardNo: '/ABC+123',
+        carrierEndpoint: 'https://secret.example/',
+        proxyToken: 'must-not-leak',
+      },
+    };
+
+    await expect(
+      syncLedgerStateToSheet(
+        {
+          endpoint: 'https://example.com/proxy',
+          proxyToken: 'session-only-token',
+          state,
+        },
+        { fetchImpl },
+      ),
+    ).resolves.toEqual({ accountCount: 1, transactionCount: 1, budgetCount: 1 });
+
+    const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
+    expect(body.action).toBe('syncLedgerState');
+    expect(body.proxyToken).toBe('session-only-token');
+    expect(body.state).toEqual({
+      schemaVersion: 1,
+      accounts: [{ id: 'cash', name: '現金', openingBalance: 5000 }],
+      transactions: [state.transactions[0]],
+      budgets: [{ category: '飲食', limit: 6000 }],
+    });
+    expect(JSON.stringify(body.state)).not.toContain('must-not-leak');
+    expect(JSON.stringify(body.state)).not.toContain('/ABC+123');
+    expect(body.state.accounts[0]).not.toHaveProperty('icon');
+  });
+
+  it('Sheet 同步會在送出前拒絕過量資料', async () => {
+    await expect(
+      syncLedgerStateToSheet({
+        endpoint: 'https://example.com/proxy',
+        proxyToken: 'token',
+        state: {
+          accounts: Array.from({ length: 21 }, (_, index) => ({
+            id: `account-${index}`,
+            name: `帳戶 ${index}`,
+            openingBalance: 0,
+          })),
+          transactions: [],
+          budgets: [],
+        },
+      }),
+    ).rejects.toThrow('帳戶資料過多');
+  });
+
+  it('可從 Sheet 讀回帳戶、交易與預算', async () => {
+    const sheetState = {
+      schemaVersion: 1,
+      accounts: [{ id: 'cash', name: '現金', icon: '現', openingBalance: 5000 }],
+      transactions: [
+        {
+          id: 'voice:1',
+          type: 'expense',
+          name: '鼎王麻辣鍋',
+          amount: 1200,
+          category: '飲食',
+          subcategory: '火鍋',
+          account: 'cash',
+          toAccount: null,
+          date: '2026-08-28',
+          note: '聚餐',
+          source: 'voice',
+          createdAt: '2026-08-29T06:00:00.000Z',
+          updatedAt: '2026-08-29T06:01:00.000Z',
+        },
+      ],
+      budgets: [{ category: '飲食', limit: 5000 }],
+    };
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: sheetState }),
+    });
+
+    await expect(
+      loadLedgerStateFromSheet(
+        {
+          endpoint: 'https://example.com/proxy',
+          proxyToken: 'session-token',
+        },
+        { fetchImpl },
+      ),
+    ).resolves.toEqual(sheetState);
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+      action: 'loadLedgerState',
+      proxyToken: 'session-token',
+    });
+  });
+
+  it('口語記帳直接送進 Sheet 後台佇列，不等待 AI 才回應', async () => {
+    const provisionalTransaction = {
+      id: 'voice:queue-1',
+      type: 'expense',
+      name: '鼎王麻辣鍋',
+      amount: 1200,
+      category: '飲食',
+      subcategory: '火鍋',
+      account: 'sinopac',
+      toAccount: null,
+      date: '2026-08-28',
+      note: '昨天用永豐在鼎王吃麻辣鍋一千二',
+      source: 'voice',
+      sourceId: 'queue-1',
+      aiStatus: 'pending',
+      createdAt: '2026-08-29T06:00:00.000Z',
+      updatedAt: '2026-08-29T06:00:00.000Z',
+    };
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        ok: true,
+        data: { queueId: 'queue-1', status: 'pending', transaction: provisionalTransaction },
+      }),
+    });
+
+    await expect(
+      enqueueSpokenEntry(
+        {
+          endpoint: 'https://example.com/proxy',
+          proxyToken: 'session-token',
+          transcript: '昨天用永豐在鼎王吃麻辣鍋一千二',
+          draft: provisionalTransaction,
+        },
+        { fetchImpl },
+      ),
+    ).resolves.toEqual({
+      queueId: 'queue-1',
+      status: 'pending',
+      transaction: provisionalTransaction,
+    });
+
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+      action: 'enqueueSpokenEntry',
+      proxyToken: 'session-token',
+      transcript: '昨天用永豐在鼎王吃麻辣鍋一千二',
+      timezone: 'Asia/Taipei',
+      draft: {
+        type: 'expense',
+        amount: 1200,
+        category: '飲食',
+        subcategory: '火鍋',
+        account: 'sinopac',
+        toAccount: '',
+        date: '2026-08-28',
+        name: '鼎王麻辣鍋',
+        note: '昨天用永豐在鼎王吃麻辣鍋一千二',
+      },
+    });
+  });
+
+  it('口語記帳拒絕空白內容，不呼叫代理', async () => {
+    const fetchImpl = vi.fn();
+    await expect(
+      enqueueSpokenEntry(
+        { endpoint: 'https://example.com/proxy', proxyToken: 'token', transcript: '   ' },
+        { fetchImpl },
+      ),
+    ).rejects.toThrow('口語內容');
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

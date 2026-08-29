@@ -319,6 +319,133 @@
   opacity: 0;
 }
 
+.settings-section {
+  margin-top: 18px;
+  padding: 17px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--surface-strong);
+}
+
+.settings-section-heading h3 {
+  margin-bottom: 5px;
+  font-size: 15px;
+}
+
+.settings-section-heading p {
+  margin-bottom: 15px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.opening-balance-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 13px;
+}
+
+.opening-balance-grid label,
+.sheet-sync-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.opening-balance-grid input,
+.sheet-sync-form input {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.settings-section .primary-button {
+  width: 100%;
+}
+
+.sheet-sync-form {
+  display: grid;
+  gap: 11px;
+}
+
+.device-binding-status {
+  margin: 0;
+  padding: 11px 12px;
+  border-radius: 10px;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.55;
+}
+
+.device-binding-status.bound {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+
+.device-binding-dialog {
+  width: min(390px, calc(100vw - 28px));
+}
+
+.device-binding-content {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding: 4px 2px 2px;
+  text-align: center;
+}
+
+.device-binding-content img {
+  width: min(260px, 76vw);
+  aspect-ratio: 1;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+}
+
+.device-binding-content p {
+  max-width: 34ch;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.sheet-sync-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.sheet-sync-form small {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.settings-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.settings-status.error {
+  color: var(--expense);
+}
+
 .privacy-note {
   display: flex;
   gap: 11px;

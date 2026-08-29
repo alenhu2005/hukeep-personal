@@ -231,6 +231,39 @@ button,
   gap: 8px;
 }
 
+.sync-indicator {
+  display: inline-flex;
+  min-height: 30px;
+  padding: 0 9px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.sync-indicator span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.sync-indicator[data-status='syncing'],
+.sync-indicator[data-status='pending'] {
+  color: var(--primary);
+}
+
+.sync-indicator[data-status='synced'] {
+  color: var(--income);
+}
+
+.sync-indicator[data-status='error'] {
+  color: var(--expense);
+}
+
 .month-chip {
   margin-right: 4px;
   color: var(--ink-soft);

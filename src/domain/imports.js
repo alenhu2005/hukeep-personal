@@ -73,6 +73,7 @@ export function invoiceToTransaction(invoice, options = {}) {
       subcategory: options.subcategory || '其他支出',
       account: options.account || 'cash',
       date: invoice?.date,
+      name: String(invoice?.merchant ?? '').trim().slice(0, 120) || '發票消費',
       note: String(invoice?.merchant ?? '').trim().slice(0, 240),
       merchant: invoice?.merchant,
       invoiceNumber: invoice?.invoiceNumber,
@@ -87,7 +88,7 @@ export function invoiceToTransaction(invoice, options = {}) {
 }
 
 function merchantKey(transaction) {
-  return String(transaction.merchant || transaction.note || '')
+  return String(transaction.merchant || transaction.name || transaction.note || '')
     .normalize('NFKC')
     .toLocaleLowerCase('zh-Hant')
     .replace(/[^\p{L}\p{N}]/gu, '');
@@ -114,6 +115,7 @@ function mergeReplacement(existing, incoming) {
     ...merged,
     category: existing.category,
     ...(existing.subcategory ? { subcategory: existing.subcategory } : {}),
+    ...(existing.name ? { name: existing.name } : {}),
     note: existing.note,
     userEditedAt: existing.userEditedAt,
   };

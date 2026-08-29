@@ -103,7 +103,15 @@ function validCarrierInvoice(invoice) {
 }
 
 export function createSmartImportController(dependencies) {
-  const { getState, persist, render, showToast, getSelectedMonth } = dependencies;
+  const {
+    getState,
+    persist,
+    render,
+    showToast,
+    getSelectedMonth,
+    getProxyCredentials,
+    rememberProxyCredentials,
+  } = dependencies;
   const receiptImage = document.querySelector('#receipt-image');
   const ocrProgress = document.querySelector('#ocr-progress');
   const ocrForm = document.querySelector('#ocr-draft-form');
@@ -113,14 +121,31 @@ export function createSmartImportController(dependencies) {
   let activeFile = null;
   let activeOcrConfidence = 0;
 
+  function configureCarrierBinding(state) {
+    const bound = state.preferences.carrierBound === true;
+    const credentials = document.querySelector('#carrier-credentials');
+    const status = document.querySelector('#carrier-binding-status');
+    const cardNo = carrierForm.elements.cardNo;
+    const cardEncrypt = carrierForm.elements.cardEncrypt;
+    credentials.open = !bound;
+    cardNo.required = !bound;
+    cardEncrypt.required = !bound;
+    cardNo.value = bound ? '' : state.preferences.carrierCardNo || '';
+    cardEncrypt.value = '';
+    carrierForm.elements.rememberCarrier.checked = true;
+    carrierForm.elements.syncStartDate.value = state.preferences.carrierSyncStartDate || '';
+    status.classList.toggle('bound', bound);
+    status.textContent = bound
+      ? '已綁定載具，下次不用再輸入帳密。'
+      : '尚未綁定；首次同步成功後會存入你的私人 GAS。';
+  }
+
   function configureForms() {
     const state = getState();
     setAccountOptions(ocrForm.elements.account, state.accounts);
     setAccountOptions(carrierForm.elements.account, state.accounts);
-    carrierForm.elements.endpoint.value =
-      state.preferences.carrierEndpoint || import.meta.env.VITE_INVOICE_PROXY_URL || '';
-    carrierForm.elements.cardNo.value = state.preferences.carrierCardNo || '';
     carrierForm.elements.month.value = getSelectedMonth();
+    configureCarrierBinding(state);
     setOptions(ocrForm.elements.category, Object.keys(EXPENSE_TAXONOMY), '其他');
     setOptions(ocrForm.elements.subcategory, getSubcategories('其他'), '其他支出');
   }
@@ -139,10 +164,9 @@ export function createSmartImportController(dependencies) {
   }
 
   async function classifyOcrWithAi({ quiet = false } = {}) {
-    const endpoint = carrierForm.elements.endpoint.value;
-    const proxyToken = carrierForm.elements.proxyToken.value;
+    const { endpoint, proxyToken } = getProxyCredentials();
     if (!endpoint || !proxyToken) {
-      if (!quiet) showToast('請先填入私人代理網址與通行碼。', 'error');
+      if (!quiet) showToast('這台裝置尚未綁定 Sheet。', 'error');
       return;
     }
     const fallback = validateClassification({
@@ -194,7 +218,7 @@ export function createSmartImportController(dependencies) {
         ? '辨識完成，請確認金額與日期。'
         : '已讀到文字，但找不到總額；請手動補上。';
       ocrForm.hidden = false;
-      if (carrierForm.elements.endpoint.value && carrierForm.elements.proxyToken.value) {
+      if (getProxyCredentials().bound) {
         await classifyOcrWithAi({ quiet: true });
       }
     } catch (error) {
@@ -245,8 +269,16 @@ export function createSmartImportController(dependencies) {
 
   async function handleCarrierSync(event) {
     event.preventDefault();
-    const values = Object.fromEntries(new FormData(carrierForm));
-    const syncKey = `${values.cardNo}:${values.month}`;
+    const values = {
+      ...Object.fromEntries(new FormData(carrierForm)),
+      ...getProxyCredentials(),
+    };
+    if (!values.endpoint || !values.proxyToken) {
+      showToast('這台裝置尚未綁定 Sheet。', 'error');
+      return;
+    }
+    values.rememberCarrier = carrierForm.elements.rememberCarrier.checked;
+    const syncKey = `${values.cardNo || 'bound'}:${values.month}`;
     const waitMs = CARRIER_RETRY_DELAY_MS - (Date.now() - (recentCarrierSyncs.get(syncKey) || 0));
     if (waitMs > 0) {
       showToast(`相同月份請等待 ${Math.ceil(waitMs / 1000)} 秒再同步。`, 'error');
@@ -257,7 +289,8 @@ export function createSmartImportController(dependencies) {
     carrierProgress.textContent = '正在向財政部取得發票與品項…';
     recentCarrierSyncs.set(syncKey, Date.now());
     try {
-      const invoices = await syncCarrierInvoices(values);
+      const syncResult = await syncCarrierInvoices(values);
+      const invoices = syncResult.invoices;
       const candidates = invoices.flatMap((invoice, index) => {
         if (!validCarrierInvoice(invoice)) return [];
         const local = classifyLocally({ merchant: invoice.merchant, items: invoice.items });
@@ -288,14 +321,28 @@ export function createSmartImportController(dependencies) {
       const added = Math.max(0, result.transactions.length - state.transactions.length);
       const merged = result.replaced.length;
       const skipped = invoices.length - added - merged;
+      const retainedPreferences = Object.fromEntries(
+        Object.entries(state.preferences).filter(
+          ([key]) => !['carrierCardNo', 'carrierSyncStartDate'].includes(key),
+        ),
+      );
+      const carrierBound = syncResult.carrierBound || state.preferences.carrierBound === true;
       const preferences = {
-        ...state.preferences,
+        ...retainedPreferences,
         carrierEndpoint: values.endpoint,
-        carrierCardNo: values.cardNo,
+        ...(carrierBound ? { carrierBound: true } : { carrierCardNo: values.cardNo }),
+        ...(syncResult.syncStartDate
+          ? { carrierSyncStartDate: syncResult.syncStartDate }
+          : {}),
       };
       if (!persist({ ...state, preferences, transactions: result.transactions })) return;
+      rememberProxyCredentials(values.endpoint, values.proxyToken);
       render();
-      carrierProgress.textContent = `同步完成：新增 ${added}、合併 ${merged}、略過 ${Math.max(0, skipped)}。`;
+      configureCarrierBinding(getState());
+      const scheduleText = syncResult.syncStartDate
+        ? ` GAS 會每 2 小時自動同步 ${syncResult.syncStartDate} 以後的發票。`
+        : '';
+      carrierProgress.textContent = `同步完成：新增 ${added}、合併 ${merged}、略過 ${Math.max(0, skipped)}。${scheduleText}`;
       showToast(`載具完成：新增 ${added} 筆、合併 ${merged} 筆。`, 'default', {
         label: '復原',
         handler: () => {
@@ -336,11 +383,7 @@ export function createSmartImportController(dependencies) {
   });
 
   async function classifyDraft(input) {
-    const endpoint =
-      carrierForm.elements.endpoint.value ||
-      getState().preferences.carrierEndpoint ||
-      import.meta.env.VITE_INVOICE_PROXY_URL;
-    const proxyToken = carrierForm.elements.proxyToken.value;
+    const { endpoint, proxyToken } = getProxyCredentials();
     if (!endpoint || !proxyToken) return { ...input.fallback, ai: false };
     try {
       const classification = await classifyExpenseWithAi({

@@ -23,6 +23,9 @@
           </span>
         </a>
         <div class="topbar-actions">
+          <button id="sync-indicator" class="sync-indicator" type="button" data-status="local" aria-label="尚未與 Sheet 同步">
+            <span aria-hidden="true"></span><strong>僅本機</strong>
+          </button>
           <span id="month-title" class="month-chip"></span>
           <button id="theme-toggle" class="icon-button" type="button" aria-label="切換深淺色主題"></button>
           <button id="tools-button" class="icon-button" type="button" aria-label="備份與設定"></button>
@@ -74,17 +77,21 @@
           <button type="button" data-transaction-type="transfer" aria-pressed="false">轉帳</button>
         </div>
 
-        <details id="voice-entry" class="voice-entry">
-          <summary><span aria-hidden="true">●</span> 口語記帳</summary>
+        <details id="voice-entry" class="voice-entry" open>
+          <summary><span aria-hidden="true">●</span> 口語直接記帳</summary>
           <div class="voice-entry-body">
             <div class="voice-input-row">
-              <input id="voice-transcript" type="text" maxlength="240" aria-label="口語記帳內容" placeholder="例如：昨天搭高鐵 1490 元刷卡" />
-              <button id="voice-listen-button" class="secondary-button" type="button">開始說話</button>
-              <button id="voice-parse-button" class="secondary-button" type="button">解析</button>
+              <input id="voice-transcript" type="text" maxlength="240" aria-label="口語記帳內容" placeholder="例如：昨天用永豐在鼎王吃麻辣鍋一千二" />
+              <button id="voice-submit-button" class="primary-button" type="button">直接記帳</button>
             </div>
-            <p id="voice-status" role="status">會先產生可編輯草稿，不會直接儲存。支援時優先使用裝置內辨識；其他瀏覽器可能使用其線上語音服務。</p>
+            <p id="voice-status" role="status">用 iPhone 鍵盤麥克風輸入後直接送出；Sheet 會先收到，AI 再從後台補齊名稱、金額、日期與分類。</p>
           </div>
         </details>
+
+        <label class="transaction-name-field" for="transaction-name">
+          <span>名稱</span>
+          <input id="transaction-name" name="name" type="text" maxlength="120" placeholder="例如：鼎王麻辣鍋" required />
+        </label>
 
         <label class="amount-field" for="transaction-amount">
           <span>金額</span>
@@ -155,9 +162,51 @@
           <input id="import-json" type="file" accept="application/json,.json" />
         </label>
       </div>
+      <section class="settings-section" aria-labelledby="opening-balance-title">
+        <div class="settings-section-heading">
+          <h3 id="opening-balance-title">帳戶初始金額</h3>
+          <p>輸入開始記帳當天的帳戶餘額；信用卡欠款可用負數。</p>
+        </div>
+        <form id="opening-balance-form">
+          <div id="opening-balance-fields" class="opening-balance-grid"></div>
+          <button class="primary-button" type="submit">儲存初始金額</button>
+        </form>
+      </section>
+      <section class="settings-section" aria-labelledby="sheet-sync-title">
+        <div class="settings-section-heading">
+          <h3 id="sheet-sync-title">Google Sheet 同步</h3>
+          <p>將目前的帳戶、交易與預算完整同步到你的小帳工作表。</p>
+        </div>
+        <form id="sheet-sync-form" class="sheet-sync-form">
+          <div id="device-binding-status" class="device-binding-status" role="status">
+            正在確認這台裝置的 Sheet 連線…
+          </div>
+          <button id="device-binding-share" class="secondary-button" type="button">綁定手機</button>
+          <div class="sheet-sync-actions">
+            <button id="sheet-sync-button" class="primary-button" type="submit">同步到 Google Sheet</button>
+            <button id="sheet-load-button" class="secondary-button" type="button">從 Sheet 讀取</button>
+          </div>
+          <p id="sheet-sync-status" class="settings-status" role="status">尚未同步。</p>
+        </form>
+      </section>
       <div class="privacy-note">
         <span aria-hidden="true">●</span>
-        <p><strong>離線優先</strong><br />帳本只存在裝置；只有你主動同步時才連到私人代理。</p>
+        <p><strong>離線優先</strong><br />帳本先存在裝置；只有同步與後台 AI 審查時才會連到你的私人 GAS 與 Sheet。</p>
+      </div>
+    </dialog>
+
+    <dialog id="device-binding-dialog" class="app-dialog device-binding-dialog">
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow">只在裝置間傳遞</p>
+          <h2>綁定手機</h2>
+        </div>
+        <button class="icon-button dialog-close" type="button" aria-label="關閉">×</button>
+      </div>
+      <div class="device-binding-content">
+        <img id="device-binding-qr" alt="手機裝置綁定 QR Code" />
+        <p>用手機相機掃描後開啟「小帳」，就會自動完成綁定。掃描後網址會立即清除綁定資料。</p>
+        <button id="device-binding-copy" class="secondary-button" type="button">複製手機綁定連結</button>
       </div>
     </dialog>
 
@@ -212,19 +261,25 @@
             <div><h3 id="carrier-title">財政部載具同步</h3><p>載具資料會補齊品項，並自動合併重複 OCR。</p></div>
           </div>
           <form id="carrier-form" class="carrier-form">
-            <label class="wide"><span>私人代理網址</span><input name="endpoint" type="url" placeholder="https://script.google.com/macros/s/.../exec" required /></label>
-            <label class="wide"><span>代理通行碼</span><input name="proxyToken" type="password" autocomplete="off" required /><small>只保留在此分頁記憶體，重新整理即清除。</small></label>
-            <label><span>手機條碼</span><input name="cardNo" maxlength="40" autocomplete="username" placeholder="/ABC+123" required /></label>
-            <label><span>載具驗證碼</span><input name="cardEncrypt" type="password" maxlength="100" autocomplete="current-password" required /></label>
+            <p id="carrier-binding-status" class="carrier-binding-status wide">尚未綁定載具。</p>
+            <details id="carrier-credentials" class="carrier-credentials wide" open>
+              <summary>載具帳密（首次綁定或更換）</summary>
+              <div class="carrier-credentials-grid">
+                <label><span>手機條碼</span><input name="cardNo" maxlength="40" autocomplete="username" placeholder="/ABC+123" required /></label>
+                <label><span>載具驗證碼</span><input name="cardEncrypt" type="password" maxlength="100" autocomplete="current-password" required /></label>
+                <label class="carrier-remember wide"><input name="rememberCarrier" type="checkbox" value="true" checked /><span>同步成功後綁定在私人 GAS，下次不用再輸入帳密</span></label>
+              </div>
+            </details>
             <label><span>同步月份</span><input name="month" type="month" required /></label>
+            <label><span>自動同步起始日</span><input name="syncStartDate" type="date" /><small>設定後每 2 小時擷取這個日期以後的發票，只對新增或變更資料重做 AI 分類。</small></label>
             <fieldset class="account-choice-field wide">
               <legend>記入帳戶</legend>
               <select id="carrier-account" class="visually-hidden" name="account" tabindex="-1" aria-hidden="true" required></select>
               <div class="account-choice-buttons compact" data-account-for="carrier-account"></div>
             </fieldset>
-            <button id="carrier-sync-button" class="primary-button wide" type="submit">同步並自動去重</button>
+            <button id="carrier-sync-button" class="primary-button wide" type="submit">立即手動更新</button>
           </form>
-          <p id="carrier-progress" class="import-progress" role="status">需先部署自己的安全代理；App 不保存載具驗證碼。</p>
+          <p id="carrier-progress" class="import-progress" role="status">載具綁定後，帳密只存在你的私人 GAS，以後可直接更新。</p>
           <div class="dedupe-note">
             <strong>自動去重順序</strong>
             <span>發票號碼 → 日期＋金額＋商家。載具命中 OCR 時，以載具明細取代。</span>
