@@ -29,32 +29,28 @@
   }
 
   #app-main {
-    padding-top: 24px;
+    padding-top: 14px;
   }
 
   .hero-heading,
   .page-heading {
     align-items: flex-start;
-    margin-bottom: 17px;
+    margin-bottom: 12px;
   }
 
   .hero-heading h1,
   .page-heading h1 {
-    font-size: clamp(32px, 10vw, 44px);
-  }
-
-  .hero-heading h1 span {
-    display: block;
+    font-size: 30px;
   }
 
   .cashflow-card {
     grid-template-columns: 1fr;
-    gap: 16px;
-    padding: 21px 19px;
+    gap: 10px;
+    padding: 16px;
   }
 
   .cashflow-rail {
-    align-self: auto;
+    display: none;
   }
 
   .cashflow-metrics {
@@ -141,25 +137,26 @@
 
 @media (max-width: 540px) {
   .hero-heading {
-    display: grid;
+    display: flex;
+    align-items: center;
   }
 
   .month-stepper {
-    justify-self: start;
+    margin-left: auto;
   }
 
   .panel {
-    padding: 16px 14px;
+    padding: 14px 12px;
   }
 
   .cashflow-main strong {
-    font-size: 34px;
+    font-size: 32px;
   }
 
   .cashflow-metrics {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0;
-    padding-top: 16px;
+    padding-top: 12px;
   }
 
   .cashflow-metrics > div + div {
@@ -178,14 +175,13 @@
   }
 
   .transaction-row {
-    grid-template-columns: 34px minmax(0, 1fr) auto;
-    gap: 9px;
+    grid-template-columns: 34px minmax(0, 1fr) auto auto;
+    gap: 7px;
   }
 
   .row-actions {
-    grid-column: 2 / -1;
-    justify-content: flex-end;
-    margin-top: -5px;
+    grid-column: auto;
+    margin-top: 0;
   }
 
   .filter-bar {

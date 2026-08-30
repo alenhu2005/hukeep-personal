@@ -11,6 +11,7 @@ import {
 } from './domain/category-taxonomy.js';
 import { parseSpokenTransaction } from './domain/spoken-entry.js';
 import {
+  hasPendingSheetChanges,
   reconcileLedgerFromSheet,
   updatePendingSheetChanges,
 } from './domain/ledger-sync.js';
@@ -32,6 +33,7 @@ import {
   deleteLedgerTransactionFromSheet,
   enqueueSpokenEntry,
   loadLedgerStateFromSheet,
+  syncLedgerChangesToSheet,
   syncLedgerStateToSheet,
 } from './services/import-proxy.js';
 import {
@@ -43,8 +45,10 @@ import { renderView } from './views.js';
 
 const LAST_SHEET_SYNC_KEY = 'hukeep_last_sheet_sync_at';
 const PENDING_SHEET_CHANGES_KEY = 'hukeep_pending_sheet_changes_v1';
-const BACKGROUND_PULL_INTERVAL_MS = 5 * 60 * 1000;
-const RESUME_PULL_THRESHOLD_MS = 60 * 1000;
+const BUDGET_SYNC_MIGRATION_KEY = 'hukeep_budget_sync_migrated_v2';
+const AUTO_SYNC_DEBOUNCE_MS = 800;
+const BACKGROUND_PULL_INTERVAL_MS = 2 * 60 * 1000;
+const RESUME_PULL_THRESHOLD_MS = 15 * 1000;
 
 function shiftMonth(month, offset) {
   const [year, monthNumber] = month.split('-').map(Number);
@@ -110,7 +114,9 @@ export function createApp() {
   let classificationTimer = null;
   let classificationRequest = 0;
   let sheetPullInFlight = false;
+  let sheetWriteInFlight = false;
   let lastSheetPullAt = 0;
+  let pendingSheetSyncTimer = null;
   let deviceBindingLink = '';
 
   const main = document.querySelector('#app-main');
@@ -222,9 +228,20 @@ export function createApp() {
       return {
         upserts: Array.isArray(value?.upserts) ? value.upserts : [],
         deletes: Array.isArray(value?.deletes) ? value.deletes : [],
+        accountUpserts: Array.isArray(value?.accountUpserts) ? value.accountUpserts : [],
+        accountDeletes: Array.isArray(value?.accountDeletes) ? value.accountDeletes : [],
+        budgetUpserts: Array.isArray(value?.budgetUpserts) ? value.budgetUpserts : [],
+        budgetDeletes: Array.isArray(value?.budgetDeletes) ? value.budgetDeletes : [],
       };
     } catch {
-      return { upserts: [], deletes: [] };
+      return {
+        upserts: [],
+        deletes: [],
+        accountUpserts: [],
+        accountDeletes: [],
+        budgetUpserts: [],
+        budgetDeletes: [],
+      };
     }
   }
 
@@ -244,9 +261,26 @@ export function createApp() {
     }
   }
 
+  function migrateLegacyBudgetChanges() {
+    try {
+      if (localStorage.getItem(BUDGET_SYNC_MIGRATION_KEY)) return;
+      const pending = readPendingSheetChanges();
+      if (!pending.budgetUpserts.length && !pending.budgetDeletes.length && state.budgets.length) {
+        writePendingSheetChanges({
+          ...pending,
+          budgetUpserts: state.budgets.map(budget => budget.category),
+        });
+      }
+      localStorage.setItem(BUDGET_SYNC_MIGRATION_KEY, '1');
+    } catch {
+      // The normal change journal remains available even if this one-time migration cannot persist.
+    }
+  }
+
   function acknowledgePendingTransactionDelete(transactionId) {
     const pending = readPendingSheetChanges();
     writePendingSheetChanges({
+      ...pending,
       upserts: pending.upserts.filter(id => id !== transactionId),
       deletes: pending.deletes.filter(id => id !== transactionId),
     });
@@ -291,9 +325,12 @@ export function createApp() {
       const previousState = state;
       const savedState = repository.save(nextState);
       if (!options.sheetSourced) {
-        writePendingSheetChanges(
-          updatePendingSheetChanges(readPendingSheetChanges(), previousState, savedState),
-        );
+        const previousPending = readPendingSheetChanges();
+        const nextPending = updatePendingSheetChanges(previousPending, previousState, savedState);
+        writePendingSheetChanges(nextPending);
+        if (JSON.stringify(previousPending) !== JSON.stringify(nextPending) && hasPendingSheetChanges(nextPending)) {
+          schedulePendingSheetSync();
+        }
       }
       state = savedState;
       return true;
@@ -341,6 +378,7 @@ export function createApp() {
     history.replaceState(null, '', `#${view}`);
     render({ focusMain: true });
     scrollTo({ top: 0, behavior: 'smooth' });
+    syncOnViewChange();
   }
 
   function accountOptions(selected, excluded = '') {
@@ -734,12 +772,65 @@ export function createApp() {
     }
   }
 
+  function schedulePendingSheetSync(delay = AUTO_SYNC_DEBOUNCE_MS) {
+    clearTimeout(pendingSheetSyncTimer);
+    if (document.hidden || !hasPendingSheetChanges(readPendingSheetChanges())) return;
+    pendingSheetSyncTimer = setTimeout(() => {
+      pendingSheetSyncTimer = null;
+      void syncPendingSheetChanges();
+    }, delay);
+  }
+
+  async function syncPendingSheetChanges() {
+    const changes = readPendingSheetChanges();
+    const stateAtRequest = state;
+    let completed = false;
+    const credentials = proxySession();
+    if (
+      sheetWriteInFlight ||
+      document.hidden ||
+      !hasPendingSheetChanges(changes) ||
+      !credentials.bound
+    ) {
+      return false;
+    }
+    sheetWriteInFlight = true;
+    setSyncStatus('syncing');
+    try {
+      await syncLedgerChangesToSheet({ ...credentials, state, changes });
+      if (state === stateAtRequest) clearPendingSheetChanges();
+      rememberProxySession(credentials.endpoint, credentials.proxyToken);
+      rememberSuccessfulSync();
+      completed = true;
+      return true;
+    } catch (error) {
+      setSyncStatus('error', { detail: `自動同步失敗：${error.message}` });
+      return false;
+    } finally {
+      sheetWriteInFlight = false;
+      if (completed && state !== stateAtRequest && hasPendingSheetChanges(readPendingSheetChanges())) {
+        schedulePendingSheetSync();
+      }
+    }
+  }
+
+  function syncOnViewChange() {
+    if (document.hidden) return;
+    if (hasPendingSheetChanges(readPendingSheetChanges())) {
+      void syncPendingSheetChanges();
+      return;
+    }
+    void refreshSheetInBackground({ force: true });
+  }
+
   async function syncSheet(event) {
     event.preventDefault();
     const button = document.querySelector('#sheet-sync-button');
     const status = document.querySelector('#sheet-sync-status');
     const credentials = proxySession();
+    clearTimeout(pendingSheetSyncTimer);
     button.disabled = true;
+    sheetWriteInFlight = true;
     setSyncStatus('syncing');
     status.classList.remove('error');
     status.textContent = '正在安全同步…';
@@ -767,6 +858,7 @@ export function createApp() {
       status.textContent = error.message;
       showToast(error.message, 'error');
     } finally {
+      sheetWriteInFlight = false;
       button.disabled = false;
     }
   }
@@ -814,6 +906,7 @@ export function createApp() {
     const now = Date.now();
     if (
       sheetPullInFlight ||
+      sheetWriteInFlight ||
       document.hidden ||
       !credentials.endpoint ||
       !credentials.proxyToken ||
@@ -925,12 +1018,18 @@ export function createApp() {
   window.addEventListener('hashchange', () => {
     view = safeViewFromHash();
     render();
+    syncOnViewChange();
   });
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && Date.now() - lastSheetPullAt >= RESUME_PULL_THRESHOLD_MS) {
-      refreshSheetInBackground();
+    if (!document.hidden) {
+      if (hasPendingSheetChanges(readPendingSheetChanges())) {
+        void syncPendingSheetChanges();
+      } else if (Date.now() - lastSheetPullAt >= RESUME_PULL_THRESHOLD_MS) {
+        refreshSheetInBackground();
+      }
     }
   });
+  window.addEventListener('online', () => syncOnViewChange());
 
   smartImportController = createSmartImportController({
     getState: () => state,
@@ -945,10 +1044,11 @@ export function createApp() {
   hydrateIcons();
   document.querySelector('#tools-button').innerHTML = icon('settings', 19);
   lastSheetPullAt = storedLastSyncAt();
+  migrateLegacyBudgetChanges();
   setSyncStatus(lastSheetPullAt ? 'synced' : 'local', { lastAt: lastSheetPullAt });
   applyTheme();
   render();
   if (incomingDeviceBinding) showToast('手機已完成 Google Sheet 裝置綁定。');
-  setTimeout(() => refreshSheetInBackground(), 1200);
-  setInterval(() => refreshSheetInBackground({ force: true }), BACKGROUND_PULL_INTERVAL_MS);
+  setTimeout(syncOnViewChange, 700);
+  setInterval(() => syncOnViewChange(), BACKGROUND_PULL_INTERVAL_MS);
 }

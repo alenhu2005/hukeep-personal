@@ -110,8 +110,9 @@ describe('口語記帳解析', () => {
     ).toBe('與小明');
   });
 
-  it('沒有主要名稱時仍移除日期、金額與付款資訊，只保留摘要', () => {
-    expect(conciseSpokenNote('昨天搭高鐵 1490 元刷卡')).toBe('搭高鐵');
+  it('沒有額外情境時不把交易敘述硬塞進備註', () => {
+    expect(conciseSpokenNote('昨天搭高鐵 1490 元刷卡')).toBe('');
+    expect(conciseSpokenNote('家教賺了 1200 匯到我的 LINE 裡面', '家教')).toBe('');
   });
 
   it.each([

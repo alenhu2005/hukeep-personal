@@ -229,43 +229,16 @@ function transactionName(text, type, classification) {
   return cleaned || classification.subcategory || classification.topCategory || '未命名記錄';
 }
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function compactNoteText(value) {
-  return value
-    .replace(/(?:NT\s*)?[$＄]\s*[\d,，\s十百千萬零〇一二兩三四五六七八九]+/gi, ' ')
-    .replace(/(?:20\d{2}\s*年\s*)?\d{1,2}\s*月\s*\d{1,2}\s*[日號]?/g, ' ')
-    .replace(/[一二兩三四五六七八九十]+月[一二兩三四五六七八九十]+[日號]/g, ' ')
-    .replace(/(?:明天|明日|今天|昨日|昨天|大前天|前天|剛剛)/g, ' ')
-    .replace(/\d[\d,，]*\s*(?:元|圓|塊(?:錢)?)/g, ' ')
-    .replace(/[零〇一二兩三四五六七八九十百千萬]+\s*(?:元|圓|塊(?:錢)?)/g, ' ')
-    .replace(/\d[\d,，]*(?=\s*(?:用|刷|付|入|存|轉|匯|$))/g, ' ')
-    .replace(/[零〇一二兩三四五六七八九十百千萬]+(?=\s*(?:用|刷|付|入|存|轉|匯|$))/g, ' ')
-    .replace(/(?:line\s*(?:bank|pay)?|永豐|sinopac|台銀|臺銀|台灣銀行|臺灣銀行|郵局|中華郵政|刷卡|信用卡|卡片|銀行|帳戶|現金|付現|錢包|入帳)/gi, ' ')
-    .replace(/[，、。,.!！?？]+/g, ' ');
-}
-
 export function conciseSpokenNote(value, primaryName = '') {
   const transcript = String(value ?? '').normalize('NFKC').trim().slice(0, 240);
-  const name = String(primaryName ?? '').normalize('NFKC').trim().slice(0, 120);
+  void primaryName;
   const companion = transcript.match(
     /(?:跟|和|與)\s*([^，、。,.!！?？\d$＄]{1,24}?)(?=(?:在|去|到|吃|喝|買|搭|繳|支付|付|轉|匯|刷|用|花|收|入|存))/,
   );
   const context = companion
     ? `與${companion[1].replace(/(?:一起|一同)$/g, '').trim()}`.slice(0, 36)
     : '';
-  const withoutName = name ? transcript.replace(new RegExp(escapeRegExp(name), 'g'), ' ') : transcript;
-  const remainder = compactNoteText(withoutName)
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/^(?:(?:我|幫我|請|去|到|於|在|用|跟|和|與|要|是|的|了|把|從|進|轉|匯|付|刷|收|存|入)\s*)+/g, '')
-    .replace(/(?:(?:我|幫我|請|去|到|於|在|用|跟|和|與|要|是|的|了|把|從|進|轉|匯|付|刷|收|存|入)\s*)+$/g, '')
-    .trim()
-    .slice(0, 60);
-  if (context && (!remainder || !remainder.includes(context.slice(1)))) return context;
-  return remainder;
+  return context;
 }
 
 export function parseSpokenTransaction(value, options = {}) {

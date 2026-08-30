@@ -77,8 +77,49 @@ describe('Sheet 雙向更新合併', () => {
     expect(updatePendingSheetChanges(previous, before, after)).toEqual({
       upserts: ['restored', 'edited', 'added'],
       deletes: ['deleted'],
+      accountUpserts: [],
+      accountDeletes: [],
+      budgetUpserts: [],
+      budgetDeletes: [],
     });
     expect(previous).toEqual({ upserts: ['restored'], deletes: ['added'] });
+  });
+
+  it('追蹤帳戶與預算的異動，並在讀取 Sheet 時保留尚未送出的版本', () => {
+    const before = state([], {
+      accounts: [{ id: 'cash', name: '現金', icon: '現', openingBalance: 100 }],
+      budgets: [{ category: '飲食', limit: 3000 }],
+    });
+    const after = state([], {
+      accounts: [{ id: 'cash', name: '現金', icon: '現', openingBalance: 200 }],
+      budgets: [{ category: '飲食', limit: 4500 }],
+    });
+    const pending = updatePendingSheetChanges({}, before, after);
+    const remote = state([], {
+      accounts: [
+        { id: 'cash', name: '現金', icon: '現', openingBalance: 100 },
+        { id: 'line', name: 'LINE', icon: 'L', openingBalance: 50 },
+      ],
+      budgets: [
+        { category: '飲食', limit: 3000 },
+        { category: '娛樂', limit: 1200 },
+      ],
+    });
+
+    expect(pending).toMatchObject({
+      accountUpserts: ['cash'],
+      budgetUpserts: ['飲食'],
+    });
+    expect(reconcileLedgerFromSheet(after, remote, pending)).toMatchObject({
+      accounts: [
+        { id: 'cash', openingBalance: 200 },
+        { id: 'line', openingBalance: 50 },
+      ],
+      budgets: [
+        { category: '飲食', limit: 4500 },
+        { category: '娛樂', limit: 1200 },
+      ],
+    });
   });
 
   it('以較新的後台 AI 審查結果取代本機待審草稿', () => {

@@ -10,6 +10,7 @@ describe('GAS 同步合約', () => {
 
   it('保留帳本 Sheet 同步，但不再暴露載具 API、排程或財政部 AppID 設定', () => {
     expect(source).toContain("body.action === 'syncLedgerState'");
+    expect(source).toContain("body.action === 'syncLedgerChanges'");
     expect(source).toContain("body.action === 'loadLedgerState'");
     expect(source).toContain("requiredProperty_('SPREADSHEET_ID')");
     expect(source).toContain('小帳_帳戶');
@@ -80,9 +81,11 @@ describe('GAS 同步合約', () => {
     expect(
       conciseNote('昨天跟小明在鼎王吃麻辣鍋一千二用永豐', '跟小明在鼎王吃麻辣鍋', 'expense'),
     ).toBe('與小明');
+    expect(conciseNote('家教賺了 1200 匯到我的 LINE 裡面', '家教', 'income')).toBe('');
     expect(source).toContain('conciseSpokenNote_(transcript');
     expect(source).toContain("if (note === transcript) note = ''");
-    expect(source).toContain("if (reviewedNote === transcript) reviewedNote = ''");
+    expect(source).toContain('function trustedReviewedNote_(');
+    expect(source).toContain('不得寫成口語句子');
     expect(source).toContain('rawTranscript: transcript');
     expect(source).toContain('不可逐字照抄口語原文');
   });

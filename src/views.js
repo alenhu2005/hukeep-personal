@@ -10,8 +10,8 @@ import { filterTransactions } from './domain/transactions.js';
 import { escapeHtml, formatCompactMoney, formatDate, formatMoney, monthLabel, shortMonthLabel } from './format.js';
 import { icon } from './icons.js';
 
-function emptyState(title, body) {
-  return `<div class="empty-state"><span aria-hidden="true">◌</span><strong>${title}</strong><p>${body}</p></div>`;
+function emptyState(title, body = '') {
+  return `<div class="empty-state"><span aria-hidden="true">◌</span><strong>${title}</strong>${body ? `<p>${body}</p>` : ''}</div>`;
 }
 
 function categoryMark(category) {
@@ -21,7 +21,7 @@ function categoryMark(category) {
 
 export function transactionRows(transactions, accounts) {
   if (!transactions.length) {
-    return emptyState('還沒有符合的紀錄', '新增第一筆，這裡就會開始長出你的財務脈絡。');
+    return emptyState('沒有符合的紀錄');
   }
   const accountNames = Object.fromEntries(accounts.map(account => [account.id, account.name]));
   return transactions
@@ -39,7 +39,6 @@ export function transactionRows(transactions, accounts) {
       const primaryName =
         transaction.name || transaction.note || label || TYPE_LABELS[transaction.type];
       const secondary = [
-        transaction.note && transaction.note !== primaryName ? transaction.note : '',
         transferFee,
         label,
         formatDate(transaction.date),
@@ -69,7 +68,7 @@ export function transactionRows(transactions, accounts) {
 
 function categoryBreakdown(summary) {
   const entries = Object.entries(summary.byCategory).toSorted((a, b) => b[1] - a[1]);
-  if (!entries.length) return emptyState('還沒有支出', '這個月的分類流向會顯示在這裡。');
+  if (!entries.length) return emptyState('本月沒有支出');
   return entries
     .map(([category, amount]) => {
       const width = summary.expense ? Math.max(5, (amount / summary.expense) * 100) : 0;
@@ -97,8 +96,7 @@ export function renderOverview(state, month) {
     <div class="hero-heading">
       <div>
         <p class="eyebrow">${monthLabel(month)} · ${summary.count} 筆收支</p>
-        <h1 id="overview-title"><span>這個月，</span><span>把錢用在哪裡？</span></h1>
-        <p>先看流向，再決定下一筆錢要去哪裡。</p>
+        <h1 id="overview-title">總覽</h1>
       </div>
       <div class="month-stepper" aria-label="切換月份">
         <button type="button" data-month-shift="-1" aria-label="上個月">‹</button>
@@ -111,7 +109,6 @@ export function renderOverview(state, month) {
       <div class="cashflow-main">
         <span>本月結餘</span>
         <strong class="${summary.balance < 0 ? 'negative' : ''}">${formatMoney(summary.balance, { showPlus: true })}</strong>
-        <small>${summary.balance >= 0 ? '收入還有空間，慢慢來。' : '這個月支出已超過收入。'}</small>
       </div>
       <div class="cashflow-rail" aria-label="收入與支出對比">
         <div class="rail-income"><span style="width:${summary.income || summary.expense ? Math.max(6, (summary.income / Math.max(summary.income, summary.expense)) * 100) : 6}%"></span></div>
@@ -126,7 +123,7 @@ export function renderOverview(state, month) {
 
     <div class="overview-grid">
       <section class="panel accounts-panel">
-        <div class="section-heading"><div><p class="eyebrow">位置</p><h2>我的帳戶</h2></div><span>估算餘額</span></div>
+        <div class="section-heading"><h2>帳戶</h2><span>估算餘額</span></div>
         <div class="asset-total">
           <div><small>所有帳戶目前餘額</small><strong class="${totalAssets < 0 ? 'negative' : ''}" data-testid="total-assets">${formatMoney(totalAssets)}</strong></div>
           <span>總資產</span>
@@ -141,21 +138,21 @@ export function renderOverview(state, month) {
       </section>
 
       <section class="panel budget-glance">
-        <div class="section-heading"><div><p class="eyebrow">邊界</p><h2>預算進度</h2></div><button type="button" data-go-view="budgets">設定</button></div>
+        <div class="section-heading"><h2>預算</h2><button type="button" data-go-view="budgets">設定</button></div>
         <div class="budget-dial-row">
           <div class="budget-dial" style="--progress:${budgetRatio * 360}deg"><span>${Math.round(budgetRatio * 100)}<small>%</small></span></div>
-          <div><strong>${totalBudget ? formatMoney(Math.max(0, totalBudget - budgetSpent)) : '還沒設定'}</strong><p>${totalBudget ? `本月還能自在安排，總上限 ${formatMoney(totalBudget)}。` : '加入常用分類的每月上限。'}</p></div>
+          <div><strong>${totalBudget ? formatMoney(Math.max(0, totalBudget - budgetSpent)) : '尚未設定'}</strong><p>${totalBudget ? `已用 ${formatMoney(budgetSpent)} / ${formatMoney(totalBudget)}` : '設定每月分類上限'}</p></div>
         </div>
       </section>
     </div>
 
     <div class="overview-grid lower-grid">
       <section class="panel">
-        <div class="section-heading"><div><p class="eyebrow">分布</p><h2>支出都去了哪裡</h2></div><span>${formatMoney(summary.expense)}</span></div>
+        <div class="section-heading"><h2>支出分類</h2><span>${formatMoney(summary.expense)}</span></div>
         <div class="category-breakdown">${categoryBreakdown(summary)}</div>
       </section>
       <section class="panel recent-panel">
-        <div class="section-heading"><div><p class="eyebrow">最近</p><h2>這個月的流水</h2></div><button type="button" data-go-view="history">全部紀錄</button></div>
+        <div class="section-heading"><h2>最近交易</h2><button type="button" data-go-view="history">全部紀錄</button></div>
         <div class="transaction-list compact">${transactionRows(monthlyTransactions.slice(0, 5), state.accounts)}</div>
       </section>
     </div>
@@ -183,7 +180,7 @@ export function renderHistory(state, month, filters) {
     )
     .join('');
   return `<section class="view history-view" aria-labelledby="history-title">
-    <div class="page-heading"><div><p class="eyebrow">${monthLabel(month)}</p><h1 id="history-title">每一筆，都有跡可循</h1><p>搜尋備註、分類或帳戶，快速回到當時的決定。</p></div></div>
+    <div class="page-heading"><div><p class="eyebrow">${monthLabel(month)}</p><h1 id="history-title">紀錄</h1></div></div>
     <section class="panel history-panel">
       <div class="filter-bar">
         <label class="search-field"><span class="visually-hidden">搜尋紀錄</span><span aria-hidden="true">⌕</span><input id="history-search" aria-label="搜尋紀錄" type="search" value="${escapeHtml(filters.query)}" placeholder="搜尋備註、分類、帳戶" /></label>
@@ -199,16 +196,16 @@ export function renderHistory(state, month, filters) {
 export function renderBudgets(state, month) {
   const progress = calculateBudgetProgress(state.budgets, state.transactions, month);
   return `<section class="view budgets-view" aria-labelledby="budgets-title">
-    <div class="page-heading"><div><p class="eyebrow">${monthLabel(month)}</p><h1 id="budgets-title">預算是邊界，不是惩罰</h1><p>先從最容易失控的兩三個分類開始就好。</p></div></div>
+    <div class="page-heading"><div><p class="eyebrow">${monthLabel(month)}</p><h1 id="budgets-title">預算</h1></div></div>
     <div class="budgets-layout">
       <form id="budget-form" class="panel budget-form">
-        <p class="eyebrow">新增邊界</p><h2>設一個每月上限</h2>
+        <h2>新增預算</h2>
         <label><span>預算分類</span><select name="category" aria-label="預算分類">${EXPENSE_CATEGORIES.map(category => `<option value="${category}">${category}</option>`).join('')}</select></label>
         <label><span>每月上限</span><div class="inline-money"><small>NT$</small><input name="limit" aria-label="每月上限" type="number" min="1" step="1" inputmode="numeric" placeholder="5,000" required /></div></label>
         <button class="primary-button" type="submit">儲存預算</button>
       </form>
       <section class="panel budget-list-panel">
-        <div class="section-heading"><div><p class="eyebrow">本月狀態</p><h2>${progress.length ? '拿捏得剛剛好' : '還沒有預算'}</h2></div><span>${progress.length} 個分類</span></div>
+        <div class="section-heading"><h2>預算清單</h2><span>${progress.length} 個分類</span></div>
         <div class="budget-list">${
           progress.length
             ? progress
@@ -218,7 +215,7 @@ export function renderBudgets(state, month) {
                   <button type="button" data-remove-budget="${escapeHtml(item.category)}" aria-label="移除 ${escapeHtml(item.category)} 預算">×</button>
                 </article>`)
                 .join('')
-            : emptyState('先挑一個分類', '飲食、購物或娛樂，通常是最好的開始。')
+            : emptyState('尚未設定預算')
         }</div>
       </section>
     </div>
@@ -231,7 +228,7 @@ export function renderInsights(state, month) {
   const maxAmount = Math.max(1, ...trend.flatMap(item => [item.income, item.expense]));
   const topCategory = Object.entries(summary.byCategory).toSorted((a, b) => b[1] - a[1])[0];
   return `<section class="view insights-view" aria-labelledby="insights-title">
-    <div class="page-heading"><div><p class="eyebrow">時間軸</p><h1 id="insights-title">六個月的流向</h1><p>不用預測未來，先看見自己一直在做什麼。</p></div></div>
+    <div class="page-heading"><div><p class="eyebrow">${monthLabel(month)}</p><h1 id="insights-title">趨勢</h1></div></div>
     <section class="panel trend-panel">
       <div class="chart-legend"><span><i class="income"></i>收入</span><span><i class="expense"></i>支出</span></div>
       <div id="trend-chart" class="trend-chart" role="img" aria-label="最近六個月收入與支出柱狀圖">
@@ -241,9 +238,9 @@ export function renderInsights(state, month) {
       </div>
     </section>
     <div class="insight-cards">
-      <article class="insight-card coral"><p class="eyebrow">本月焦點</p><strong>${topCategory ? topCategory[0] : '還沒有足夠資料'}</strong><p>${topCategory ? `共 ${formatMoney(topCategory[1])}，佔本月支出 ${Math.round((topCategory[1] / summary.expense) * 100)}%。` : '記幾筆後，這裡會顯示主要流向。'}</p></article>
-      <article class="insight-card blue"><p class="eyebrow">流動結果</p><strong>${summary.balance >= 0 ? '正向結餘' : '支出較高'}</strong><p>${summary.balance >= 0 ? `本月留下 ${formatMoney(summary.balance)}。` : `本月差額 ${formatMoney(Math.abs(summary.balance))}。`}</p></article>
-      <article class="insight-card olive"><p class="eyebrow">記錄節奏</p><strong>${summary.count} 筆</strong><p>${summary.count ? `平均每筆 ${formatMoney(Math.round((summary.income + summary.expense) / summary.count))}。` : '從今天的第一筆開始。'}</p></article>
+      <article class="insight-card coral"><p class="eyebrow">最大支出分類</p><strong>${topCategory ? topCategory[0] : '尚無資料'}</strong><p>${topCategory ? `${formatMoney(topCategory[1])} · ${Math.round((topCategory[1] / summary.expense) * 100)}%` : ''}</p></article>
+      <article class="insight-card blue"><p class="eyebrow">本月結餘</p><strong>${formatMoney(summary.balance, { showPlus: true })}</strong><p>${formatMoney(summary.income)} 收入 · ${formatMoney(summary.expense)} 支出</p></article>
+      <article class="insight-card olive"><p class="eyebrow">交易筆數</p><strong>${summary.count} 筆</strong><p>${summary.count ? `平均 ${formatMoney(Math.round((summary.income + summary.expense) / summary.count))}` : ''}</p></article>
     </div>
   </section>`;
 }

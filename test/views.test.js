@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { renderOverview, transactionRows } from '../src/views.js';
 
 describe('交易列表', () => {
-  it('以名稱為主文字，備註只放在次要資訊並安全跳脫', () => {
+  it('以名稱為主文字，列表只保留分類與日期並安全跳脫', () => {
     const html = transactionRows(
       [
         {
@@ -21,8 +21,8 @@ describe('交易列表', () => {
       [{ id: 'line', name: 'LINE' }],
     );
     expect(html).toContain('<strong>&lt;b&gt;星巴克&lt;/b&gt;</strong>');
-    expect(html).toContain('和朋友聊天');
-    expect(html).not.toContain('<strong>和朋友聊天</strong>');
+    expect(html).not.toContain('和朋友聊天');
+    expect(html).toContain('飲食 · 咖啡 · 8/29');
     expect(html).not.toContain('<b>星巴克</b>');
   });
 });
@@ -43,6 +43,9 @@ describe('總覽', () => {
 
     expect(html).toContain('總資產');
     expect(html).toContain('data-testid="total-assets">NT$ 3,300</strong>');
+    expect(html).toContain('<h1 id="overview-title">總覽</h1>');
+    expect(html).not.toContain('先看流向');
+    expect(html).not.toContain('收入還有空間');
   });
 });
 

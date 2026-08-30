@@ -8,6 +8,7 @@ import {
   deleteLedgerTransactionFromSheet,
   enqueueSpokenEntry,
   loadLedgerStateFromSheet,
+  syncLedgerChangesToSheet,
   syncLedgerStateToSheet,
   validateProxyEndpoint,
 } from '../src/services/import-proxy.js';
@@ -155,6 +156,48 @@ describe('智慧匯入代理', () => {
       id: 'transfer-1',
       amount: 300,
       fee: 15,
+    });
+  });
+
+  it('自動同步只送出異動的預算、帳戶與交易，避免覆蓋其他裝置資料', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: { accountCount: 1, transactionCount: 1, budgetCount: 1 } }),
+    });
+    const state = {
+      schemaVersion: 1,
+      accounts: [{ id: 'cash', name: '現金', icon: '現', openingBalance: 1500 }],
+      transactions: [{
+        id: 'tx-1', type: 'expense', amount: 120, account: 'cash', toAccount: null,
+        date: '2026-08-30', name: '午餐', category: '飲食', subcategory: '便當',
+      }],
+      budgets: [{ category: '飲食', limit: 5000 }],
+    };
+
+    await syncLedgerChangesToSheet({
+      endpoint: 'https://example.com/proxy',
+      proxyToken: 'token',
+      state,
+      changes: {
+        upserts: ['tx-1'],
+        deletes: [],
+        accountUpserts: ['cash'],
+        accountDeletes: [],
+        budgetUpserts: ['飲食'],
+        budgetDeletes: [],
+      },
+    }, { fetchImpl });
+
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toMatchObject({
+      action: 'syncLedgerChanges',
+      changes: {
+        accounts: [{ id: 'cash', openingBalance: 1500 }],
+        accountDeletes: [],
+        transactions: [{ id: 'tx-1', amount: 120 }],
+        transactionDeletes: [],
+        budgets: [{ category: '飲食', limit: 5000 }],
+        budgetDeletes: [],
+      },
     });
   });
 

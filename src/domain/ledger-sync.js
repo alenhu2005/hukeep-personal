@@ -46,8 +46,83 @@ function transactionIds(values) {
     : [];
 }
 
+function entityIds(values) {
+  return Array.isArray(values)
+    ? values
+        .map(value => String(value ?? '').trim())
+        .filter((value, index, all) => value && all.indexOf(value) === index)
+    : [];
+}
+
 function transactionChanged(before, after) {
   return JSON.stringify(before) !== JSON.stringify(after);
+}
+
+function updateEntityChanges(current, beforeItems, afterItems, keyOf, upsertField, deleteField) {
+  const upserts = new Set(entityIds(current?.[upsertField]));
+  const deletes = new Set(entityIds(current?.[deleteField]));
+  const before = new Map(
+    (Array.isArray(beforeItems) ? beforeItems : [])
+      .map(item => [keyOf(item), item])
+      .filter(([key]) => key),
+  );
+  const after = new Map(
+    (Array.isArray(afterItems) ? afterItems : [])
+      .map(item => [keyOf(item), item])
+      .filter(([key]) => key),
+  );
+
+  after.forEach((item, key) => {
+    if (!before.has(key) || transactionChanged(before.get(key), item)) {
+      deletes.delete(key);
+      upserts.add(key);
+    }
+  });
+  before.forEach((_item, key) => {
+    if (!after.has(key)) {
+      upserts.delete(key);
+      deletes.add(key);
+    }
+  });
+  return { upserts: [...upserts], deletes: [...deletes] };
+}
+
+function reconcileEntities(localItems, remoteItems, pending, keyOf) {
+  if (!Array.isArray(remoteItems)) return (Array.isArray(localItems) ? localItems : []).map(item => ({ ...item }));
+  const pendingUpserts = new Set(entityIds(pending?.upserts));
+  const pendingDeletes = new Set(entityIds(pending?.deletes));
+  const localByKey = new Map(
+    (Array.isArray(localItems) ? localItems : [])
+      .map(item => [keyOf(item), item])
+      .filter(([key]) => key),
+  );
+  const consumed = new Set();
+  const result = remoteItems.flatMap(item => {
+    const key = keyOf(item);
+    if (!key || pendingDeletes.has(key)) return [];
+    if (pendingUpserts.has(key) && localByKey.has(key)) {
+      consumed.add(key);
+      return [{ ...localByKey.get(key) }];
+    }
+    return [{ ...item }];
+  });
+  pendingUpserts.forEach(key => {
+    if (!consumed.has(key) && localByKey.has(key) && !pendingDeletes.has(key)) {
+      result.push({ ...localByKey.get(key) });
+    }
+  });
+  return result;
+}
+
+export function hasPendingSheetChanges(value) {
+  return [
+    value?.upserts,
+    value?.deletes,
+    value?.accountUpserts,
+    value?.accountDeletes,
+    value?.budgetUpserts,
+    value?.budgetDeletes,
+  ].some(items => entityIds(items).length > 0);
 }
 
 export function updatePendingSheetChanges(current, beforeState, afterState) {
@@ -79,7 +154,30 @@ export function updatePendingSheetChanges(current, beforeState, afterState) {
     }
   });
 
-  return { upserts: [...upserts], deletes: [...deletes] };
+  const accounts = updateEntityChanges(
+    current,
+    beforeState?.accounts,
+    afterState?.accounts,
+    account => String(account?.id ?? '').trim(),
+    'accountUpserts',
+    'accountDeletes',
+  );
+  const budgets = updateEntityChanges(
+    current,
+    beforeState?.budgets,
+    afterState?.budgets,
+    budget => String(budget?.category ?? '').trim(),
+    'budgetUpserts',
+    'budgetDeletes',
+  );
+  return {
+    upserts: [...upserts],
+    deletes: [...deletes],
+    accountUpserts: accounts.upserts,
+    accountDeletes: accounts.deletes,
+    budgetUpserts: budgets.upserts,
+    budgetDeletes: budgets.deletes,
+  };
 }
 
 export function reconcileLedgerFromSheet(local, remote, pendingChanges = {}) {
@@ -107,12 +205,16 @@ export function reconcileLedgerFromSheet(local, remote, pendingChanges = {}) {
     schemaVersion: 1,
     accounts:
       Array.isArray(remote?.accounts) && remote.accounts.length
-        ? remote.accounts.map(account => ({ ...account }))
+        ? reconcileEntities(local?.accounts, remote.accounts, {
+            upserts: pendingChanges?.accountUpserts,
+            deletes: pendingChanges?.accountDeletes,
+          }, account => String(account?.id ?? '').trim())
         : (local?.accounts ?? []).map(account => ({ ...account })),
     transactions,
-    budgets: Array.isArray(remote?.budgets)
-      ? remote.budgets.map(budget => ({ ...budget }))
-      : (local?.budgets ?? []).map(budget => ({ ...budget })),
+    budgets: reconcileEntities(local?.budgets, remote?.budgets, {
+      upserts: pendingChanges?.budgetUpserts,
+      deletes: pendingChanges?.budgetDeletes,
+    }, budget => String(budget?.category ?? '').trim()),
     preferences: { ...(local?.preferences ?? {}) },
   };
 }

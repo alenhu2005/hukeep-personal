@@ -207,6 +207,39 @@ export function projectLedgerForSheet(state) {
   };
 }
 
+function changedKeys(values, maxLength) {
+  return Array.isArray(values)
+    ? [...new Set(values.map(value => cleanText(value, maxLength)).filter(Boolean))]
+    : [];
+}
+
+function changedItems(items, keys, keyOf, project) {
+  const byKey = new Map(
+    (Array.isArray(items) ? items : [])
+      .map(item => [keyOf(item), item])
+      .filter(([key]) => key),
+  );
+  return keys.flatMap(key => (byKey.has(key) ? [project(byKey.get(key))] : []));
+}
+
+export function projectLedgerChangesForSheet(state, changes) {
+  const transactionUpserts = changedKeys(changes?.upserts, 80);
+  const transactionDeletes = changedKeys(changes?.deletes, 80);
+  const accountUpserts = changedKeys(changes?.accountUpserts, 40);
+  const accountDeletes = changedKeys(changes?.accountDeletes, 40);
+  const budgetUpserts = changedKeys(changes?.budgetUpserts, 40);
+  const budgetDeletes = changedKeys(changes?.budgetDeletes, 40);
+
+  return {
+    accounts: changedItems(state?.accounts, accountUpserts, account => cleanText(account?.id, 40), projectAccount),
+    accountDeletes,
+    transactions: changedItems(state?.transactions, transactionUpserts, transaction => cleanText(transaction?.id, 80), projectTransaction),
+    transactionDeletes,
+    budgets: changedItems(state?.budgets, budgetUpserts, budget => cleanText(budget?.category, 40), projectBudget),
+    budgetDeletes,
+  };
+}
+
 export async function syncLedgerStateToSheet(input, options = {}) {
   const data = await postProxy(
     input?.endpoint,
@@ -220,6 +253,27 @@ export async function syncLedgerStateToSheet(input, options = {}) {
   const counts = ['accountCount', 'transactionCount', 'budgetCount'];
   if (!counts.every(field => Number.isInteger(data?.[field]) && data[field] >= 0)) {
     throw new Error('Sheet 同步回傳格式不正確');
+  }
+  return {
+    accountCount: data.accountCount,
+    transactionCount: data.transactionCount,
+    budgetCount: data.budgetCount,
+  };
+}
+
+export async function syncLedgerChangesToSheet(input, options = {}) {
+  const data = await postProxy(
+    input?.endpoint,
+    {
+      action: 'syncLedgerChanges',
+      proxyToken: cleanText(input?.proxyToken, 300),
+      changes: projectLedgerChangesForSheet(input?.state, input?.changes),
+    },
+    options,
+  );
+  const counts = ['accountCount', 'transactionCount', 'budgetCount'];
+  if (!counts.every(field => Number.isInteger(data?.[field]) && data[field] >= 0)) {
+    throw new Error('Sheet 自動同步回傳格式不正確');
   }
   return {
     accountCount: data.accountCount,

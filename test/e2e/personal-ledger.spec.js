@@ -11,7 +11,7 @@ test.beforeEach(async ({ page }) => {
 
 test('可新增收支、重新整理仍保留並透過歷史搜尋', async ({ page }) => {
   await expect(page).toHaveTitle('小帳｜個人記帳');
-  await expect(page.getByRole('heading', { name: '這個月，把錢用在哪裡？' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '總覽' })).toBeVisible();
 
   await page.getByRole('button', { name: '快速記一筆' }).click();
   await page.getByText('需要手動輸入？展開詳細記帳').click();
@@ -276,9 +276,76 @@ test('可設定分類預算、查看趨勢並在手機使用', async ({ page }) 
   await expect(page.getByText('飲食預算')).toBeVisible();
 
   await page.getByRole('button', { name: '趨勢' }).click();
-  await expect(page.getByRole('heading', { name: '六個月的流向' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: '趨勢' })).toBeVisible();
   await expect(page.locator('#trend-chart')).toBeVisible();
   await expect(page.locator('body')).not.toHaveCSS('overflow-x', 'scroll');
+});
+
+test('預算儲存後會自動同步，切換頁面會立即讀取 Sheet', async ({ page }) => {
+  const changeRequests = [];
+  let loadRequests = 0;
+  await page.route('https://proxy.example/changes', async route => {
+    const body = route.request().postDataJSON();
+    if (body.action === 'syncLedgerChanges') {
+      changeRequests.push(body);
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, data: { accountCount: 5, transactionCount: 0, budgetCount: 1 } }),
+      });
+      return;
+    }
+    if (body.action === 'loadLedgerState') {
+      loadRequests += 1;
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          data: { schemaVersion: 1, accounts: [], transactions: [], budgets: [] },
+        }),
+      });
+      return;
+    }
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: false, error: 'unexpected' }) });
+  });
+  await page.evaluate(() => {
+    localStorage.setItem('hukeep_personal_state_v1', JSON.stringify({
+      schemaVersion: 1,
+      accounts: [
+        { id: 'cash', name: '現金', icon: '現', openingBalance: 0 },
+        { id: 'line', name: 'LINE', icon: 'L', openingBalance: 0 },
+        { id: 'sinopac', name: '永豐', icon: '永', openingBalance: 0 },
+        { id: 'bot', name: '台銀', icon: '台', openingBalance: 0 },
+        { id: 'post', name: '郵局', icon: '郵', openingBalance: 0 },
+      ],
+      transactions: [],
+      budgets: [{ category: '飲食', limit: 4500 }],
+      preferences: { theme: 'system' },
+    }));
+    localStorage.removeItem('hukeep_budget_sync_migrated_v2');
+    localStorage.setItem('hukeep_device_binding_endpoint_v1', 'https://proxy.example/changes');
+    localStorage.setItem('hukeep_device_binding_token_v1', 'session-token');
+  });
+  await page.reload();
+
+  await page.getByRole('button', { name: '預算' }).click();
+  await expect.poll(() => changeRequests.length).toBe(1);
+  expect(changeRequests[0]).toMatchObject({
+    action: 'syncLedgerChanges',
+    changes: { budgets: [{ category: '飲食', limit: 4500 }] },
+  });
+
+  await page.getByLabel('預算分類').selectOption('飲食');
+  await page.getByLabel('每月上限').fill('5000');
+  await page.getByRole('button', { name: '儲存預算' }).click();
+  await expect.poll(() => changeRequests.length).toBe(2);
+  expect(changeRequests[1]).toMatchObject({
+    action: 'syncLedgerChanges',
+    changes: { budgets: [{ category: '飲食', limit: 5000 }] },
+  });
+
+  const loadsBeforeNavigation = loadRequests;
+  await page.getByRole('button', { name: '紀錄', exact: true }).click();
+  await expect.poll(() => loadRequests).toBeGreaterThan(loadsBeforeNavigation);
 });
 
 test('手機掃描綁定連結後可直接連線，並會清除網址中的綁定資料', async ({ page }) => {
@@ -474,9 +541,27 @@ test('刪除前會確認，確認後會實際刪除 Google Sheet 的交易與預
   await page.route('https://proxy.example/delete', async route => {
     const body = route.request().postDataJSON();
     if (body.action === 'loadLedgerState') {
+      const savedState = await page.evaluate(() =>
+        JSON.parse(localStorage.getItem('hukeep_personal_state_v1') || '{}'),
+      );
       await route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({ ok: true, data: { schemaVersion: 1, accounts: [], transactions: [], budgets: [] } }),
+        body: JSON.stringify({
+          ok: true,
+          data: {
+            schemaVersion: 1,
+            accounts: savedState.accounts || [],
+            transactions: savedState.transactions || [],
+            budgets: savedState.budgets || [],
+          },
+        }),
+      });
+      return;
+    }
+    if (body.action === 'syncLedgerChanges') {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, data: { accountCount: 5, transactionCount: 1, budgetCount: 1 } }),
       });
       return;
     }
