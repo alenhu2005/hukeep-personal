@@ -10,8 +10,8 @@
     <link rel="manifest" href="./manifest.json" />
     <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
     <title>小帳｜個人記帳</title>
-    <script type="module" crossorigin src="/hukeep-personal/assets/index-z95V95pN.js"></script>
-    <link rel="stylesheet" crossorigin href="/hukeep-personal/assets/index-jQxREczQ.css">
+    <script type="module" crossorigin src="/hukeep-personal/assets/index-lnrtaH0G.js"></script>
+    <link rel="stylesheet" crossorigin href="/hukeep-personal/assets/index-Ba1NkOk8.css">
   </head>
   <body>
     <a class="skip-link" href="#app-main">跳到主要內容</a>
@@ -145,6 +145,14 @@
           </div>
         </details>
       </form>
+    </dialog>
+
+    <dialog id="transaction-detail-dialog" class="app-dialog transaction-detail-dialog" aria-labelledby="transaction-detail-title">
+      <div class="dialog-header">
+        <div><h2 id="transaction-detail-title">交易詳情</h2></div>
+        <button class="icon-button dialog-close" type="button" aria-label="關閉">×</button>
+      </div>
+      <div id="transaction-detail-content"></div>
     </dialog>
 
     <dialog id="tools-dialog" class="app-dialog tools-dialog">
