@@ -113,6 +113,20 @@ describe('口語記帳解析', () => {
     ]);
   });
 
+  it('可用連續貨幣符號辨識未加停頓的多品項輸入', () => {
+    expect(
+      parseSpokenTransactions(
+        '辣味鍋貼$100玉米濃湯$45黑豆漿$20麻醬麵$60都用Line支付',
+        { today },
+      ),
+    ).toMatchObject([
+      { name: '辣味鍋貼', amount: 100, account: 'line' },
+      { name: '玉米濃湯', amount: 45, account: 'line' },
+      { name: '黑豆漿', amount: 20, account: 'line' },
+      { name: '麻醬麵', amount: 60, account: 'line' },
+    ]);
+  });
+
   it('未明確辨識到多品項時仍維持單筆解析', () => {
     const entries = parseSpokenTransactions('滷肉飯 20 元用現金支付', { today });
 

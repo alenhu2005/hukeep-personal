@@ -22,6 +22,7 @@ const ITEM_AMOUNT_PATTERN = new RegExp(
   `(?:NT\\s*)?[$＄]\\s*[\\d,]+|(?:\\d[\\d,]*(?:\\s*[十百千萬]\\s*\\d*)?|[零〇一二兩三四五六七八九十百千萬]+)\\s*(?:元|圓|塊(?:錢)?)?(?=\\s*(?:的|用|付|刷|支付|現金|line|永豐|台銀|臺銀|郵局|$|[、，,；;。]))`,
   'gi',
 );
+const ADJACENT_CURRENCY_ITEM_PATTERN = /((?:NT\s*)?[$＄]\s*[\d,]+)(?=\s*(?!(?:的|元|圓|塊(?:錢)?|都|用|付|刷|支付|現金|line|永豐|台銀|臺銀|郵局))[\u3400-\u9fff])/gi;
 
 function parseChineseNumber(value) {
   let total = 0;
@@ -255,7 +256,8 @@ function explicitAccountFromText(text) {
 }
 
 function spokenItemFragments(transcript) {
-  return transcript
+  const normalized = transcript.replace(ADJACENT_CURRENCY_ITEM_PATTERN, '$1、');
+  return normalized
     .split(/(?:、|，|；|;|。|,(?!\d)|還有|以及|跟|和)+/)
     .map(fragment => fragment.trim())
     .filter(Boolean);
