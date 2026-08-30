@@ -10,7 +10,7 @@
     <link rel="manifest" href="./manifest.json" />
     <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
     <title>小帳｜個人記帳</title>
-    <script type="module" crossorigin src="/hukeep-personal/assets/index-CtOeUoUb.js"></script>
+    <script type="module" crossorigin src="/hukeep-personal/assets/index-jdiRtUhM.js"></script>
     <link rel="stylesheet" crossorigin href="/hukeep-personal/assets/index-BbZuzOqe.css">
   </head>
   <body>
@@ -104,6 +104,14 @@
               <span class="amount-input-wrap">
                 <small>NT$</small>
                 <input id="transaction-amount" name="amount" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required />
+              </span>
+            </label>
+
+            <label id="transfer-fee-field" class="amount-field" for="transaction-fee" hidden>
+              <span>轉帳手續費</span>
+              <span class="amount-input-wrap">
+                <small>NT$</small>
+                <input id="transaction-fee" name="fee" type="number" min="0" step="1" inputmode="numeric" placeholder="0" />
               </span>
             </label>
 
