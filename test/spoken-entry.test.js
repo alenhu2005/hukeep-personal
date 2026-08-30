@@ -100,6 +100,19 @@ describe('口語記帳解析', () => {
     ]);
   });
 
+  it('理解自然量詞、貨幣符號與食物名稱中的中文數字', () => {
+    expect(
+      parseSpokenTransactions(
+        '一碗120的焢肉飯,還有一碗$70的四神湯還有一碗$25的滷肉飯都用現金支付',
+        { today },
+      ),
+    ).toMatchObject([
+      { name: '焢肉飯', amount: 120, account: 'cash', category: '飲食', subcategory: '台式料理' },
+      { name: '四神湯', amount: 70, account: 'cash', category: '飲食', subcategory: '台式料理' },
+      { name: '滷肉飯', amount: 25, account: 'cash', category: '飲食', subcategory: '台式料理' },
+    ]);
+  });
+
   it('未明確辨識到多品項時仍維持單筆解析', () => {
     const entries = parseSpokenTransactions('滷肉飯 20 元用現金支付', { today });
 

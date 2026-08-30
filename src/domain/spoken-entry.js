@@ -17,6 +17,11 @@ const CHINESE_DIGITS = {
 
 const SMALL_UNITS = { '十': 10, '百': 100, '千': 1000 };
 const AMOUNT_TOKEN_PATTERN = '[\\d,\\s十百千萬零〇一二兩三四五六七八九]+';
+const CHINESE_AMOUNT_PATTERN = /^[零〇一二兩三四五六七八九十百千萬]+$/;
+const ITEM_AMOUNT_PATTERN = new RegExp(
+  `(?:NT\\s*)?[$＄]\\s*[\\d,]+|(?:\\d[\\d,]*(?:\\s*[十百千萬]\\s*\\d*)?|[零〇一二兩三四五六七八九十百千萬]+)\\s*(?:元|圓|塊(?:錢)?)?(?=\\s*(?:的|用|付|刷|支付|現金|line|永豐|台銀|臺銀|郵局|$|[、，,；;。]))`,
+  'gi',
+);
 
 function parseChineseNumber(value) {
   let total = 0;
@@ -96,10 +101,20 @@ function isNonAmountCandidate(text, match) {
   if (/^[年月日號]/.test(next)) return true;
   if (/^[間份個次張杯天人歲]/.test(next)) return true;
   if (/^0\d{3,5}$/.test(raw) && /^(?:ETF|股票|股|代號)/i.test(next)) return true;
+  if (
+    CHINESE_AMOUNT_PATTERN.test(raw) &&
+    /^[\u3400-\u9fff]/.test(next) &&
+    !/^(?:元|圓|塊|用|付|刷|支付|現金|line|永豐|台銀|臺銀|郵局|入|存|匯|轉|到|進)/i.test(next)
+  ) {
+    return true;
+  }
   return false;
 }
 
 function parseAmount(text) {
+  const currency = text.match(new RegExp(`(?:NT\\s*)?[$＄]\\s*(${AMOUNT_TOKEN_PATTERN})`, 'i'));
+  if (currency) return numberFromAmountToken(currency[1]);
+
   const explicit = text.match(new RegExp(`(${AMOUNT_TOKEN_PATTERN})\\s*(?:元|圓|塊(?:錢)?)`));
   if (explicit) return numberFromAmountToken(explicit[1]);
 
@@ -251,9 +266,10 @@ function multiItemCandidates(transcript) {
     if (/(?:總共|合計|共計|一共)/.test(fragment)) return [];
     const amount = parseAmount(fragment);
     if (!amount) return [];
-    const nameText = classificationText(
-      fragment.replace(new RegExp(`${AMOUNT_TOKEN_PATTERN}\\s*(?:元|圓|塊(?:錢)?)?`, 'g'), ' '),
-    );
+    const nameText = classificationText(fragment.replace(ITEM_AMOUNT_PATTERN, ' '))
+      .replace(/^(?:(?:[一二兩三四五六七八九十\d]+)?\s*(?:碗|杯|份|個|盒|包|盤|串|瓶|支|顆)\s*)+(?:的\s*)?/, '')
+      .replace(/(?:都\s*)?(?:用|付|刷|支付)(?:\s*支付)?\s*$/, '')
+      .trim();
     if (!nameText || /^(?:第?[一二兩三四五六七八九十\d]+(?:個|項)?|另一個|前者|後者)$/.test(nameText)) {
       return [];
     }
