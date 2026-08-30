@@ -558,13 +558,39 @@ export function createApp() {
     setSyncStatus('syncing');
     status.textContent = '正在上傳 Sheet…不需等待 AI 審查。';
     try {
-      const result = await enqueueSpokenEntry({
+      const firstResult = await enqueueSpokenEntry({
         ...credentials,
         transcript,
         draft: drafts[0],
         drafts,
       });
-      const uploaded = result.transactions
+      // Older deployed GAS versions only consume the legacy `draft` field and
+      // therefore return one transaction even when the web app has detected
+      // several items. Send the remaining drafts individually in that case,
+      // using a self-contained transcript so legacy AI review cannot merge
+      // them back into one record.
+      const handledDrafts = Math.max(1, Math.min(firstResult.transactions.length, drafts.length));
+      const remainingDrafts = drafts.slice(handledDrafts);
+      const additionalResults = await remainingDrafts.reduce(
+        async (resultsPromise, draft) => {
+          const results = await resultsPromise;
+          const accountName = state.accounts.find(account => account.id === draft.account)?.name
+            || draft.account
+            || '現金';
+          const direction = draft.type === 'income' ? '收入' : '用';
+          const itemTranscript = `${draft.name} ${draft.amount} 元${direction}${accountName}`;
+          const result = await enqueueSpokenEntry({
+            ...credentials,
+            transcript: itemTranscript,
+            draft,
+            drafts: [draft],
+          });
+          return [...results, result];
+        },
+        Promise.resolve([]),
+      );
+      const uploaded = [firstResult, ...additionalResults]
+        .flatMap(result => result.transactions)
         .map(normalizeStoredTransaction)
         .filter(Boolean);
       if (uploaded.length) {

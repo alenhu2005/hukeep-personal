@@ -276,7 +276,7 @@ test('口語內容直接上傳 Sheet，不等待 AI 審查', async ({ page }) =>
 });
 
 test('口語多品項會自動拆單並把各自帳戶直接上傳 Sheet', async ({ page }) => {
-  let receivedBody;
+  const receivedBodies = [];
   await page.route('https://proxy.example/multi-voice', async route => {
     const body = route.request().postDataJSON();
     if (body.action === 'loadLedgerState') {
@@ -289,31 +289,23 @@ test('口語多品項會自動拆單並把各自帳戶直接上傳 Sheet', async
       });
       return;
     }
-    receivedBody = body;
+    receivedBodies.push(body);
+    const draft = body.draft;
+    const requestNumber = receivedBodies.length;
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
         ok: true,
         data: {
-          queueId: 'multi-group',
-          queueIds: ['multi:multi-group:1', 'multi:multi-group:2'],
+          queueId: `legacy-${requestNumber}`,
           status: 'pending',
-          transactions: [
-            {
-              id: 'voice:multi:multi-group:1', type: 'expense', name: '滷肉飯', amount: 20,
-              category: '飲食', subcategory: '小吃', account: 'cash', toAccount: '', date: '2026-08-29',
-              note: '', source: 'voice', sourceId: 'multi:multi-group:1', aiStatus: 'pending',
-              rawTranscript: '滷肉飯20、貢丸湯三十，滷肉飯用現金支付，另一個用line',
-              createdAt: '2026-08-29T06:00:00.000Z', updatedAt: '2026-08-29T06:00:00.000Z',
-            },
-            {
-              id: 'voice:multi:multi-group:2', type: 'expense', name: '貢丸湯', amount: 30,
-              category: '飲食', subcategory: '湯品', account: 'line', toAccount: '', date: '2026-08-29',
-              note: '', source: 'voice', sourceId: 'multi:multi-group:2', aiStatus: 'pending',
-              rawTranscript: '滷肉飯20、貢丸湯三十，滷肉飯用現金支付，另一個用line',
-              createdAt: '2026-08-29T06:00:00.000Z', updatedAt: '2026-08-29T06:00:00.000Z',
-            },
-          ],
+          transaction: {
+            id: `voice:legacy-${requestNumber}`, type: draft.type, name: draft.name, amount: draft.amount,
+            category: draft.category, subcategory: draft.subcategory, account: draft.account,
+            toAccount: draft.toAccount, date: draft.date, note: draft.note, source: 'voice',
+            sourceId: `legacy-${requestNumber}`, aiStatus: 'pending', rawTranscript: body.transcript,
+            createdAt: '2026-08-29T06:00:00.000Z', updatedAt: '2026-08-29T06:00:00.000Z',
+          },
         },
       }),
     });
@@ -348,12 +340,18 @@ test('口語多品項會自動拆單並把各自帳戶直接上傳 Sheet', async
     expect.objectContaining({ name: '滷肉飯', amount: 20, account: 'cash' }),
     expect.objectContaining({ name: '貢丸湯', amount: 30, account: 'line' }),
   ]));
-  expect(receivedBody).toMatchObject({
+  expect(receivedBodies).toHaveLength(2);
+  expect(receivedBodies[0]).toMatchObject({
     action: 'enqueueSpokenEntry',
     drafts: [
       expect.objectContaining({ name: '滷肉飯', amount: 20, account: 'cash' }),
       expect.objectContaining({ name: '貢丸湯', amount: 30, account: 'line' }),
     ],
+  });
+  expect(receivedBodies[1]).toMatchObject({
+    action: 'enqueueSpokenEntry',
+    transcript: '貢丸湯 30 元用LINE',
+    draft: expect.objectContaining({ name: '貢丸湯', amount: 30, account: 'line' }),
   });
 });
 
