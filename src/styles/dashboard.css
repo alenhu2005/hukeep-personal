@@ -153,7 +153,7 @@
 .cashflow-metrics {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   padding-top: 14px;
   border-top: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
 }
@@ -187,16 +187,13 @@
   background: var(--expense);
 }
 
-.dot.balance {
-  background: var(--amber);
-}
-
 .cashflow-metrics small {
   color: var(--muted);
   font-size: 11px;
 }
 
 .cashflow-metrics strong {
+  white-space: nowrap;
   font-size: 16px;
 }
 

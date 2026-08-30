@@ -46,6 +46,9 @@ describe('總覽', () => {
     expect(html).toContain('<h1 id="overview-title">總覽</h1>');
     expect(html).not.toContain('先看流向');
     expect(html).not.toContain('收入還有空間');
+    expect(html).not.toContain('平均每筆');
+    expect(html).toContain('data-testid="summary-income"');
+    expect(html).toContain('data-testid="summary-expense"');
   });
 });
 

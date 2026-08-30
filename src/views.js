@@ -117,7 +117,6 @@ export function renderOverview(state, month) {
       <div class="cashflow-metrics">
         <div><span class="dot income"></span><small>收入</small><strong data-testid="summary-income">${formatMoney(summary.income)}</strong></div>
         <div><span class="dot expense"></span><small>支出</small><strong data-testid="summary-expense">${formatMoney(summary.expense)}</strong></div>
-        <div><span class="dot balance"></span><small>平均每筆</small><strong>${formatMoney(summary.count ? Math.round((summary.income + summary.expense) / summary.count) : 0)}</strong></div>
       </div>
     </div>
 

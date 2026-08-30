@@ -154,7 +154,7 @@
   }
 
   .cashflow-metrics {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0;
     padding-top: 12px;
   }
@@ -166,12 +166,6 @@
 
   .cashflow-metrics > div:nth-child(2) {
     padding-left: 9px;
-  }
-
-  .cashflow-metrics > div:nth-child(3) {
-    grid-column: auto;
-    padding: 0 0 0 9px;
-    border-top: 0;
   }
 
   .transaction-row {
