@@ -3,6 +3,7 @@ import {
   buildMonthlyTrend,
   calculateAccountBalances,
   calculateBudgetProgress,
+  calculateTotalAssets,
   summarizeMonth,
 } from './domain/insights.js';
 import { filterTransactions } from './domain/transactions.js';
@@ -81,6 +82,7 @@ export function renderOverview(state, month) {
   const monthlyTransactions = filterTransactions(state.transactions, { month });
   const accountBalances = calculateAccountBalances(state.accounts, state.transactions);
   const accountById = Object.fromEntries(accountBalances.map(item => [item.id, item.balance]));
+  const totalAssets = calculateTotalAssets(accountBalances);
   const budgetProgress = calculateBudgetProgress(state.budgets, state.transactions, month);
   const totalBudget = budgetProgress.reduce((sum, item) => sum + item.limit, 0);
   const budgetSpent = budgetProgress.reduce((sum, item) => sum + item.spent, 0);
@@ -120,6 +122,10 @@ export function renderOverview(state, month) {
     <div class="overview-grid">
       <section class="panel accounts-panel">
         <div class="section-heading"><div><p class="eyebrow">位置</p><h2>我的帳戶</h2></div><span>估算餘額</span></div>
+        <div class="asset-total">
+          <div><small>所有帳戶目前餘額</small><strong class="${totalAssets < 0 ? 'negative' : ''}" data-testid="total-assets">${formatMoney(totalAssets)}</strong></div>
+          <span>總資產</span>
+        </div>
         <div class="account-list">
           ${state.accounts
             .map(

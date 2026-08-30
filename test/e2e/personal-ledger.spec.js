@@ -31,6 +31,7 @@ test('可新增收支、重新整理仍保留並透過歷史搜尋', async ({ pa
   await page.getByRole('button', { name: '儲存這筆' }).click();
 
   await expect(page.getByTestId('summary-expense')).toContainText('120');
+  await expect(page.getByTestId('total-assets')).toContainText('-NT$ 120');
   await expect(page.getByText('鼎王麻辣鍋午餐')).toBeVisible();
 
   const initial = await page.evaluate(() =>

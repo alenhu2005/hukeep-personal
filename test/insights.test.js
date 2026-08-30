@@ -3,6 +3,7 @@ import {
   buildMonthlyTrend,
   calculateAccountBalances,
   calculateBudgetProgress,
+  calculateTotalAssets,
   summarizeMonth,
 } from '../src/domain/insights.js';
 
@@ -86,5 +87,16 @@ describe('calculateAccountBalances', () => {
       { id: 'bank', balance: 6000 },
       { id: 'card', balance: -700 },
     ]);
+  });
+});
+
+describe('calculateTotalAssets', () => {
+  it('加總所有帳戶目前餘額，負餘額會扣除', () => {
+    expect(calculateTotalAssets([
+      { id: 'cash', balance: 750 },
+      { id: 'bank', balance: 6000 },
+      { id: 'card', balance: -700 },
+      { id: 'invalid', balance: Number.NaN },
+    ])).toBe(6050);
   });
 });

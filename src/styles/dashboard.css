@@ -267,6 +267,44 @@
   font-weight: 700;
 }
 
+.asset-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding: 14px 15px;
+  border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--line));
+  border-radius: var(--radius-sm);
+  background: var(--primary-soft);
+}
+
+.asset-total div {
+  display: grid;
+  gap: 3px;
+}
+
+.asset-total small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.asset-total strong {
+  color: var(--primary);
+  font-size: 24px;
+  letter-spacing: -0.04em;
+}
+
+.asset-total strong.negative {
+  color: var(--expense);
+}
+
+.asset-total > span {
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .account-list {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

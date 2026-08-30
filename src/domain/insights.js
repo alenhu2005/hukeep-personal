@@ -87,3 +87,10 @@ export function calculateAccountBalances(accounts, transactions) {
 
   return accounts.map(account => ({ id: account.id, balance: balances[account.id] }));
 }
+
+export function calculateTotalAssets(accountBalances) {
+  return accountBalances.reduce((total, account) => {
+    const balance = Number(account?.balance);
+    return total + (Number.isFinite(balance) ? balance : 0);
+  }, 0);
+}
