@@ -6,6 +6,11 @@ function validAmount(transaction) {
   return Number.isInteger(transaction?.amount) && transaction.amount > 0;
 }
 
+function transferFee(transaction) {
+  const fee = Number(transaction?.fee);
+  return Number.isInteger(fee) && fee > 0 ? fee : 0;
+}
+
 export function summarizeMonth(transactions, month) {
   const summary = transactions.reduce(
     (result, transaction) => {
@@ -80,7 +85,7 @@ export function calculateAccountBalances(accounts, transactions) {
     } else if (transaction.type === 'expense' && transaction.account in balances) {
       balances[transaction.account] -= transaction.amount;
     } else if (transaction.type === 'transfer') {
-      if (transaction.account in balances) balances[transaction.account] -= transaction.amount;
+      if (transaction.account in balances) balances[transaction.account] -= transaction.amount + transferFee(transaction);
       if (transaction.toAccount in balances) balances[transaction.toAccount] += transaction.amount;
     }
   }

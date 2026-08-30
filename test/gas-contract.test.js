@@ -20,6 +20,14 @@ describe('GAS 同步合約', () => {
     expect(source).not.toContain('1nlUSUpk5F4fnhDRTPWS4KlIIfqAYWkT6xn3965Xl8N-eRKiFyVjqNO4w');
   });
 
+  it('提供受授權的精準 Sheet 刪除操作，而非只從本機移除', () => {
+    expect(source).toContain("body.action === 'deleteLedgerTransaction'");
+    expect(source).toContain("body.action === 'deleteLedgerBudget'");
+    expect(source).toContain('function deleteLedgerTransaction_(');
+    expect(source).toContain('function deleteLedgerBudget_(');
+    expect(source).toContain('.deleteRow(');
+  });
+
   it('預設使用最新穩定的 Gemini 3.7 Flash，並允許以指令碼屬性覆寫', () => {
     expect(source).toContain("var DEFAULT_GEMINI_MODEL = 'gemini-3.7-flash'");
     expect(source).toContain("optionalProperty_('GEMINI_MODEL') || DEFAULT_GEMINI_MODEL");
@@ -30,6 +38,12 @@ describe('GAS 同步合約', () => {
   it('Gemini 結構化輸出的帳戶 enum 不包含無效空字串', () => {
     expect(source).not.toContain("enum: [''].concat(ACCOUNT_IDS)");
     expect(source).toContain("toAccount: { type: 'STRING', enum: ACCOUNT_IDS }");
+  });
+
+  it('轉帳手續費會儲存到 Sheet，並納入口語 AI 審查 schema', () => {
+    expect(source).toContain("'手續費'");
+    expect(source).toContain("fee: { type: 'NUMBER'");
+    expect(source).toContain('手續費只會在轉帳時套用');
   });
 
   it('提供只用來完成試算表 OAuth 的公開授權函式', () => {
@@ -91,7 +105,7 @@ describe('GAS 同步合約', () => {
 
     expect(normalizeRow(legacyRow)).toEqual([
       'voice:test', 'income', '家教', 2500, '接案', '家教', 'bot', '', '2026-08-27', '口語原文',
-      'voice', 'test', '', '', '[]', 'created', 'updated', '', '', 'pending', '', '口語原文',
+      'voice', 'test', '', '', '[]', 'created', 'updated', '', '', 'pending', '', '口語原文', '',
     ]);
   });
 

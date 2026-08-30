@@ -4,6 +4,8 @@ import {
   claimDevicePairingCode,
   classifyExpenseWithAi,
   createDevicePairingCode,
+  deleteLedgerBudgetFromSheet,
+  deleteLedgerTransactionFromSheet,
   enqueueSpokenEntry,
   loadLedgerStateFromSheet,
   syncLedgerStateToSheet,
@@ -128,6 +130,59 @@ describe('智慧匯入代理', () => {
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body).state).not.toHaveProperty('preferences');
   });
 
+  it('同步時保留轉帳手續費，讓 Sheet 能正確計算帳戶與總資產', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: { accountCount: 2, transactionCount: 1, budgetCount: 0 } }),
+    });
+    await syncLedgerStateToSheet({
+      endpoint: 'https://example.com/proxy',
+      proxyToken: 'token',
+      state: {
+        accounts: [
+          { id: 'cash', name: '現金', openingBalance: 1000 },
+          { id: 'line', name: 'LINE', openingBalance: 0 },
+        ],
+        transactions: [{
+          id: 'transfer-1', type: 'transfer', amount: 300, fee: 15,
+          account: 'cash', toAccount: 'line', date: '2026-08-29', name: '帳戶轉帳',
+        }],
+        budgets: [],
+      },
+    }, { fetchImpl });
+
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).state.transactions[0]).toMatchObject({
+      id: 'transfer-1',
+      amount: 300,
+      fee: 15,
+    });
+  });
+
+  it('刪除交易與預算時，要求 GAS 實際移除指定的 Sheet 資料列', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: { deleted: true } }),
+    });
+    const session = { endpoint: 'https://example.com/proxy', proxyToken: 'token' };
+
+    await expect(
+      deleteLedgerTransactionFromSheet({ ...session, transactionId: 'voice:queue-1' }, { fetchImpl }),
+    ).resolves.toEqual({ deleted: true });
+    await expect(
+      deleteLedgerBudgetFromSheet({ ...session, category: '飲食' }, { fetchImpl }),
+    ).resolves.toEqual({ deleted: true });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
+      action: 'deleteLedgerTransaction',
+      proxyToken: 'token',
+      transactionId: 'voice:queue-1',
+    });
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body)).toEqual({
+      action: 'deleteLedgerBudget',
+      proxyToken: 'token',
+      category: '飲食',
+    });
+  });
+
   it('從 Sheet 讀取時驗證完整帳本結構', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,
@@ -164,6 +219,27 @@ describe('智慧匯入代理', () => {
       action: 'enqueueSpokenEntry',
       transcript: '昨天用永豐在鼎王吃麻辣鍋一千二',
       draft: { note: '' },
+    });
+  });
+
+  it('口語轉帳會把辨識到的手續費送給 GAS 與 AI 後台', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: { queueId: 'queue-fee', status: 'pending', transaction: null } }),
+    });
+
+    await enqueueSpokenEntry({
+      endpoint: 'https://example.com/proxy',
+      proxyToken: 'session-token',
+      transcript: '從永豐轉三千到郵局，手續費十五元',
+      draft: {
+        type: 'transfer', amount: 3000, fee: 15, account: 'sinopac', toAccount: 'post',
+        date: '2026-08-29', name: '帳戶轉帳', note: '',
+      },
+    }, { fetchImpl });
+
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).draft).toMatchObject({
+      type: 'transfer', amount: 3000, fee: 15, account: 'sinopac', toAccount: 'post',
     });
   });
 });

@@ -32,10 +32,15 @@ export function transactionRows(transactions, accounts) {
         transaction.type === 'transfer'
           ? `${accountNames[transaction.account] || transaction.account} → ${accountNames[transaction.toAccount] || transaction.toAccount}`
           : [transaction.category, transaction.subcategory].filter(Boolean).join(' · ');
+      const transferFee =
+        transaction.type === 'transfer' && Number.isInteger(transaction.fee) && transaction.fee > 0
+          ? `手續費 ${formatMoney(transaction.fee)}`
+          : '';
       const primaryName =
         transaction.name || transaction.note || label || TYPE_LABELS[transaction.type];
       const secondary = [
         transaction.note && transaction.note !== primaryName ? transaction.note : '',
+        transferFee,
         label,
         formatDate(transaction.date),
       ]

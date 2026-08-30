@@ -16,6 +16,7 @@ const CHINESE_DIGITS = {
 };
 
 const SMALL_UNITS = { '十': 10, '百': 100, '千': 1000 };
+const AMOUNT_TOKEN_PATTERN = '[\\d,\\s十百千萬零〇一二兩三四五六七八九]+';
 
 function parseChineseNumber(value) {
   let total = 0;
@@ -99,8 +100,7 @@ function isNonAmountCandidate(text, match) {
 }
 
 function parseAmount(text) {
-  const tokenPattern = '[\\d,\\s十百千萬零〇一二兩三四五六七八九]+';
-  const explicit = text.match(new RegExp(`(${tokenPattern})\\s*(?:元|圓|塊(?:錢)?)`));
+  const explicit = text.match(new RegExp(`(${AMOUNT_TOKEN_PATTERN})\\s*(?:元|圓|塊(?:錢)?)`));
   if (explicit) return numberFromAmountToken(explicit[1]);
 
   const candidates = [
@@ -115,6 +115,29 @@ function parseAmount(text) {
     if (amount) return amount;
   }
   return null;
+}
+
+function parseTransferFee(text) {
+  const feeTerms = '(?:手續費|轉帳費|匯費)';
+  const unit = '(?:元|圓|塊(?:錢)?)?';
+  const patterns = [
+    new RegExp(`${feeTerms}\\s*(?:為|是|共)?\\s*(${AMOUNT_TOKEN_PATTERN})\\s*${unit}`),
+    new RegExp(`(${AMOUNT_TOKEN_PATTERN})\\s*${unit}\\s*${feeTerms}`),
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const fee = numberFromAmountToken(match?.[1] || '');
+    if (fee) return fee;
+  }
+  return 0;
+}
+
+function withoutTransferFee(text) {
+  const feeTerms = '(?:手續費|轉帳費|匯費)';
+  const unit = '(?:元|圓|塊(?:錢)?)?';
+  return text
+    .replace(new RegExp(`${feeTerms}\\s*(?:為|是|共)?\\s*${AMOUNT_TOKEN_PATTERN}\\s*${unit}`, 'g'), ' ')
+    .replace(new RegExp(`${AMOUNT_TOKEN_PATTERN}\\s*${unit}\\s*${feeTerms}`, 'g'), ' ');
 }
 
 function shiftDate(dateText, days) {
@@ -249,7 +272,7 @@ export function parseSpokenTransaction(value, options = {}) {
   const transcript = String(value ?? '').normalize('NFKC').trim().slice(0, 240);
   const today = options.today ?? new Date().toISOString().slice(0, 10);
   const type = transactionType(transcript);
-  const amount = parseAmount(transcript);
+  const amount = parseAmount(type === 'transfer' ? withoutTransferFee(transcript) : transcript);
   const date = parseDate(transcript, today);
   const hasDateCue = /(?:今天|昨日|昨天|前天|\d{1,2}\s*月\s*\d{1,2}\s*[日號])/.test(transcript);
   const hasAccountCue = /(?:line|永豐|sinopac|台銀|臺銀|台灣銀行|臺灣銀行|郵局|中華郵政|信用卡|刷卡|卡片|銀行|帳戶|存款|現金|付現|錢包)/i.test(transcript);
@@ -261,6 +284,7 @@ export function parseSpokenTransaction(value, options = {}) {
       transcript,
       type,
       amount,
+      fee: parseTransferFee(transcript),
       date,
       account: accountFromText(sourceText, 'sinopac'),
       toAccount: accountFromText(destinationText, 'cash'),

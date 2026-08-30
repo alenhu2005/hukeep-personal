@@ -80,6 +80,21 @@ describe('createTransaction', () => {
       ),
     ).toThrow('目的帳戶');
   });
+
+  it('轉帳可記錄非負整數手續費，非轉帳不會保留手續費', () => {
+    const transfer = createTransaction(
+      expense({ type: 'transfer', account: 'cash', toAccount: 'bank', fee: 15 }),
+      fixedOptions,
+    );
+    const expenseWithoutFee = createTransaction(expense({ fee: 15 }), fixedOptions);
+
+    expect(transfer.fee).toBe(15);
+    expect(expenseWithoutFee).not.toHaveProperty('fee');
+    expect(() => createTransaction(
+      expense({ type: 'transfer', account: 'cash', toAccount: 'bank', fee: -1 }),
+      fixedOptions,
+    )).toThrow('手續費');
+  });
 });
 
 describe('交易集合操作', () => {

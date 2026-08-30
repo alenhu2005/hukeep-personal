@@ -88,6 +88,22 @@ describe('calculateAccountBalances', () => {
       { id: 'card', balance: -700 },
     ]);
   });
+
+  it('轉帳手續費只從轉出帳戶與總資產扣除', () => {
+    const accounts = [
+      { id: 'cash', openingBalance: 1000 },
+      { id: 'bank', openingBalance: 0 },
+    ];
+    const balances = calculateAccountBalances(accounts, [
+      { type: 'transfer', amount: 300, fee: 15, account: 'cash', toAccount: 'bank' },
+    ]);
+
+    expect(balances).toEqual([
+      { id: 'cash', balance: 685 },
+      { id: 'bank', balance: 300 },
+    ]);
+    expect(calculateTotalAssets(balances)).toBe(985);
+  });
 });
 
 describe('calculateTotalAssets', () => {

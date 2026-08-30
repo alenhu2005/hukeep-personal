@@ -137,6 +137,16 @@ describe('口語記帳解析', () => {
     });
   });
 
+  it('口語轉帳會辨識手續費，讓 AI 後台能交叉審查', () => {
+    expect(parseSpokenTransaction('8月15日從永豐轉 3000 元到郵局，手續費 15 元', { today })).toMatchObject({
+      type: 'transfer',
+      amount: 3000,
+      fee: 15,
+      account: 'sinopac',
+      toAccount: 'post',
+    });
+  });
+
   it('可分類投資支出與投資收入', () => {
     expect(parseSpokenTransaction('今天買 0050 ETF 3000 元用永豐', { today })).toMatchObject({
       type: 'expense',

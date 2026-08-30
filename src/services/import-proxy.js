@@ -166,6 +166,9 @@ function projectTransaction(transaction) {
     toAccount: transaction?.toAccount == null ? null : cleanText(transaction.toAccount, 40),
     date,
   };
+  if (type === 'transfer') {
+    projected.fee = assertSheetInteger(transaction?.fee ?? 0, '轉帳手續費');
+  }
   Object.entries(textFields).forEach(([field, maxLength]) => {
     if (field === 'toAccount') return;
     if (transaction?.[field] != null) projected[field] = cleanText(transaction[field], maxLength);
@@ -225,6 +228,41 @@ export async function syncLedgerStateToSheet(input, options = {}) {
   };
 }
 
+function validateDeleteResult(data) {
+  if (typeof data?.deleted !== 'boolean') throw new Error('Sheet 刪除回傳格式不正確');
+  return { deleted: data.deleted };
+}
+
+export async function deleteLedgerTransactionFromSheet(input, options = {}) {
+  const transactionId = cleanText(input?.transactionId, 80);
+  if (!transactionId) throw new Error('找不到要刪除的交易');
+  const data = await postProxy(
+    input?.endpoint,
+    {
+      action: 'deleteLedgerTransaction',
+      proxyToken: cleanText(input?.proxyToken, 300),
+      transactionId,
+    },
+    options,
+  );
+  return validateDeleteResult(data);
+}
+
+export async function deleteLedgerBudgetFromSheet(input, options = {}) {
+  const category = cleanText(input?.category, 40);
+  if (!category) throw new Error('找不到要刪除的預算');
+  const data = await postProxy(
+    input?.endpoint,
+    {
+      action: 'deleteLedgerBudget',
+      proxyToken: cleanText(input?.proxyToken, 300),
+      category,
+    },
+    options,
+  );
+  return validateDeleteResult(data);
+}
+
 export async function loadLedgerStateFromSheet(input, options = {}) {
   const data = await postProxy(
     input?.endpoint,
@@ -258,9 +296,11 @@ function projectSpokenDraft(draft) {
     ? draft.type
     : 'expense';
   const amount = Number(draft?.amount);
+  const fee = Number(draft?.fee);
   return {
     type,
     amount: Number.isSafeInteger(amount) && amount > 0 ? amount : null,
+    fee: Number.isSafeInteger(fee) && fee >= 0 ? fee : 0,
     category: cleanText(draft?.category, 60),
     subcategory: cleanText(draft?.subcategory, 60),
     account: cleanText(draft?.account, 40),

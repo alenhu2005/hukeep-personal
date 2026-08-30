@@ -30,7 +30,7 @@ var INCOME_TAXONOMY = {
 var LEDGER_TRANSACTION_HEADERS = [
   'ID', '類型', '名稱', '金額', '大分類', '小分類', '帳戶', '目的帳戶', '日期', '備註', '來源',
   '來源ID', '發票號碼', '商家', '發票品項', '建立時間', '更新時間', '使用者修改時間', '匯入時間',
-  'AI審查狀態', 'AI審查時間', '口語原文'
+  'AI審查狀態', 'AI審查時間', '口語原文', '手續費'
 ];
 var SPOKEN_QUEUE_HEADERS = ['佇列ID', '口語原文', '送出時間', '狀態', '交易ID', '錯誤', '更新時間', '重試次數'];
 var ACCOUNT_IDS = ['cash', 'line', 'sinopac', 'bot', 'post'];
@@ -65,6 +65,12 @@ function doPost(event) {
     }
     if (body.action === 'syncLedgerState') {
       return jsonOutput_({ ok: true, data: syncLedgerState_(body.state) });
+    }
+    if (body.action === 'deleteLedgerTransaction') {
+      return jsonOutput_({ ok: true, data: deleteLedgerTransaction_(body.transactionId) });
+    }
+    if (body.action === 'deleteLedgerBudget') {
+      return jsonOutput_({ ok: true, data: deleteLedgerBudget_(body.category) });
     }
     if (body.action === 'loadLedgerState') {
       return jsonOutput_({ ok: true, data: loadLedgerState_() });
@@ -216,6 +222,49 @@ function syncLedgerState_(state) {
   };
 }
 
+function deleteLedgerTransaction_(value) {
+  var transactionId = boundedText_(value, 80);
+  if (!transactionId) throw new Error('找不到要刪除的交易');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var spreadsheet = SpreadsheetApp.openById(requiredProperty_('SPREADSHEET_ID'));
+    var transactionSheet = getOrCreateSheet_(spreadsheet, '小帳_交易');
+    ensureLedgerTransactionSheet_(transactionSheet);
+    var rowNumber = findSheetRowById_(transactionSheet, transactionId);
+    if (rowNumber) transactionSheet.deleteRow(rowNumber);
+    cancelSpokenQueueForTransaction_(getOrCreateSheet_(spreadsheet, '小帳_語音佇列'), transactionId);
+    SpreadsheetApp.flush();
+    return { deleted: Boolean(rowNumber) };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function deleteLedgerBudget_(value) {
+  var category = boundedText_(value, 40);
+  if (!category) throw new Error('找不到要刪除的預算');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var spreadsheet = SpreadsheetApp.openById(requiredProperty_('SPREADSHEET_ID'));
+    var settingsSheet = getOrCreateSheet_(spreadsheet, '小帳_設定');
+    ensureSheetHeader_(settingsSheet, ['項目', '值']);
+    var budgetKey = '預算:' + category;
+    var rowNumbers = settingsSheet.getLastRow() < 2
+      ? []
+      : settingsSheet.getRange(2, 1, settingsSheet.getLastRow() - 1, 1).getValues()
+        .flatMap(function (row, index) {
+          return boundedText_(row[0], 50) === budgetKey ? [index + 2] : [];
+        });
+    rowNumbers.reverse().forEach(function (rowNumber) { settingsSheet.deleteRow(rowNumber); });
+    SpreadsheetApp.flush();
+    return { deleted: rowNumbers.length > 0 };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 function loadLedgerState_() {
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -303,6 +352,7 @@ function ledgerTransactionRow_(transaction) {
     safeSheetText_(transaction.aiStatus, 24),
     safeSheetText_(transaction.aiReviewedAt, 40),
     safeSheetText_(transaction.rawTranscript, 240),
+    sheetInteger_(transaction.fee || 0, '轉帳手續費', false),
   ];
 }
 
@@ -438,6 +488,7 @@ function normalizeSpokenDraft_(draft, transcript, queueId, now) {
     ? boundedText_(value.toAccount, 40)
     : '';
   if (type !== 'transfer' || toAccount === account) toAccount = '';
+  var fee = type === 'transfer' ? normalizedTransferFee_(value.fee, 0) : 0;
   var classification = normalizeSpokenClassification_(
     type,
     value.category,
@@ -446,7 +497,7 @@ function normalizeSpokenDraft_(draft, transcript, queueId, now) {
   var name = boundedText_(value.name, 120) || (type === 'transfer' ? '帳戶轉帳' : transcript.slice(0, 120));
   var note = boundedText_(value.note, 240);
   if (note === transcript) note = '';
-  return {
+  var transaction = {
     id: 'voice:' + queueId,
     type: type,
     name: name,
@@ -465,6 +516,8 @@ function normalizeSpokenDraft_(draft, transcript, queueId, now) {
     aiReviewedAt: '',
     rawTranscript: transcript,
   };
+  if (fee > 0) transaction.fee = fee;
+  return transaction;
 }
 
 function conciseSpokenNote_(transcriptValue, nameValue, type) {
@@ -615,6 +668,24 @@ function claimPendingSpokenEntries_(limit) {
   }
 }
 
+function cancelSpokenQueueForTransaction_(sheet, transactionId) {
+  ensureSheetHeader_(sheet, SPOKEN_QUEUE_HEADERS);
+  if (sheet.getLastRow() < 2) return;
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, SPOKEN_QUEUE_HEADERS.length).getValues();
+  rows.forEach(function (row, index) {
+    if (boundedText_(row[4], 80) !== transactionId) return;
+    var status = boundedText_(row[3], 24);
+    if (['pending', 'processing', '失敗'].indexOf(status) < 0) return;
+    sheet.getRange(index + 2, 4, 1, 5).setValues([[
+      'cancelled',
+      boundedText_(row[4], 80),
+      '使用者已刪除交易',
+      new Date().toISOString(),
+      Math.max(0, Math.floor(Number(row[7]) || 0)),
+    ]]);
+  });
+}
+
 function retryableSpokenFailure_(status, errorMessage, attempts) {
   var normalizedStatus = boundedText_(status, 24);
   var normalizedError = boundedText_(errorMessage, 200);
@@ -642,7 +713,7 @@ function ledgerTransactionFromRow_(row) {
   } catch (error) {
     invoiceItems = [];
   }
-  return {
+  var transaction = {
     id: boundedText_(row[0], 80),
     type: boundedText_(row[1], 16),
     name: boundedText_(row[2], 120),
@@ -666,6 +737,9 @@ function ledgerTransactionFromRow_(row) {
     aiReviewedAt: boundedText_(row[20], 40),
     rawTranscript: boundedText_(row[21], 240),
   };
+  var fee = normalizedTransferFee_(row[22], 0);
+  if (transaction.type === 'transfer' && fee > 0) transaction.fee = fee;
+  return transaction;
 }
 
 function reviewSpokenEntry_(transcript, fallback) {
@@ -682,6 +756,7 @@ function reviewSpokenEntry_(transcript, fallback) {
     '備註只保留未被名稱、金額、日期、帳戶涵蓋的簡短情境，最多 60 字；不可逐字照抄口語原文。沒有額外情境時回傳空字串。',
     '今天（Asia/Taipei）：' + Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd'),
     '帳戶只能用 cash、line、sinopac、bot、post。轉帳必須有不同的 account 與 toAccount；非轉帳的 toAccount 請填與 account 相同。',
+    '手續費只會在轉帳時套用；未提及時 fee 請填 0。',
     taxonomyText,
     '本機草稿（僅供交叉檢查）：' + JSON.stringify(fallback || {}),
     '口語原文：' + transcript,
@@ -691,6 +766,7 @@ function reviewSpokenEntry_(transcript, fallback) {
     properties: {
       type: { type: 'STRING', enum: ['expense', 'income', 'transfer'] },
       amount: { type: 'NUMBER', minimum: 0, maximum: 1000000000000 },
+      fee: { type: 'NUMBER', minimum: 0, maximum: 1000000000000 },
       date: { type: 'STRING' },
       account: { type: 'STRING', enum: ACCOUNT_IDS },
       toAccount: { type: 'STRING', enum: ACCOUNT_IDS },
@@ -700,7 +776,7 @@ function reviewSpokenEntry_(transcript, fallback) {
       subcategory: { type: 'STRING' },
       confidence: { type: 'NUMBER', minimum: 0, maximum: 1 },
     },
-    required: ['type', 'amount', 'date', 'account', 'toAccount', 'name', 'note', 'category', 'subcategory', 'confidence'],
+    required: ['type', 'amount', 'fee', 'date', 'account', 'toAccount', 'name', 'note', 'category', 'subcategory', 'confidence'],
   };
   var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(apiKey);
   var response = UrlFetchApp.fetch(url, {
@@ -768,6 +844,9 @@ function validateSpokenReview_(review, fallback, transcript) {
   if (type === 'transfer' && (ACCOUNT_IDS.indexOf(toAccount) < 0 || toAccount === account)) {
     throw new Error('AI 無法辨識轉帳帳戶');
   }
+  var fee = type === 'transfer'
+    ? normalizedTransferFee_(review && review.fee, fallback && fallback.fee)
+    : 0;
   var classification = normalizeSpokenClassification_(
     type,
     review && review.category,
@@ -779,7 +858,7 @@ function validateSpokenReview_(review, fallback, transcript) {
   var fallbackNote = boundedText_(fallback && fallback.note, 60);
   if (reviewedNote === transcript) reviewedNote = '';
   if (fallbackNote === transcript) fallbackNote = '';
-  return {
+  var transaction = {
     id: boundedText_(fallback && fallback.id, 80),
     type: type,
     name: name,
@@ -800,6 +879,16 @@ function validateSpokenReview_(review, fallback, transcript) {
     aiReviewedAt: now,
     rawTranscript: transcript,
   };
+  if (fee > 0) transaction.fee = fee;
+  return transaction;
+}
+
+function normalizedTransferFee_(value, fallback) {
+  var fee = Number(value);
+  if (!Number.isSafeInteger(fee) || fee < 0 || fee > 1000000000000) {
+    fee = Number(fallback);
+  }
+  return Number.isSafeInteger(fee) && fee >= 0 && fee <= 1000000000000 ? fee : 0;
 }
 
 function finishSpokenEntry_(job, reviewed) {
@@ -809,12 +898,14 @@ function finishSpokenEntry_(job, reviewed) {
     var spreadsheet = SpreadsheetApp.openById(requiredProperty_('SPREADSHEET_ID'));
     var transactionSheet = getOrCreateSheet_(spreadsheet, '小帳_交易');
     ensureLedgerTransactionSheet_(transactionSheet);
+    var queueSheet = getOrCreateSheet_(spreadsheet, '小帳_語音佇列');
+    if (spokenQueueCancelled_(queueSheet, job.queueId)) return;
     var existingRow = findSheetRowById_(transactionSheet, job.transactionId);
     if (existingRow) {
       var userEditedAt = boundedText_(transactionSheet.getRange(existingRow, 18).getValue(), 40);
       if (userEditedAt) {
         updateSpokenQueueStatusInSheet_(
-          getOrCreateSheet_(spreadsheet, '小帳_語音佇列'),
+          queueSheet,
           job.queueId,
           '使用者鎖定',
           ''
@@ -827,7 +918,7 @@ function finishSpokenEntry_(job, reviewed) {
     if (!reviewed.sourceId) reviewed.sourceId = job.queueId;
     upsertSpokenTransaction_(transactionSheet, reviewed);
     updateSpokenQueueStatusInSheet_(
-      getOrCreateSheet_(spreadsheet, '小帳_語音佇列'),
+      queueSheet,
       job.queueId,
       'reviewed',
       ''
@@ -836,6 +927,12 @@ function finishSpokenEntry_(job, reviewed) {
   } finally {
     lock.releaseLock();
   }
+}
+
+function spokenQueueCancelled_(sheet, queueId) {
+  ensureSheetHeader_(sheet, SPOKEN_QUEUE_HEADERS);
+  var rowNumber = findSheetRowById_(sheet, queueId);
+  return rowNumber && boundedText_(sheet.getRange(rowNumber, 4).getValue(), 24) === 'cancelled';
 }
 
 function upsertSpokenTransaction_(sheet, transaction) {
@@ -879,10 +976,12 @@ function updateSpokenQueueStatusInSheet_(sheet, queueId, status, errorMessage) {
   ensureSheetHeader_(sheet, SPOKEN_QUEUE_HEADERS);
   var rowNumber = findSheetRowById_(sheet, queueId);
   if (!rowNumber) return;
-  var attempts = Math.max(0, Math.floor(Number(sheet.getRange(rowNumber, 8).getValue()) || 0));
+  var current = sheet.getRange(rowNumber, 4, 1, 5).getValues()[0];
+  if (boundedText_(current[0], 24) === 'cancelled' && status !== 'cancelled') return;
+  var attempts = Math.max(0, Math.floor(Number(current[4]) || 0));
   sheet.getRange(rowNumber, 4, 1, 5).setValues([[
     safeSheetText_(status, 24),
-    boundedText_(sheet.getRange(rowNumber, 5).getValue(), 80),
+    boundedText_(current[1], 80),
     safeSheetText_(errorMessage, 200),
     new Date().toISOString(),
     attempts,

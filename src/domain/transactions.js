@@ -24,6 +24,14 @@ function assertPositiveInteger(value, label = '金額') {
   }
 }
 
+function normalizeTransferFee(value) {
+  const fee = value === '' || value == null ? 0 : Number(value);
+  if (!Number.isInteger(fee) || fee < 0) {
+    throw new ValidationError('手續費必須是零或正整數');
+  }
+  return fee;
+}
+
 function isValidDate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const [year, month, day] = value.split('-').map(Number);
@@ -56,7 +64,18 @@ function normalizeInput(input) {
     if (!toAccount || toAccount === account) {
       throw new ValidationError('請選擇不同的目的帳戶');
     }
-    return { type, amount, category: null, account, toAccount, date, ...identity, note };
+    const fee = normalizeTransferFee(input?.fee);
+    return {
+      type,
+      amount,
+      category: null,
+      account,
+      toAccount,
+      date,
+      ...identity,
+      note,
+      ...(fee ? { fee } : {}),
+    };
   }
 
   const category = cleanText(input?.category);
@@ -156,8 +175,11 @@ export function updateTransaction(transactions, id, changes, options = {}) {
   const current = transactions[index];
   const normalized = normalizeInput({ ...current, ...changes });
   const updatedAt = options.now ?? new Date().toISOString();
+  const currentWithoutFee = Object.fromEntries(
+    Object.entries(current).filter(([key]) => key !== 'fee'),
+  );
   const next = {
-    ...current,
+    ...currentWithoutFee,
     ...normalized,
     ...normalizeOptionalMetadata({ ...current, ...changes }),
     userEditedAt: updatedAt,

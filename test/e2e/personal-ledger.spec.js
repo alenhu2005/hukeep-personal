@@ -151,6 +151,31 @@ test('收入也在背景分類，事後編輯才顯示分類', async ({ page }) 
   await expect(form.getByLabel('小分類')).toHaveValue('家教');
 });
 
+test('手動轉帳可加入手續費，總資產只扣除手續費', async ({ page }) => {
+  await page.getByRole('button', { name: '快速記一筆' }).click();
+  await page.getByText('需要手動輸入？展開詳細記帳').click();
+  await page.getByRole('button', { name: '轉帳', exact: true }).click();
+  const form = page.locator('#transaction-form');
+  await form.getByLabel('名稱').fill('轉入 LINE');
+  await form.getByLabel('金額').fill('300');
+  await form.getByLabel('轉帳手續費').fill('15');
+  await form
+    .locator('[data-account-for="transaction-account"]')
+    .getByRole('button', { name: '現金' })
+    .click();
+  await form
+    .locator('[data-account-for="transaction-to-account"]')
+    .getByRole('button', { name: 'LINE' })
+    .click();
+  await page.getByRole('button', { name: '儲存這筆' }).click();
+
+  await expect(page.getByTestId('total-assets')).toContainText('-NT$ 15');
+  const saved = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('hukeep_personal_state_v1')).transactions[0],
+  );
+  expect(saved).toMatchObject({ type: 'transfer', amount: 300, fee: 15, account: 'cash', toAccount: 'line' });
+});
+
 test('口語內容直接上傳 Sheet，不等待 AI 審查', async ({ page }) => {
   let receivedBody;
   await page.route('https://proxy.example/voice', async route => {
@@ -442,6 +467,71 @@ test('Sheet 刪除既有交易後，從 Sheet 讀取會同步移除網頁資料'
     JSON.parse(localStorage.getItem('hukeep_personal_state_v1')).transactions.map(item => item.id),
   );
   expect(ids).toEqual(['sheet-kept']);
+});
+
+test('刪除前會確認，確認後會實際刪除 Google Sheet 的交易與預算', async ({ page }) => {
+  const deleteRequests = [];
+  await page.route('https://proxy.example/delete', async route => {
+    const body = route.request().postDataJSON();
+    if (body.action === 'loadLedgerState') {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, data: { schemaVersion: 1, accounts: [], transactions: [], budgets: [] } }),
+      });
+      return;
+    }
+    deleteRequests.push(body);
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, data: { deleted: true } }),
+    });
+  });
+  await page.evaluate(() => {
+    localStorage.setItem('hukeep_personal_state_v1', JSON.stringify({
+      schemaVersion: 1,
+      accounts: [
+        { id: 'cash', name: '現金', icon: '現', openingBalance: 0 },
+        { id: 'line', name: 'LINE', icon: 'L', openingBalance: 0 },
+        { id: 'sinopac', name: '永豐', icon: '永', openingBalance: 0 },
+        { id: 'bot', name: '台銀', icon: '台', openingBalance: 0 },
+        { id: 'post', name: '郵局', icon: '郵', openingBalance: 0 },
+      ],
+      transactions: [{
+        id: 'delete-me', type: 'expense', name: '要刪除的午餐', amount: 180,
+        category: '飲食', subcategory: '便當', account: 'cash', date: '2026-08-29',
+        source: 'manual', createdAt: '2026-08-29T01:00:00.000Z', updatedAt: '2026-08-29T01:00:00.000Z',
+      }],
+      budgets: [{ category: '飲食', limit: 3000 }],
+      preferences: { theme: 'system', proxyEndpoint: 'https://proxy.example/delete' },
+    }));
+    localStorage.setItem('hukeep_device_binding_endpoint_v1', 'https://proxy.example/delete');
+    localStorage.setItem('hukeep_device_binding_token_v1', 'delete-token');
+  });
+  await page.reload();
+
+  await page.getByRole('button', { name: '紀錄', exact: true }).click();
+  page.once('dialog', dialog => {
+    expect(dialog.type()).toBe('confirm');
+    expect(dialog.message()).toContain('要刪除的午餐');
+    void dialog.accept();
+  });
+  await page.getByRole('button', { name: '刪除 要刪除的午餐' }).click();
+  await expect(page.getByText('要刪除的午餐')).toHaveCount(0);
+  await expect.poll(() => deleteRequests).toContainEqual(expect.objectContaining({
+    action: 'deleteLedgerTransaction', transactionId: 'delete-me', proxyToken: 'delete-token',
+  }));
+
+  await page.getByRole('button', { name: '預算', exact: true }).click();
+  page.once('dialog', dialog => {
+    expect(dialog.type()).toBe('confirm');
+    expect(dialog.message()).toContain('飲食');
+    void dialog.accept();
+  });
+  await page.getByRole('button', { name: '移除 飲食 預算' }).click();
+  await expect(page.getByText('飲食預算')).toHaveCount(0);
+  await expect.poll(() => deleteRequests).toContainEqual(expect.objectContaining({
+    action: 'deleteLedgerBudget', category: '飲食', proxyToken: 'delete-token',
+  }));
 });
 
 test('PWA 在正式 build 路徑註冊獨立 service worker', async ({ page }) => {

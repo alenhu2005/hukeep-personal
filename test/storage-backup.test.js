@@ -330,7 +330,7 @@ describe('備份', () => {
 
   it('CSV 會處理逗號、引號與公式注入', () => {
     const csv = transactionsToCsv(state.transactions);
-    expect(csv).toContain('類型,名稱,金額,分類,帳戶,目的帳戶,日期,備註');
+    expect(csv).toContain('類型,名稱,金額,手續費,分類,帳戶,目的帳戶,日期,備註');
     expect(csv).toContain('expense,午餐,120');
     expect(csv).toContain("\"'=SUM(1,2) 「午餐」\"");
   });

@@ -45,3 +45,19 @@ describe('總覽', () => {
     expect(html).toContain('data-testid="total-assets">NT$ 3,300</strong>');
   });
 });
+
+describe('轉帳列表', () => {
+  it('在轉帳紀錄中顯示手續費', () => {
+    const html = transactionRows([
+      {
+        id: 'transfer-1', type: 'transfer', amount: 300, fee: 15,
+        account: 'cash', toAccount: 'line', date: '2026-08-29', name: '轉入 LINE', note: '',
+      },
+    ], [
+      { id: 'cash', name: '現金' },
+      { id: 'line', name: 'LINE' },
+    ]);
+
+    expect(html).toContain('手續費 NT$ 15');
+  });
+});

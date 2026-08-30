@@ -28,6 +28,8 @@ import { createSmartImportController } from './smart-import-controller.js';
 import {
   claimDevicePairingCode,
   createDevicePairingCode,
+  deleteLedgerBudgetFromSheet,
+  deleteLedgerTransactionFromSheet,
   enqueueSpokenEntry,
   loadLedgerStateFromSheet,
   syncLedgerStateToSheet,
@@ -102,7 +104,6 @@ export function createApp() {
   let view = safeViewFromHash();
   let selectedMonth = todayInTaipei().slice(0, 7);
   let historyFilters = { query: '', type: '', account: '' };
-  let lastDeleted = null;
   let toastTimer = null;
   let smartImportController = null;
   let classificationReady = false;
@@ -241,6 +242,14 @@ export function createApp() {
     } catch {
       // A stale journal is safer than discarding unsynced local changes.
     }
+  }
+
+  function acknowledgePendingTransactionDelete(transactionId) {
+    const pending = readPendingSheetChanges();
+    writePendingSheetChanges({
+      upserts: pending.upserts.filter(id => id !== transactionId),
+      deletes: pending.deletes.filter(id => id !== transactionId),
+    });
   }
 
   function setSyncStatus(status, options = {}) {
@@ -388,6 +397,7 @@ export function createApp() {
     });
     const transfer = type === 'transfer';
     document.querySelector('#to-account-field').hidden = !transfer;
+    document.querySelector('#transfer-fee-field').hidden = !transfer;
     transactionForm.elements.category.required = !transfer;
     transactionForm.elements.subcategory.required = !transfer;
     transactionForm.elements.toAccount.required = transfer;
@@ -416,6 +426,7 @@ export function createApp() {
     transactionForm.elements.id.value = transaction?.id || '';
     transactionForm.elements.name.value = transaction?.name || transaction?.note || '';
     transactionForm.elements.amount.value = transaction?.amount || '';
+    transactionForm.elements.fee.value = transaction?.fee || '';
     transactionForm.elements.date.value = transaction?.date || todayInTaipei();
     transactionForm.elements.note.value = transaction?.note || '';
     setAccountOptions(transactionForm.elements.account, transaction?.account || 'cash');
@@ -544,7 +555,11 @@ export function createApp() {
       applyLocalTransactionClassification();
     }
     const values = Object.fromEntries(new FormData(transactionForm));
-    const input = { ...values, amount: Number(values.amount) };
+    const input = {
+      ...values,
+      amount: Number(values.amount),
+      fee: values.fee === '' ? 0 : Number(values.fee),
+    };
     try {
       const transactions = values.id
         ? updateTransaction(state.transactions, values.id, input)
@@ -560,25 +575,52 @@ export function createApp() {
     }
   }
 
-  function deleteTransaction(id) {
+  async function deleteTransaction(id) {
     const transaction = state.transactions.find(item => item.id === id);
     if (!transaction) return;
-    const index = state.transactions.findIndex(item => item.id === id);
+    const name = transaction.name || transaction.note || '這筆記錄';
+    if (!confirm(`確定要刪除「${name}」嗎？這會一併刪除 Google Sheet 中的同一筆資料。`)) return;
+    const credentials = proxySession();
+    if (!credentials.bound) {
+      showToast('這台裝置尚未綁定 Google Sheet，無法確認同步刪除。', 'error');
+      return;
+    }
+    setSyncStatus('syncing');
+    try {
+      await deleteLedgerTransactionFromSheet({ ...credentials, transactionId: id });
+    } catch (error) {
+      setSyncStatus('error', { detail: `Sheet 刪除失敗：${error.message}` });
+      showToast(`尚未刪除：${error.message}`, 'error');
+      return;
+    }
     if (!persist({ ...state, transactions: removeTransaction(state.transactions, id) })) return;
-    setSyncStatus('local', { detail: '已從本機刪除，尚未同步這次修改' });
-    lastDeleted = { transaction, index };
+    acknowledgePendingTransactionDelete(id);
+    rememberProxySession(credentials.endpoint, credentials.proxyToken);
+    rememberSuccessfulSync();
     render();
-    showToast('已刪除一筆記錄。', 'default', {
-      label: '復原',
-      handler: () => {
-        if (!lastDeleted) return;
-        const transactions = state.transactions.toSpliced(lastDeleted.index, 0, lastDeleted.transaction);
-        if (!persist({ ...state, transactions })) return;
-        lastDeleted = null;
-        render();
-        showToast('已復原。');
-      },
-    });
+    showToast('已從本機與 Google Sheet 刪除。');
+  }
+
+  async function deleteBudget(category) {
+    if (!confirm(`確定要移除「${category}」預算嗎？這會一併刪除 Google Sheet 中的預算資料。`)) return;
+    const credentials = proxySession();
+    if (!credentials.bound) {
+      showToast('這台裝置尚未綁定 Google Sheet，無法確認同步刪除。', 'error');
+      return;
+    }
+    setSyncStatus('syncing');
+    try {
+      await deleteLedgerBudgetFromSheet({ ...credentials, category });
+    } catch (error) {
+      setSyncStatus('error', { detail: `Sheet 刪除失敗：${error.message}` });
+      showToast(`尚未移除預算：${error.message}`, 'error');
+      return;
+    }
+    if (!persist({ ...state, budgets: removeBudget(state.budgets, category) })) return;
+    rememberProxySession(credentials.endpoint, credentials.proxyToken);
+    rememberSuccessfulSync();
+    render();
+    showToast('已從本機與 Google Sheet 移除預算。');
   }
 
   function handleMainClick(event) {
@@ -604,11 +646,13 @@ export function createApp() {
     if (target.dataset.editId) {
       openTransactionDialog(state.transactions.find(item => item.id === target.dataset.editId));
     }
-    if (target.dataset.deleteId) deleteTransaction(target.dataset.deleteId);
+    if (target.dataset.deleteId) {
+      void deleteTransaction(target.dataset.deleteId);
+      return;
+    }
     if (target.dataset.removeBudget) {
-      if (!persist({ ...state, budgets: removeBudget(state.budgets, target.dataset.removeBudget) })) return;
-      render();
-      showToast('已移除預算。');
+      void deleteBudget(target.dataset.removeBudget);
+      return;
     }
   }
 
