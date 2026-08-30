@@ -365,6 +365,12 @@ function projectSpokenDraft(draft) {
   };
 }
 
+function projectSpokenDrafts(drafts, fallback) {
+  const values = Array.isArray(drafts) ? drafts.slice(0, 10) : [];
+  const projected = values.map(projectSpokenDraft);
+  return projected.length ? projected : [projectSpokenDraft(fallback)];
+}
+
 export async function enqueueSpokenEntry(input, options = {}) {
   const transcript = cleanText(input?.transcript, 240).normalize('NFKC');
   if (!transcript) throw new Error('請輸入口語內容');
@@ -376,6 +382,7 @@ export async function enqueueSpokenEntry(input, options = {}) {
       transcript,
       timezone: 'Asia/Taipei',
       draft: projectSpokenDraft(input?.draft),
+      drafts: projectSpokenDrafts(input?.drafts, input?.draft),
     },
     options,
   );
@@ -384,12 +391,17 @@ export async function enqueueSpokenEntry(input, options = {}) {
   if (!queueId || !['pending', 'processing', 'reviewed'].includes(status)) {
     throw new Error('口語記帳佇列回傳格式不正確');
   }
+  const transactions = (Array.isArray(data?.transactions)
+    ? data.transactions
+    : data?.transaction && typeof data.transaction === 'object'
+      ? [data.transaction]
+      : [])
+    .filter(transaction => transaction && typeof transaction === 'object')
+    .map(transaction => ({ ...transaction }));
   return {
     queueId,
     status,
-    transaction:
-      data?.transaction && typeof data.transaction === 'object'
-        ? { ...data.transaction }
-        : null,
+    transactions,
+    transaction: transactions[0] || null,
   };
 }

@@ -33,6 +33,14 @@ test('可新增收支、重新整理仍保留並透過歷史搜尋', async ({ pa
   await expect(page.getByTestId('summary-expense')).toContainText('120');
   await expect(page.getByTestId('total-assets')).toContainText('-NT$ 120');
   await expect(page.getByText('鼎王麻辣鍋午餐')).toBeVisible();
+  await page.getByRole('button', { name: '查看 鼎王麻辣鍋午餐 詳情' }).click();
+  const detail = page.locator('#transaction-detail-dialog');
+  await expect(detail).toBeVisible();
+  await expect(detail.getByText('飲食 · 火鍋')).toBeVisible();
+  await expect(detail.getByText('和朋友聚餐')).toBeVisible();
+  await expect(detail.getByText('建立時間')).toBeVisible();
+  await expect(detail.getByText('最後更新')).toBeVisible();
+  await detail.getByRole('button', { name: '關閉' }).click();
 
   const initial = await page.evaluate(() =>
     JSON.parse(localStorage.getItem('hukeep_personal_state_v1')).transactions[0],
@@ -264,6 +272,88 @@ test('口語內容直接上傳 Sheet，不等待 AI 審查', async ({ page }) =>
     proxyToken: 'session-token',
     transcript: '昨天搭高鐵 1490 元刷卡',
     draft: { note: '' },
+  });
+});
+
+test('口語多品項會自動拆單並把各自帳戶直接上傳 Sheet', async ({ page }) => {
+  let receivedBody;
+  await page.route('https://proxy.example/multi-voice', async route => {
+    const body = route.request().postDataJSON();
+    if (body.action === 'loadLedgerState') {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          data: { schemaVersion: 1, accounts: [], transactions: [], budgets: [] },
+        }),
+      });
+      return;
+    }
+    receivedBody = body;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        data: {
+          queueId: 'multi-group',
+          queueIds: ['multi:multi-group:1', 'multi:multi-group:2'],
+          status: 'pending',
+          transactions: [
+            {
+              id: 'voice:multi:multi-group:1', type: 'expense', name: '滷肉飯', amount: 20,
+              category: '飲食', subcategory: '小吃', account: 'cash', toAccount: '', date: '2026-08-29',
+              note: '', source: 'voice', sourceId: 'multi:multi-group:1', aiStatus: 'pending',
+              rawTranscript: '滷肉飯20、貢丸湯三十，滷肉飯用現金支付，另一個用line',
+              createdAt: '2026-08-29T06:00:00.000Z', updatedAt: '2026-08-29T06:00:00.000Z',
+            },
+            {
+              id: 'voice:multi:multi-group:2', type: 'expense', name: '貢丸湯', amount: 30,
+              category: '飲食', subcategory: '湯品', account: 'line', toAccount: '', date: '2026-08-29',
+              note: '', source: 'voice', sourceId: 'multi:multi-group:2', aiStatus: 'pending',
+              rawTranscript: '滷肉飯20、貢丸湯三十，滷肉飯用現金支付，另一個用line',
+              createdAt: '2026-08-29T06:00:00.000Z', updatedAt: '2026-08-29T06:00:00.000Z',
+            },
+          ],
+        },
+      }),
+    });
+  });
+  await page.evaluate(() => {
+    localStorage.setItem('hukeep_personal_state_v1', JSON.stringify({
+      schemaVersion: 1,
+      accounts: [
+        { id: 'cash', name: '現金', icon: '現', openingBalance: 0 },
+        { id: 'line', name: 'LINE', icon: 'L', openingBalance: 0 },
+        { id: 'sinopac', name: '永豐', icon: '永', openingBalance: 0 },
+        { id: 'bot', name: '台銀', icon: '台', openingBalance: 0 },
+        { id: 'post', name: '郵局', icon: '郵', openingBalance: 0 },
+      ],
+      transactions: [], budgets: [],
+      preferences: { theme: 'system', proxyEndpoint: 'https://proxy.example/multi-voice' },
+    }));
+    localStorage.setItem('hukeep_device_binding_token_v1', 'session-token');
+    localStorage.setItem('hukeep_device_binding_endpoint_v1', 'https://proxy.example/multi-voice');
+  });
+  await page.reload();
+  await page.getByRole('button', { name: '快速記一筆' }).click();
+  await page.getByLabel('口語記帳內容').fill('滷肉飯20、貢丸湯三十，滷肉飯用現金支付，另一個用line');
+  await page.getByRole('button', { name: '直接記帳', exact: true }).click();
+
+  await expect(page.getByText('已上傳 2 筆到 Sheet，AI 會在後台審查更新。')).toBeVisible();
+  const saved = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('hukeep_personal_state_v1')).transactions,
+  );
+  expect(saved).toHaveLength(2);
+  expect(saved).toEqual(expect.arrayContaining([
+    expect.objectContaining({ name: '滷肉飯', amount: 20, account: 'cash' }),
+    expect.objectContaining({ name: '貢丸湯', amount: 30, account: 'line' }),
+  ]));
+  expect(receivedBody).toMatchObject({
+    action: 'enqueueSpokenEntry',
+    drafts: [
+      expect.objectContaining({ name: '滷肉飯', amount: 20, account: 'cash' }),
+      expect.objectContaining({ name: '貢丸湯', amount: 30, account: 'line' }),
+    ],
   });
 });
 

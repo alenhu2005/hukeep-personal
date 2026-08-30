@@ -21,6 +21,8 @@ describe('交易列表', () => {
       [{ id: 'line', name: 'LINE' }],
     );
     expect(html).toContain('<strong>&lt;b&gt;星巴克&lt;/b&gt;</strong>');
+    expect(html).toContain('data-detail-id="tx-1"');
+    expect(html).toContain('aria-label="查看 &lt;b&gt;星巴克&lt;/b&gt; 詳情"');
     expect(html).not.toContain('和朋友聊天');
     expect(html).toContain('飲食 · 咖啡 · 8/29');
     expect(html).not.toContain('<b>星巴克</b>');

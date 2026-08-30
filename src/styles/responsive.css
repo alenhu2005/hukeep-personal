@@ -169,7 +169,12 @@
   }
 
   .transaction-row {
-    grid-template-columns: 34px minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px;
+  }
+
+  .transaction-summary {
+    grid-template-columns: 34px minmax(0, 1fr) auto;
     gap: 7px;
   }
 

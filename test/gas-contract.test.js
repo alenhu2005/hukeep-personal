@@ -75,6 +75,14 @@ describe('GAS 同步合約', () => {
     expect(source).toContain('使用者鎖定');
   });
 
+  it('多品項口語會建立獨立佇列，AI 不得合併或改掉已辨識的付款資訊', () => {
+    expect(source).toContain('function spokenDraftsFromBody_(');
+    expect(source).toContain("'multi:' + groupId + ':' + (index + 1)");
+    expect(source).toContain('一次最多辨識 10 個品項');
+    expect(source).toContain('必須保留該草稿的品名、金額、日期與付款帳戶');
+    expect(source).toContain("indexOf('multi:') === 0");
+  });
+
   it('口語備註會精簡原文，完整原文只保留在 rawTranscript', () => {
     const conciseNote = new Function(`${source}\nreturn conciseSpokenNote_;`)();
 

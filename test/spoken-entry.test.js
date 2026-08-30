@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { conciseSpokenNote, parseSpokenTransaction } from '../src/domain/spoken-entry.js';
+import {
+  conciseSpokenNote,
+  parseSpokenTransaction,
+  parseSpokenTransactions,
+} from '../src/domain/spoken-entry.js';
 
 const today = '2026-08-29';
 
@@ -70,6 +74,37 @@ describe('口語記帳解析', () => {
       subcategory: '咖啡',
     });
     expect(parseSpokenTransaction('收到獎金五萬元進銀行', { today }).amount).toBe(50000);
+  });
+
+  it('會自行把多品項口語拆成各自的金額與付款帳戶', () => {
+    expect(
+      parseSpokenTransactions(
+        '滷肉飯 20、貢丸湯三十，滷肉飯用現金支付，另一個用 LINE',
+        { today },
+      ),
+    ).toMatchObject([
+      {
+        type: 'expense',
+        name: '滷肉飯',
+        amount: 20,
+        account: 'cash',
+        date: today,
+      },
+      {
+        type: 'expense',
+        name: '貢丸湯',
+        amount: 30,
+        account: 'line',
+        date: today,
+      },
+    ]);
+  });
+
+  it('未明確辨識到多品項時仍維持單筆解析', () => {
+    const entries = parseSpokenTransactions('滷肉飯 20 元用現金支付', { today });
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toEqual(parseSpokenTransaction('滷肉飯 20 元用現金支付', { today }));
   });
 
   it.each([

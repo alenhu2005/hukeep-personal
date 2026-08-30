@@ -48,15 +48,17 @@ export function transactionRows(transactions, accounts) {
       const sign = isExpense ? '-' : isIncome ? '+' : '';
       return `
         <article class="transaction-row" data-transaction-row data-type="${transaction.type}">
-          ${categoryMark(transaction.category || '轉')}
-          <div class="transaction-copy">
-            <strong>${escapeHtml(primaryName)}</strong>
-            <span>${escapeHtml(secondary)}</span>
-          </div>
-          <div class="transaction-amount ${transaction.type}">
-            <strong>${sign}${formatMoney(transaction.amount).replace('NT$ ', '')}</strong>
-            <span>${escapeHtml(accountNames[transaction.account] || transaction.account)}</span>
-          </div>
+          <button class="transaction-summary" type="button" data-detail-id="${escapeHtml(transaction.id)}" aria-label="查看 ${escapeHtml(primaryName)} 詳情">
+            ${categoryMark(transaction.category || '轉')}
+            <span class="transaction-copy">
+              <strong>${escapeHtml(primaryName)}</strong>
+              <span>${escapeHtml(secondary)}</span>
+            </span>
+            <span class="transaction-amount ${transaction.type}">
+              <strong>${sign}${formatMoney(transaction.amount).replace('NT$ ', '')}</strong>
+              <span>${escapeHtml(accountNames[transaction.account] || transaction.account)}</span>
+            </span>
+          </button>
           <div class="row-actions">
             <button type="button" data-edit-id="${escapeHtml(transaction.id)}" aria-label="編輯 ${escapeHtml(primaryName)}">${icon('edit', 16)}</button>
             <button type="button" data-delete-id="${escapeHtml(transaction.id)}" aria-label="刪除 ${escapeHtml(primaryName)}">${icon('trash', 16)}</button>

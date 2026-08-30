@@ -9,7 +9,7 @@ import {
   classifyLocally,
   getSubcategories,
 } from './domain/category-taxonomy.js';
-import { parseSpokenTransaction } from './domain/spoken-entry.js';
+import { parseSpokenTransactions } from './domain/spoken-entry.js';
 import {
   hasPendingSheetChanges,
   reconcileLedgerFromSheet,
@@ -22,7 +22,7 @@ import {
   removeTransaction,
   updateTransaction,
 } from './domain/transactions.js';
-import { escapeHtml, monthLabel, todayInTaipei } from './format.js';
+import { escapeHtml, formatMoney, monthLabel, todayInTaipei } from './format.js';
 import { hydrateIcons, icon } from './icons.js';
 import { createLedgerRepository } from './storage/ledger-repository.js';
 import { createSmartImportController } from './smart-import-controller.js';
@@ -501,7 +501,7 @@ export function createApp() {
         ? classifyIncomeLocally(classificationInput)
         : classifyLocally({ merchant: name, items: [note] });
     const classificationText =
-      parseSpokenTransaction(classificationInput, { today: todayInTaipei() }).classificationText || classificationInput;
+      parseSpokenTransactions(classificationInput, { today: todayInTaipei() })[0].classificationText || classificationInput;
     const classification = smartImportController
       ? await smartImportController.classifyDraft({
           type,
@@ -553,7 +553,7 @@ export function createApp() {
       showToast('這台裝置尚未綁定 Sheet。', 'error');
       return;
     }
-    const draft = parseSpokenTransaction(transcript, { today: todayInTaipei() });
+    const drafts = parseSpokenTransactions(transcript, { today: todayInTaipei() });
     button.disabled = true;
     setSyncStatus('syncing');
     status.textContent = '正在上傳 Sheet…不需等待 AI 審查。';
@@ -561,14 +561,18 @@ export function createApp() {
       const result = await enqueueSpokenEntry({
         ...credentials,
         transcript,
-        draft,
+        draft: drafts[0],
+        drafts,
       });
-      const transaction = normalizeStoredTransaction(result.transaction);
-      if (transaction) {
-        const exists = state.transactions.some(item => item.id === transaction.id);
-        const transactions = exists
-          ? state.transactions.map(item => (item.id === transaction.id ? transaction : item))
-          : [...state.transactions, transaction];
+      const uploaded = result.transactions
+        .map(normalizeStoredTransaction)
+        .filter(Boolean);
+      if (uploaded.length) {
+        const uploadedById = new Map(uploaded.map(transaction => [transaction.id, transaction]));
+        const transactions = [
+          ...state.transactions.map(item => uploadedById.get(item.id) || item),
+          ...uploaded.filter(transaction => !state.transactions.some(item => item.id === transaction.id)),
+        ];
         if (!persist({ ...state, transactions }, { sheetSourced: true })) return;
       }
       rememberProxySession(credentials.endpoint, credentials.proxyToken);
@@ -576,7 +580,11 @@ export function createApp() {
       transactionDialog.close();
       render();
       setSyncStatus('pending', { detail: '已上傳 Sheet，AI 後台待審' });
-      showToast('已上傳 Sheet，AI 會在後台審查更新。');
+      showToast(
+        uploaded.length > 1
+          ? `已上傳 ${uploaded.length} 筆到 Sheet，AI 會在後台審查更新。`
+          : '已上傳 Sheet，AI 會在後台審查更新。',
+      );
     } catch (error) {
       status.textContent = error.message;
       setSyncStatus('error', { detail: `Sheet 上傳失敗：${error.message}` });
@@ -661,6 +669,47 @@ export function createApp() {
     showToast('已從本機與 Google Sheet 移除預算。');
   }
 
+  function formatDetailTimestamp(value) {
+    const timestamp = new Date(value);
+    if (Number.isNaN(timestamp.getTime())) return '—';
+    return new Intl.DateTimeFormat('zh-TW', {
+      timeZone: 'Asia/Taipei',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(timestamp);
+  }
+
+  function openTransactionDetail(transactionId) {
+    const transaction = state.transactions.find(item => item.id === transactionId);
+    if (!transaction) return;
+    const accounts = Object.fromEntries(state.accounts.map(account => [account.id, account.name]));
+    const isTransfer = transaction.type === 'transfer';
+    const category = isTransfer
+      ? '轉帳'
+      : [transaction.category, transaction.subcategory].filter(Boolean).join(' · ') || '未分類';
+    const account = isTransfer
+      ? `${accounts[transaction.account] || transaction.account} → ${accounts[transaction.toAccount] || transaction.toAccount}`
+      : accounts[transaction.account] || transaction.account;
+    const amount = `${transaction.type === 'expense' ? '-' : transaction.type === 'income' ? '+' : ''}${formatMoney(transaction.amount)}`;
+    const detailDialog = document.querySelector('#transaction-detail-dialog');
+    detailDialog.querySelector('#transaction-detail-title').textContent = transaction.name || '交易詳情';
+    detailDialog.querySelector('#transaction-detail-content').innerHTML = `
+      <dl class="transaction-detail-list">
+        <div><dt>類型</dt><dd>${escapeHtml(transaction.type === 'expense' ? '支出' : transaction.type === 'income' ? '收入' : '轉帳')}</dd></div>
+        <div><dt>金額</dt><dd class="${escapeHtml(transaction.type)}">${escapeHtml(amount)}</dd></div>
+        <div><dt>分類</dt><dd>${escapeHtml(category)}</dd></div>
+        <div><dt>帳戶</dt><dd>${escapeHtml(account)}</dd></div>
+        <div><dt>備註</dt><dd>${escapeHtml(transaction.note || '—')}</dd></div>
+        <div><dt>建立時間</dt><dd>${escapeHtml(formatDetailTimestamp(transaction.createdAt))}</dd></div>
+        <div><dt>最後更新</dt><dd>${escapeHtml(formatDetailTimestamp(transaction.updatedAt))}</dd></div>
+      </dl>`;
+    detailDialog.showModal();
+  }
+
   function handleMainClick(event) {
     const target = event.target.closest('button');
     if (!target) return;
@@ -677,6 +726,10 @@ export function createApp() {
       return;
     }
     if (target.dataset.goView) navigate(target.dataset.goView);
+    if (target.dataset.detailId) {
+      openTransactionDetail(target.dataset.detailId);
+      return;
+    }
     if (target.dataset.monthShift) {
       selectedMonth = shiftMonth(selectedMonth, Number(target.dataset.monthShift));
       render();

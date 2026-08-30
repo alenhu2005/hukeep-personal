@@ -265,6 +265,33 @@ describe('智慧匯入代理', () => {
     });
   });
 
+  it('口語多品項會一次送出多份草稿並接收多筆待審交易', async () => {
+    const transactions = [
+      { id: 'voice:multi:1', type: 'expense', amount: 20, account: 'cash', date: '2026-08-29' },
+      { id: 'voice:multi:2', type: 'expense', amount: 30, account: 'line', date: '2026-08-29' },
+    ];
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, data: { queueId: 'group', status: 'pending', transactions } }),
+    });
+
+    await expect(
+      enqueueSpokenEntry({
+        endpoint: 'https://example.com/proxy',
+        proxyToken: 'session-token',
+        transcript: '滷肉飯20、貢丸湯三十',
+        drafts: [
+          { ...transactions[0], name: '滷肉飯', note: '' },
+          { ...transactions[1], name: '貢丸湯', note: '' },
+        ],
+      }, { fetchImpl }),
+    ).resolves.toMatchObject({ queueId: 'group', transaction: transactions[0], transactions });
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).drafts).toMatchObject([
+      { name: '滷肉飯', amount: 20, account: 'cash' },
+      { name: '貢丸湯', amount: 30, account: 'line' },
+    ]);
+  });
+
   it('口語轉帳會把辨識到的手續費送給 GAS 與 AI 後台', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,

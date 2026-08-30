@@ -229,6 +229,89 @@ function transactionName(text, type, classification) {
   return cleaned || classification.subcategory || classification.topCategory || '未命名記錄';
 }
 
+function explicitAccountFromText(text) {
+  if (/line\s*(?:bank|pay)?/i.test(text)) return 'line';
+  if (/(?:永豐|sinopac)/i.test(text)) return 'sinopac';
+  if (/(?:台銀|臺銀|台灣銀行|臺灣銀行)/.test(text)) return 'bot';
+  if (/(?:郵局|中華郵政)/.test(text)) return 'post';
+  if (/(?:現金|付現|錢包)/.test(text)) return 'cash';
+  if (/(?:信用卡|刷卡|卡片)/.test(text)) return 'sinopac';
+  return '';
+}
+
+function spokenItemFragments(transcript) {
+  return transcript
+    .split(/(?:、|，|；|;|。|,(?!\d)|還有|以及|跟|和)+/)
+    .map(fragment => fragment.trim())
+    .filter(Boolean);
+}
+
+function multiItemCandidates(transcript) {
+  return spokenItemFragments(transcript).flatMap(fragment => {
+    if (/(?:總共|合計|共計|一共)/.test(fragment)) return [];
+    const amount = parseAmount(fragment);
+    if (!amount) return [];
+    const nameText = classificationText(
+      fragment.replace(new RegExp(`${AMOUNT_TOKEN_PATTERN}\\s*(?:元|圓|塊(?:錢)?)?`, 'g'), ' '),
+    );
+    if (!nameText || /^(?:第?[一二兩三四五六七八九十\d]+(?:個|項)?|另一個|前者|後者)$/.test(nameText)) {
+      return [];
+    }
+    return [{ fragment, amount, nameText }];
+  });
+}
+
+function accountForMultiItem(transcript, item, index) {
+  const fragments = spokenItemFragments(transcript);
+  const namedAccount = fragments
+    .filter(fragment => fragment.includes(item.nameText))
+    .map(explicitAccountFromText)
+    .find(Boolean);
+  if (namedAccount) return namedAccount;
+
+  const ordinalTerms = index === 0
+    ? /(?:第一(?:個|項)?|前者|前一個|這一個)/
+    : /(?:另一個|第二(?:個|項)?|後者|下一個)/;
+  const ordinalAccount = fragments
+    .filter(fragment => ordinalTerms.test(fragment))
+    .map(explicitAccountFromText)
+    .find(Boolean);
+  if (ordinalAccount) return ordinalAccount;
+
+  const accounts = [...new Set(fragments.map(explicitAccountFromText).filter(Boolean))];
+  return accounts.length === 1 ? accounts[0] : 'cash';
+}
+
+function multiItemDrafts(transcript, options) {
+  const type = transactionType(transcript);
+  if (type === 'transfer') return [];
+  const date = parseDate(transcript, options.today ?? new Date().toISOString().slice(0, 10));
+  const candidates = multiItemCandidates(transcript);
+  if (candidates.length < 2) return [];
+
+  return candidates.map((item, index) => {
+    const classification =
+      type === 'income'
+        ? classifyIncomeLocally(item.nameText)
+        : classifyLocally({ merchant: item.nameText, items: [item.nameText] });
+    const name = transactionName(item.nameText, type, classification);
+    return {
+      transcript,
+      type,
+      amount: item.amount,
+      date,
+      account: accountForMultiItem(transcript, item, index),
+      toAccount: null,
+      category: classification.topCategory,
+      subcategory: classification.subcategory,
+      name,
+      note: conciseSpokenNote(transcript, name),
+      classificationText: item.nameText,
+      confidence: Math.min(1, 0.7 + classification.confidence * 0.3),
+    };
+  });
+}
+
 export function conciseSpokenNote(value, primaryName = '') {
   const transcript = String(value ?? '').normalize('NFKC').trim().slice(0, 240);
   void primaryName;
@@ -241,7 +324,7 @@ export function conciseSpokenNote(value, primaryName = '') {
   return context;
 }
 
-export function parseSpokenTransaction(value, options = {}) {
+function parseSingleSpokenTransaction(value, options = {}) {
   const transcript = String(value ?? '').normalize('NFKC').trim().slice(0, 240);
   const today = options.today ?? new Date().toISOString().slice(0, 10);
   const type = transactionType(transcript);
@@ -295,4 +378,14 @@ export function parseSpokenTransaction(value, options = {}) {
     classificationText: classificationText(transcript),
     confidence: Math.min(1, confidence),
   };
+}
+
+export function parseSpokenTransactions(value, options = {}) {
+  const transcript = String(value ?? '').normalize('NFKC').trim().slice(0, 240);
+  const drafts = multiItemDrafts(transcript, options);
+  return drafts.length ? drafts : [parseSingleSpokenTransaction(transcript, options)];
+}
+
+export function parseSpokenTransaction(value, options = {}) {
+  return parseSpokenTransactions(value, options)[0];
 }

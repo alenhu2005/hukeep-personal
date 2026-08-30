@@ -4,7 +4,7 @@
 
 .transaction-row {
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   padding: 8px 2px;
@@ -20,9 +20,30 @@
   border-bottom: 0;
 }
 
+.transaction-summary,
 .transaction-copy,
 .transaction-amount {
   min-width: 0;
+}
+
+.transaction-summary {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.transaction-summary:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+  border-radius: 8px;
 }
 
 .transaction-copy strong,
@@ -95,6 +116,42 @@
 .row-actions button:hover {
   background: var(--surface-muted);
   color: var(--ink);
+}
+
+.transaction-detail-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.transaction-detail-list > div {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.transaction-detail-list > div:last-child {
+  border-bottom: 0;
+}
+
+.transaction-detail-list dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.transaction-detail-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.transaction-detail-list dd.expense {
+  color: var(--expense);
+}
+
+.transaction-detail-list dd.income {
+  color: var(--income);
 }
 
 .empty-state {
