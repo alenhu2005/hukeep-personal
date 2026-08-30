@@ -10,8 +10,8 @@
     <link rel="manifest" href="./manifest.json" />
     <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
     <title>小帳｜個人記帳</title>
-    <script type="module" crossorigin src="/hukeep-personal/assets/index-DAd6Zr_m.js"></script>
-    <link rel="stylesheet" crossorigin href="/hukeep-personal/assets/index-DDg5Xy4y.css">
+    <script type="module" crossorigin src="/hukeep-personal/assets/index-DvWHwWWP.js"></script>
+    <link rel="stylesheet" crossorigin href="/hukeep-personal/assets/index-C5Z_Urvb.css">
   </head>
   <body>
     <a class="skip-link" href="#app-main">跳到主要內容</a>
@@ -153,7 +153,7 @@
       <p class="tools-intro">資料只存在這台裝置。建議定期匯出 JSON，換機時就能完整還原。</p>
       <div class="tool-actions">
         <button id="smart-import-button" class="tool-action featured" type="button">
-          <strong>智慧匯入</strong><span>發票載具 · 截圖 OCR · AI 細分類</span>
+          <strong>智慧匯入</strong><span>截圖 OCR · AI 細分類</span>
         </button>
         <button id="export-json" class="tool-action" type="button">
           <strong>匯出完整備份</strong><span>JSON · 可還原</span>
@@ -282,36 +282,6 @@
           </form>
         </section>
 
-        <section class="import-card" aria-labelledby="carrier-title">
-          <div class="import-card-heading">
-            <span class="import-step">02</span>
-            <div><h3 id="carrier-title">財政部載具同步</h3><p>載具資料會補齊品項，並自動合併重複 OCR。</p></div>
-          </div>
-          <form id="carrier-form" class="carrier-form">
-            <p id="carrier-binding-status" class="carrier-binding-status wide">尚未綁定載具。</p>
-            <details id="carrier-credentials" class="carrier-credentials wide" open>
-              <summary>載具帳密（首次綁定或更換）</summary>
-              <div class="carrier-credentials-grid">
-                <label><span>手機條碼</span><input name="cardNo" maxlength="40" autocomplete="username" placeholder="/ABC+123" required /></label>
-                <label><span>載具驗證碼</span><input name="cardEncrypt" type="password" maxlength="100" autocomplete="current-password" required /></label>
-                <label class="carrier-remember wide"><input name="rememberCarrier" type="checkbox" value="true" checked /><span>同步成功後綁定在私人 GAS，下次不用再輸入帳密</span></label>
-              </div>
-            </details>
-            <label><span>同步月份</span><input name="month" type="month" required /></label>
-            <label><span>自動同步起始日</span><input name="syncStartDate" type="date" /><small>設定後每 2 小時擷取這個日期以後的發票，只對新增或變更資料重做 AI 分類。</small></label>
-            <fieldset class="account-choice-field wide">
-              <legend>記入帳戶</legend>
-              <select id="carrier-account" class="visually-hidden" name="account" tabindex="-1" aria-hidden="true" required></select>
-              <div class="account-choice-buttons compact" data-account-for="carrier-account"></div>
-            </fieldset>
-            <button id="carrier-sync-button" class="primary-button wide" type="submit">立即手動更新</button>
-          </form>
-          <p id="carrier-progress" class="import-progress" role="status">載具綁定後，帳密只存在你的私人 GAS，以後可直接更新。</p>
-          <div class="dedupe-note">
-            <strong>自動去重順序</strong>
-            <span>發票號碼 → 日期＋金額＋商家。載具命中 OCR 時，以載具明細取代。</span>
-          </div>
-        </section>
       </div>
     </dialog>
 
