@@ -50,7 +50,6 @@ Minimum version required to store current data is: `+I+`.
       <div class="cashflow-metrics">
         <div><span class="dot income"></span><small>收入</small><strong data-testid="summary-income">${U(r.income)}</strong></div>
         <div><span class="dot expense"></span><small>支出</small><strong data-testid="summary-expense">${U(r.expense)}</strong></div>
-        <div><span class="dot balance"></span><small>平均每筆</small><strong>${U(r.count?Math.round((r.income+r.expense)/r.count):0)}</strong></div>
       </div>
     </div>
 
