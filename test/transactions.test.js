@@ -112,7 +112,7 @@ describe('交易集合操作', () => {
     expect(original[0].amount).toBe(120);
   });
 
-  it('手動編輯匯入記錄時標記修改時間，供載具合併保留使用者選擇', () => {
+  it('手動編輯匯入記錄時標記修改時間，供背景審查保留使用者選擇', () => {
     const imported = [
       createTransaction(
         expense({ source: 'ocr', sourceId: 'ocr-shot', subcategory: '咖啡' }),

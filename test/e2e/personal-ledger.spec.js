@@ -64,6 +64,16 @@ test('可新增收支、重新整理仍保留並透過歷史搜尋', async ({ pa
   expect(corrected.subcategory).toBe('便當');
 });
 
+test('智慧匯入只保留截圖 OCR 與 AI 分類，不再顯示載具同步', async ({ page }) => {
+  await page.getByRole('button', { name: '備份與設定' }).click();
+  await page.getByRole('button', { name: '智慧匯入' }).click();
+
+  await expect(page.getByRole('heading', { name: '截圖自動記帳' })).toBeVisible();
+  await expect(page.locator('#carrier-form')).toHaveCount(0);
+  await expect(page.getByText('財政部載具同步')).toHaveCount(0);
+  await expect(page.getByText('載具驗證碼')).toHaveCount(0);
+});
+
 test('手機記帳移除多餘分類提示，且長對話框仍固定保留關閉按鈕', async ({ page }) => {
   await page.setViewportSize({ width: 399, height: 784 });
   await page.getByRole('button', { name: '快速記一筆' }).click();
@@ -140,134 +150,6 @@ test('收入也在背景分類，事後編輯才顯示分類', async ({ page }) 
   await expect(form.getByLabel('小分類')).toHaveValue('家教');
 });
 
-test('載具同步會以發票號碼取代重複 OCR，並保留細分類', async ({ page }) => {
-  const carrierRequests = [];
-  await page.evaluate(() => {
-    const key = 'hukeep_personal_state_v1';
-    const state = {
-      schemaVersion: 1,
-      accounts: [
-        { id: 'cash', name: '現金', icon: '錢', openingBalance: 0 },
-        { id: 'bank', name: '銀行', icon: '銀', openingBalance: 0 },
-        { id: 'card', name: '信用卡', icon: '卡', openingBalance: 0 },
-      ],
-      budgets: [],
-      preferences: { theme: 'system' },
-      transactions: [
-      {
-        id: 'ocr-existing',
-        type: 'expense',
-        amount: 120,
-        category: '飲食',
-        subcategory: '咖啡',
-        account: 'card',
-        toAccount: null,
-        date: '2026-08-28',
-        note: '星巴克',
-        source: 'ocr',
-        sourceId: 'ocr-shot',
-        invoiceNumber: 'AB12345678',
-        createdAt: '2026-08-28T08:00:00.000Z',
-        updatedAt: '2026-08-28T08:00:00.000Z',
-      },
-      ],
-    };
-    localStorage.setItem(key, JSON.stringify(state));
-    localStorage.setItem('hukeep_device_binding_endpoint_v1', 'https://proxy.example/sync');
-    localStorage.setItem('hukeep_device_binding_token_v1', 'proxy-token');
-  });
-  await page.reload();
-  await page.route('https://proxy.example/**', route =>
-    {
-      const request = route.request().postDataJSON();
-      if (request.action !== 'syncCarrierInvoices') {
-        return route.fulfill({
-          contentType: 'application/json',
-          body: JSON.stringify({ ok: false, error: '略過背景 Sheet 讀取' }),
-        });
-      }
-      carrierRequests.push(request);
-      return route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        ok: true,
-        data: {
-          carrierBound: true,
-          syncStartDate: '2026-08-01',
-          invoices: [
-            {
-              sourceId: 'carrier:AB12345678',
-              invoiceNumber: 'AB12345678',
-              amount: 125,
-              date: '2026-08-28',
-              merchant: '星巴克咖啡',
-              items: ['大杯拿鐵'],
-              classification: {
-                topCategory: '飲食',
-                subcategory: '咖啡',
-                confidence: 0.96,
-              },
-            },
-            {
-              sourceId: 'carrier:CD87654321',
-              invoiceNumber: 'CD87654321',
-              amount: 680,
-              date: '2026-08-27',
-              merchant: '鼎王麻辣鍋',
-              items: ['麻辣鍋'],
-              classification: {
-                topCategory: '飲食',
-                subcategory: '火鍋',
-                confidence: 0.94,
-              },
-            },
-          ],
-        },
-      }),
-      });
-    },
-  );
-
-  await page.getByRole('button', { name: '備份與設定' }).click();
-  await page.getByRole('button', { name: '智慧匯入' }).click();
-  await page.getByLabel('手機條碼').fill('/ABC+123');
-  await page.getByLabel('載具驗證碼').fill('carrier-password');
-  await page.getByLabel('同步月份').fill('2026-08');
-  await page.getByLabel('自動同步起始日').fill('2026-08-01');
-  await page.getByRole('button', { name: '立即手動更新' }).click();
-
-  await expect(page.getByText('同步完成：新增 1、合併 1、略過 0。')).toBeVisible();
-  const transactions = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem('hukeep_personal_state_v1')).transactions,
-  );
-  expect(transactions).toHaveLength(2);
-  expect(transactions.every(transaction => transaction.source === 'carrier')).toBe(true);
-  expect(transactions.map(transaction => transaction.subcategory).sort()).toEqual(['咖啡', '火鍋']);
-  const preferences = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem('hukeep_personal_state_v1')).preferences,
-  );
-  expect(preferences).toMatchObject({
-    carrierBound: true,
-    carrierSyncStartDate: '2026-08-01',
-  });
-  expect(preferences).not.toHaveProperty('carrierCardNo');
-
-  await page.reload();
-  await page.getByRole('button', { name: '備份與設定' }).click();
-  await page.getByRole('button', { name: '智慧匯入' }).click();
-  await expect(page.getByText('已綁定載具，下次不用再輸入帳密。')).toBeVisible();
-  await page.getByLabel('同步月份').fill('2026-07');
-  await page.getByRole('button', { name: '立即手動更新' }).click();
-  await expect.poll(() => carrierRequests.length).toBe(2);
-  expect(carrierRequests[1]).toMatchObject({
-    action: 'syncCarrierInvoices',
-    cardNo: '',
-    cardEncrypt: '',
-    rememberCarrier: true,
-    syncStartDate: '2026-08-01',
-  });
-});
-
 test('口語內容直接上傳 Sheet，不等待 AI 審查', async ({ page }) => {
   let receivedBody;
   await page.route('https://proxy.example/voice', async route => {
@@ -325,7 +207,7 @@ test('口語內容直接上傳 Sheet，不等待 AI 審查', async ({ page }) =>
       ],
       transactions: [],
       budgets: [],
-      preferences: { theme: 'system', carrierEndpoint: 'https://proxy.example/voice' },
+      preferences: { theme: 'system', proxyEndpoint: 'https://proxy.example/voice' },
     };
     localStorage.setItem(key, JSON.stringify(state));
     localStorage.setItem('hukeep_device_binding_token_v1', 'session-token');

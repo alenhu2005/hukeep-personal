@@ -169,8 +169,7 @@
   font-size: 13px;
 }
 
-.image-drop span,
-.carrier-form small {
+.image-drop span {
   color: var(--muted);
   font-size: 10px;
 }
@@ -209,88 +208,30 @@
   font-weight: 750;
 }
 
-.import-form-grid,
-.carrier-form {
+.import-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 11px;
 }
 
-.import-form-grid label,
-.carrier-form label {
+.import-form-grid label {
   display: grid;
   align-content: start;
   gap: 6px;
 }
 
-.import-form-grid .wide,
-.carrier-form .wide {
+.import-form-grid .wide {
   grid-column: 1 / -1;
 }
 
-.carrier-binding-status {
-  margin: 0;
-  padding: 9px 11px;
-  border-radius: 9px;
-  background: var(--surface-muted);
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.5;
-}
-
-.carrier-binding-status.bound {
-  background: var(--primary-soft);
-  color: var(--primary);
-  font-weight: 750;
-}
-
-.carrier-credentials {
-  padding: 11px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-}
-
-.carrier-credentials summary {
-  color: var(--ink-soft);
-  font-size: 11px;
-  font-weight: 750;
-}
-
-.carrier-credentials-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 11px;
-  margin-top: 12px;
-}
-
-.carrier-remember {
-  display: flex !important;
-  grid-template-columns: auto 1fr;
-  align-items: flex-start;
-  gap: 8px !important;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 500;
-  line-height: 1.5;
-}
-
-.carrier-remember input {
-  width: 16px;
-  min-height: 16px;
-  margin: 0;
-}
-
-.import-form-grid label > span,
-.carrier-form label > span {
+.import-form-grid label > span {
   color: var(--ink-soft);
   font-size: 11px;
   font-weight: 700;
 }
 
 .import-form-grid input,
-.import-form-grid select,
-.carrier-form input,
-.carrier-form select {
+.import-form-grid select {
   width: 100%;
   min-height: 42px;
   padding: 0 11px;
@@ -370,13 +311,11 @@
     padding: 14px;
   }
 
-  .import-form-grid,
-  .carrier-form {
+  .import-form-grid {
     grid-template-columns: 1fr;
   }
 
-  .import-form-grid .wide,
-  .carrier-form .wide {
+  .import-form-grid .wide {
     grid-column: auto;
   }
 

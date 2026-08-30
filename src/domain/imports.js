@@ -64,7 +64,6 @@ export function parseReceiptText(value) {
 }
 
 export function invoiceToTransaction(invoice, options = {}) {
-  const source = options.source === 'carrier' ? 'carrier' : 'ocr';
   const transaction = createTransaction(
     {
       type: 'expense',
@@ -77,7 +76,7 @@ export function invoiceToTransaction(invoice, options = {}) {
       note: String(invoice?.merchant ?? '').trim().slice(0, 240),
       merchant: invoice?.merchant,
       invoiceNumber: invoice?.invoiceNumber,
-      source,
+      source: 'ocr',
       sourceId: options.sourceId,
       invoiceItems: invoice?.items,
       ocrConfidence: options.ocrConfidence,
@@ -104,23 +103,6 @@ function isDuplicate(left, right) {
   return Boolean(leftMerchant && rightMerchant && leftMerchant === rightMerchant);
 }
 
-function shouldReplace(existing, incoming) {
-  return incoming.source === 'carrier' && existing.source === 'ocr';
-}
-
-function mergeReplacement(existing, incoming) {
-  const merged = { ...incoming, account: existing.account };
-  if (!existing.userEditedAt) return merged;
-  return {
-    ...merged,
-    category: existing.category,
-    ...(existing.subcategory ? { subcategory: existing.subcategory } : {}),
-    ...(existing.name ? { name: existing.name } : {}),
-    note: existing.note,
-    userEditedAt: existing.userEditedAt,
-  };
-}
-
 export function reconcileImportedTransactions(existing, incoming) {
   const transactions = existing.map(transaction => ({ ...transaction }));
   const removed = [];
@@ -133,11 +115,7 @@ export function reconcileImportedTransactions(existing, incoming) {
       continue;
     }
 
-    const duplicate = transactions[duplicateIndex];
-    if (!shouldReplace(duplicate, candidate)) continue;
-    transactions.splice(duplicateIndex, 1, mergeReplacement(duplicate, candidate));
-    removed.push(duplicate.id);
-    replaced.push({ removedId: duplicate.id, replacementId: candidate.id });
+    // OCR matches are intentionally kept as a single existing entry.
   }
 
   return { transactions, removed, replaced };

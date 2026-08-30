@@ -8,17 +8,15 @@ describe('GAS 同步合約', () => {
     expect(() => new Function(source)).not.toThrow();
   });
 
-  it('包含帳本 Sheet、載具綁定與每月排程，但不寫死試算表 ID', () => {
+  it('保留帳本 Sheet 同步，但不再暴露載具 API、排程或財政部 AppID 設定', () => {
     expect(source).toContain("body.action === 'syncLedgerState'");
     expect(source).toContain("body.action === 'loadLedgerState'");
     expect(source).toContain("requiredProperty_('SPREADSHEET_ID')");
-    expect(source).toContain("CARRIER_CARD_ENCRYPT");
-    expect(source).toContain("newTrigger('scheduledCarrierSync')");
-    expect(source).toContain('everyHours(2)');
-    expect(source).toContain('CARRIER_SYNC_START_DATE');
     expect(source).toContain('小帳_帳戶');
     expect(source).toContain('小帳_交易');
-    expect(source).toContain('小帳_載具同步');
+    expect(source).not.toContain("body.action === 'syncCarrierInvoices'");
+    expect(source).not.toContain('EINVOICE_');
+    expect(source).not.toContain('callEinvoice_');
     expect(source).not.toContain('1nlUSUpk5F4fnhDRTPWS4KlIIfqAYWkT6xn3965Xl8N-eRKiFyVjqNO4w');
   });
 

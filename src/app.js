@@ -126,7 +126,7 @@ export function createApp() {
     const stored = deviceBinding.read();
     const endpoint =
       stored.endpoint ||
-      state.preferences.carrierEndpoint ||
+      state.preferences.proxyEndpoint ||
       import.meta.env.VITE_INVOICE_PROXY_URL ||
       '';
     if (endpoint && stored.proxyToken && !stored.bound) {
@@ -707,7 +707,7 @@ export function createApp() {
       if (
         !persist({
           ...state,
-          preferences: { ...state.preferences, carrierEndpoint: credentials.endpoint },
+          preferences: { ...state.preferences, proxyEndpoint: credentials.endpoint },
         })
       ) {
         return;
@@ -745,7 +745,7 @@ export function createApp() {
       const merged = reconcileLedgerFromSheet(state, sheetState, readPendingSheetChanges());
       if (!persist({
         ...merged,
-        preferences: { ...merged.preferences, carrierEndpoint: credentials.endpoint },
+        preferences: { ...merged.preferences, proxyEndpoint: credentials.endpoint },
       }, { sheetSourced: true })) {
         return;
       }
@@ -904,7 +904,7 @@ export function createApp() {
   setSyncStatus(lastSheetPullAt ? 'synced' : 'local', { lastAt: lastSheetPullAt });
   applyTheme();
   render();
-  if (incomingDeviceBinding) showToast('手機已完成 Sheet 與載具裝置綁定。');
+  if (incomingDeviceBinding) showToast('手機已完成 Google Sheet 裝置綁定。');
   setTimeout(() => refreshSheetInBackground(), 1200);
   setInterval(() => refreshSheetInBackground({ force: true }), BACKGROUND_PULL_INTERVAL_MS);
 }

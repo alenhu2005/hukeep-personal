@@ -13,7 +13,7 @@ function cleanText(value, maxLength) {
 }
 
 export function sanitizeAiItems(items) {
-  const sensitiveLine = /(?:發票(?:號碼|號)|invoice\s*(?:no|number)|載具|carrier|^[A-Z]{2}[\s-]?\d{4}[\s-]?\d{4}$|^\/[0-9A-Z+.-]{7}$)/i;
+  const sensitiveLine = /(?:發票(?:號碼|號)|invoice\s*(?:no|number)|^[A-Z]{2}[\s-]?\d{4}[\s-]?\d{4}$)/i;
   const metadataLine = /^(?:date|日期|total|subtotal|tax|總計|合計|小計|稅額|付款金額|交易金額)/i;
   return Array.isArray(items)
     ? items
@@ -106,63 +106,6 @@ export async function classifyExpenseWithAi(input, options = {}) {
     return validateClassification(fallback, { fallback, type });
   }
   return validateClassification(data, { fallback, type });
-}
-
-function carrierSetupError(error) {
-  const message = cleanText(error?.message, 200);
-  if (message.includes('EINVOICE_APP_ID')) {
-    return new Error(
-      '載具代理尚未完成設定：請在 GAS 的「專案設定 → 指令碼屬性」加入財政部核發的 AppID（EINVOICE_APP_ID）。',
-    );
-  }
-  if (message.includes('EINVOICE_UUID')) {
-    return new Error(
-      '載具代理尚未完成設定：請在 GAS 的「專案設定 → 指令碼屬性」加入此私人服務固定使用的 UUID（EINVOICE_UUID）。',
-    );
-  }
-  return error;
-}
-
-export async function syncCarrierInvoices(input, options = {}) {
-  const month = cleanText(input?.month, 7);
-  if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('同步月份格式不正確');
-  const syncStartDate = cleanText(input?.syncStartDate, 10);
-  if (syncStartDate && !isValidDateText(syncStartDate)) throw new Error('自動同步起始日期格式不正確');
-  let data;
-  try {
-    data = await postProxy(
-      input?.endpoint,
-      {
-        action: 'syncCarrierInvoices',
-        proxyToken: cleanText(input?.proxyToken, 300),
-        cardNo: cleanText(input?.cardNo, 40),
-        cardEncrypt: cleanText(input?.cardEncrypt, 100),
-        month,
-        rememberCarrier: input?.rememberCarrier === true,
-        syncStartDate,
-      },
-      options,
-    );
-  } catch (error) {
-    throw carrierSetupError(error);
-  }
-  if (!Array.isArray(data?.invoices)) throw new Error('代理回傳的發票格式不正確');
-  return {
-    invoices: data.invoices.slice(0, 1000),
-    carrierBound: data.carrierBound === true,
-    syncStartDate: isValidDateText(data.syncStartDate) ? data.syncStartDate : '',
-  };
-}
-
-function isValidDateText(value) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const [year, month, day] = value.split('-').map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  return (
-    date.getUTCFullYear() === year &&
-    date.getUTCMonth() === month - 1 &&
-    date.getUTCDate() === day
-  );
 }
 
 function assertSheetInteger(value, label, options = {}) {

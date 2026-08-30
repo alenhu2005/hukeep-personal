@@ -115,13 +115,13 @@ describe('ledger repository', () => {
     expect(state.transactions.map(transaction => transaction.account)).toEqual(['bot', 'sinopac']);
   });
 
-  it('不保存代理憑證，且拒絕偽裝成本機的非安全網址', () => {
+  it('不保存代理憑證，升級時移除載具偏好並保留安全的 Sheet 代理網址', () => {
     const storage = createMemoryStorage();
     const repository = createLedgerRepository(storage);
     const state = createEmptyState();
     state.preferences = {
       theme: 'dark',
-      carrierEndpoint: 'http://localhost.evil.example/steal',
+      carrierEndpoint: 'https://example.com/old-proxy',
       carrierCardNo: '/ABC+123',
       carrierBound: true,
       carrierSyncStartDate: '2026-08-01',
@@ -131,10 +131,22 @@ describe('ledger repository', () => {
 
     expect(repository.save(state).preferences).toEqual({
       theme: 'dark',
-      carrierCardNo: '/ABC+123',
-      carrierBound: true,
-      carrierSyncStartDate: '2026-08-01',
+      proxyEndpoint: 'https://example.com/old-proxy',
     });
+  });
+
+  it('只接受 HTTPS 或本機 HTTP 的 Sheet 代理網址', () => {
+    const repository = createLedgerRepository(createMemoryStorage());
+    const localState = createEmptyState();
+    localState.preferences = { theme: 'light', proxyEndpoint: 'http://localhost:3000/sync' };
+    const unsafeState = createEmptyState();
+    unsafeState.preferences = { theme: 'light', proxyEndpoint: 'http://example.com/sync' };
+
+    expect(repository.save(localState).preferences).toEqual({
+      theme: 'light',
+      proxyEndpoint: 'http://localhost:3000/sync',
+    });
+    expect(repository.save(unsafeState).preferences).toEqual({ theme: 'light' });
   });
 
   it('載入備份或 localStorage 時會過濾壞掉的資料列', () => {

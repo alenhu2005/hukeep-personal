@@ -120,7 +120,7 @@ describe('Sheet 雙向更新合併', () => {
     const local = state([], {
       accounts: [{ id: 'cash', openingBalance: 1 }],
       budgets: [{ category: '飲食', limit: 1 }],
-      preferences: { theme: 'dark', carrierEndpoint: 'https://example.com' },
+      preferences: { theme: 'dark', proxyEndpoint: 'https://example.com' },
     });
     const remote = state([], {
       accounts: [{ id: 'cash', openingBalance: 5000 }],

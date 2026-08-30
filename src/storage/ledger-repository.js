@@ -94,33 +94,18 @@ function migrateLegacyAccounts(accounts, transactions) {
 
 function normalizePreferences(preferences) {
   const theme = cleanText(preferences?.theme, 16);
-  const carrierEndpoint = cleanText(preferences?.carrierEndpoint, 500);
-  const carrierCardNo = cleanText(preferences?.carrierCardNo, 40);
-  const carrierSyncStartDate = cleanText(preferences?.carrierSyncStartDate, 10);
+  const proxyEndpoint = cleanText(preferences?.proxyEndpoint ?? preferences?.carrierEndpoint, 500);
   const normalized = {
     theme: VALID_THEMES.has(theme) ? theme : 'system',
   };
   try {
-    const url = new URL(carrierEndpoint);
+    const url = new URL(proxyEndpoint);
     const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
     if (url.protocol === 'https:' || (url.protocol === 'http:' && local)) {
-      normalized.carrierEndpoint = url.toString();
+      normalized.proxyEndpoint = url.toString();
     }
   } catch {
     // Invalid or absent endpoints are intentionally discarded.
-  }
-  if (carrierCardNo) normalized.carrierCardNo = carrierCardNo;
-  if (preferences?.carrierBound === true) normalized.carrierBound = true;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(carrierSyncStartDate)) {
-    const [year, month, day] = carrierSyncStartDate.split('-').map(Number);
-    const date = new Date(Date.UTC(year, month - 1, day));
-    if (
-      date.getUTCFullYear() === year &&
-      date.getUTCMonth() === month - 1 &&
-      date.getUTCDate() === day
-    ) {
-      normalized.carrierSyncStartDate = carrierSyncStartDate;
-    }
   }
   return normalized;
 }

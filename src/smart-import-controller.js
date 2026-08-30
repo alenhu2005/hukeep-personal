@@ -13,13 +13,9 @@ import {
 import {
   classifyExpenseWithAi,
   sanitizeAiItems,
-  syncCarrierInvoices,
 } from './services/import-proxy.js';
 import { recognizeReceiptImage } from './services/receipt-ocr.js';
 import { todayInTaipei } from './format.js';
-
-const recentCarrierSyncs = new Map();
-const CARRIER_RETRY_DELAY_MS = 2 * 60 * 1000;
 
 function setOptions(select, values, selected = '') {
   const options = values.map(value => {
@@ -93,59 +89,24 @@ function ocrProgressLabel(message) {
   return `${labels[message.status] || '處理圖片'}${percentage ? ` · ${percentage}%` : ''}`;
 }
 
-function validCarrierInvoice(invoice) {
-  return (
-    invoice &&
-    Number.isInteger(Number(invoice.amount)) &&
-    Number(invoice.amount) > 0 &&
-    /^\d{4}-\d{2}-\d{2}$/.test(String(invoice.date ?? ''))
-  );
-}
-
 export function createSmartImportController(dependencies) {
   const {
     getState,
     persist,
     render,
     showToast,
-    getSelectedMonth,
     getProxyCredentials,
-    rememberProxyCredentials,
   } = dependencies;
   const receiptImage = document.querySelector('#receipt-image');
   const ocrProgress = document.querySelector('#ocr-progress');
   const ocrForm = document.querySelector('#ocr-draft-form');
   const classificationHint = document.querySelector('#ocr-classification-hint');
-  const carrierForm = document.querySelector('#carrier-form');
-  const carrierProgress = document.querySelector('#carrier-progress');
   let activeFile = null;
   let activeOcrConfidence = 0;
-
-  function configureCarrierBinding(state) {
-    const bound = state.preferences.carrierBound === true;
-    const credentials = document.querySelector('#carrier-credentials');
-    const status = document.querySelector('#carrier-binding-status');
-    const cardNo = carrierForm.elements.cardNo;
-    const cardEncrypt = carrierForm.elements.cardEncrypt;
-    credentials.open = !bound;
-    cardNo.required = !bound;
-    cardEncrypt.required = !bound;
-    cardNo.value = bound ? '' : state.preferences.carrierCardNo || '';
-    cardEncrypt.value = '';
-    carrierForm.elements.rememberCarrier.checked = true;
-    carrierForm.elements.syncStartDate.value = state.preferences.carrierSyncStartDate || '';
-    status.classList.toggle('bound', bound);
-    status.textContent = bound
-      ? '已綁定載具，下次不用再輸入帳密。'
-      : '尚未綁定；首次同步成功後會存入你的私人 GAS。';
-  }
 
   function configureForms() {
     const state = getState();
     setAccountOptions(ocrForm.elements.account, state.accounts);
-    setAccountOptions(carrierForm.elements.account, state.accounts);
-    carrierForm.elements.month.value = getSelectedMonth();
-    configureCarrierBinding(state);
     setOptions(ocrForm.elements.category, Object.keys(EXPENSE_TAXONOMY), '其他');
     setOptions(ocrForm.elements.subcategory, getSubcategories('其他'), '其他支出');
   }
@@ -267,100 +228,6 @@ export function createSmartImportController(dependencies) {
     }
   }
 
-  async function handleCarrierSync(event) {
-    event.preventDefault();
-    const values = {
-      ...Object.fromEntries(new FormData(carrierForm)),
-      ...getProxyCredentials(),
-    };
-    if (!values.endpoint || !values.proxyToken) {
-      showToast('這台裝置尚未綁定 Sheet。', 'error');
-      return;
-    }
-    values.rememberCarrier = carrierForm.elements.rememberCarrier.checked;
-    const syncKey = `${values.cardNo || 'bound'}:${values.month}`;
-    const waitMs = CARRIER_RETRY_DELAY_MS - (Date.now() - (recentCarrierSyncs.get(syncKey) || 0));
-    if (waitMs > 0) {
-      showToast(`相同月份請等待 ${Math.ceil(waitMs / 1000)} 秒再同步。`, 'error');
-      return;
-    }
-    const button = document.querySelector('#carrier-sync-button');
-    button.disabled = true;
-    carrierProgress.textContent = '正在向財政部取得發票與品項…';
-    recentCarrierSyncs.set(syncKey, Date.now());
-    try {
-      const syncResult = await syncCarrierInvoices(values);
-      const invoices = syncResult.invoices;
-      const candidates = invoices.flatMap((invoice, index) => {
-        if (!validCarrierInvoice(invoice)) return [];
-        const local = classifyLocally({ merchant: invoice.merchant, items: invoice.items });
-        const classification =
-          Number(invoice.classification?.confidence) > 0
-            ? validateClassification(invoice.classification, { fallback: local })
-            : local;
-        try {
-          return [
-            invoiceToTransaction(invoice, {
-              source: 'carrier',
-              sourceId: String(invoice.sourceId || invoice.invoiceNumber || `carrier-${values.month}-${index}`),
-              account: values.account,
-              category: classification.topCategory,
-              subcategory: classification.subcategory,
-            }),
-          ];
-        } catch {
-          return [];
-        }
-      });
-      const state = getState();
-      const beforeTransactions = state.transactions.map(transaction => ({
-        ...transaction,
-        ...(transaction.invoiceItems ? { invoiceItems: [...transaction.invoiceItems] } : {}),
-      }));
-      const result = reconcileImportedTransactions(state.transactions, candidates);
-      const added = Math.max(0, result.transactions.length - state.transactions.length);
-      const merged = result.replaced.length;
-      const skipped = invoices.length - added - merged;
-      const retainedPreferences = Object.fromEntries(
-        Object.entries(state.preferences).filter(
-          ([key]) => !['carrierCardNo', 'carrierSyncStartDate'].includes(key),
-        ),
-      );
-      const carrierBound = syncResult.carrierBound || state.preferences.carrierBound === true;
-      const preferences = {
-        ...retainedPreferences,
-        carrierEndpoint: values.endpoint,
-        ...(carrierBound ? { carrierBound: true } : { carrierCardNo: values.cardNo }),
-        ...(syncResult.syncStartDate
-          ? { carrierSyncStartDate: syncResult.syncStartDate }
-          : {}),
-      };
-      if (!persist({ ...state, preferences, transactions: result.transactions })) return;
-      rememberProxyCredentials(values.endpoint, values.proxyToken);
-      render();
-      configureCarrierBinding(getState());
-      const scheduleText = syncResult.syncStartDate
-        ? ` GAS 會每 2 小時自動同步 ${syncResult.syncStartDate} 以後的發票。`
-        : '';
-      carrierProgress.textContent = `同步完成：新增 ${added}、合併 ${merged}、略過 ${Math.max(0, skipped)}。${scheduleText}`;
-      showToast(`載具完成：新增 ${added} 筆、合併 ${merged} 筆。`, 'default', {
-        label: '復原',
-        handler: () => {
-          const current = getState();
-          if (!persist({ ...current, transactions: beforeTransactions })) return;
-          render();
-          showToast('已復原這次載具同步。');
-        },
-      });
-    } catch (error) {
-      carrierProgress.textContent = error.message || '載具同步失敗。';
-      showToast(carrierProgress.textContent, 'error');
-    } finally {
-      carrierForm.elements.cardEncrypt.value = '';
-      button.disabled = false;
-    }
-  }
-
   configureForms();
   receiptImage.addEventListener('change', event => handleReceiptImage(event.target.files?.[0]));
   ocrForm.elements.category.addEventListener('change', () => {
@@ -374,14 +241,6 @@ export function createSmartImportController(dependencies) {
   );
   ocrForm.addEventListener('submit', saveOcrDraft);
   document.querySelector('#ocr-ai-classify').addEventListener('click', () => classifyOcrWithAi());
-  carrierForm.addEventListener('submit', handleCarrierSync);
-  carrierForm.addEventListener('click', event =>
-    selectAccountFromButton(event, carrierForm, getState().accounts),
-  );
-  document.querySelector('#smart-import-dialog').addEventListener('close', () => {
-    carrierForm.elements.cardEncrypt.value = '';
-  });
-
   async function classifyDraft(input) {
     const { endpoint, proxyToken } = getProxyCredentials();
     if (!endpoint || !proxyToken) return { ...input.fallback, ai: false };
