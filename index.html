@@ -10,8 +10,8 @@
     <link rel="manifest" href="./manifest.json" />
     <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
     <title>小帳｜個人記帳</title>
-    <script type="module" crossorigin src="/hukeep-personal/assets/index-CQ5Bvwie.js"></script>
-    <link rel="stylesheet" crossorigin href="/hukeep-personal/assets/index-Ba1NkOk8.css">
+    <script type="module" crossorigin src="/hukeep-personal/assets/index-D_bvnjMw.js"></script>
+    <link rel="stylesheet" crossorigin href="/hukeep-personal/assets/index-CBbr2Chx.css">
   </head>
   <body>
     <a class="skip-link" href="#app-main">跳到主要內容</a>
@@ -75,15 +75,15 @@
           <h3 id="voice-entry-title" class="voice-entry-title"><span aria-hidden="true">●</span> 口語直接記帳</h3>
           <div class="voice-entry-body">
             <div class="voice-input-row">
-              <input id="voice-transcript" type="text" maxlength="240" aria-label="口語記帳內容" placeholder="例如：昨天用永豐在鼎王吃麻辣鍋一千二" />
+              <input id="voice-transcript" type="text" maxlength="240" aria-label="口語記帳內容" />
               <button id="voice-submit-button" class="primary-button" type="button">直接記帳</button>
             </div>
-            <p id="voice-status" role="status">用 iPhone 鍵盤麥克風輸入後直接送出；Sheet 會先收到，AI 再從後台補齊名稱、金額、日期與分類。</p>
+            <p id="voice-status" class="form-error" role="status" hidden></p>
           </div>
         </section>
 
         <details id="manual-entry" class="manual-entry">
-          <summary>需要手動輸入？展開詳細記帳</summary>
+          <summary>手動記帳</summary>
           <div class="manual-entry-body">
             <div class="type-switch" role="group" aria-label="交易類型">
               <button type="button" data-transaction-type="expense" aria-pressed="true">支出</button>
@@ -174,6 +174,9 @@
         <button id="export-csv" class="tool-action" type="button">
           <strong>匯出交易明細</strong><span>CSV · 可用試算表開啟</span>
         </button>
+        <button id="export-month-csv" class="tool-action" type="button">
+          <strong>匯出目前月份</strong><span>CSV · 只含目前檢視月份</span>
+        </button>
         <label class="tool-action file-action" for="import-json">
           <strong>匯入備份</strong><span>JSON · 會先請你確認</span>
           <input id="import-json" type="file" accept="application/json,.json" />
@@ -188,6 +191,41 @@
           <div id="opening-balance-fields" class="opening-balance-grid"></div>
           <button class="primary-button" type="submit">儲存初始金額</button>
         </form>
+      </section>
+      <section class="settings-section" aria-labelledby="automation-title">
+        <div class="settings-section-heading">
+          <h3 id="automation-title">固定流水</h3>
+          <p>薪資、訂閱或投資定期扣款會在到期日自動建立，並照常同步到 Sheet。</p>
+        </div>
+        <form id="recurring-rule-form" class="compact-settings-form">
+          <label><span>名稱</span><input name="name" maxlength="120" required /></label>
+          <label><span>金額</span><input name="amount" type="number" min="1" step="1" inputmode="numeric" required /></label>
+          <label><span>類型</span><select name="type"><option value="expense">支出</option><option value="income">收入</option><option value="transfer">轉帳</option></select></label>
+          <label><span>週期</span><select name="cadence"><option value="monthly">每月</option><option value="weekly">每週</option></select></label>
+          <label><span>每月日期</span><input name="day" type="number" min="1" max="31" value="1" inputmode="numeric" required /></label>
+          <label><span>開始日期</span><input name="startDate" type="date" required /></label>
+          <label><span>帳戶</span><select name="account" required></select></label>
+          <label class="recurring-to-account" hidden><span>目的帳戶</span><select name="toAccount"></select></label>
+          <label class="recurring-category"><span>分類</span><select name="category"></select></label>
+          <label class="recurring-fee" hidden><span>手續費</span><input name="fee" type="number" min="0" step="1" inputmode="numeric" value="0" /></label>
+          <label class="wide"><span>備註</span><input name="note" maxlength="240" /></label>
+          <button class="primary-button wide" type="submit">新增固定流水</button>
+        </form>
+        <div id="recurring-rule-list" class="settings-list"></div>
+      </section>
+      <section class="settings-section" aria-labelledby="reconciliation-title">
+        <div class="settings-section-heading">
+          <h3 id="reconciliation-title">帳戶對帳</h3>
+          <p>輸入實際餘額，系統會保留差額紀錄，不會直接改動帳本。</p>
+        </div>
+        <form id="reconciliation-form" class="compact-settings-form">
+          <label><span>帳戶</span><select name="accountId" required></select></label>
+          <label><span>實際餘額</span><input name="actualBalance" type="number" step="1" inputmode="numeric" required /></label>
+          <label><span>對帳日期</span><input name="date" type="date" required /></label>
+          <label class="wide"><span>備註</span><input name="note" maxlength="120" /></label>
+          <button class="primary-button wide" type="submit">儲存對帳結果</button>
+        </form>
+        <div id="reconciliation-list" class="settings-list"></div>
       </section>
       <section class="settings-section" aria-labelledby="sheet-sync-title">
         <div class="settings-section-heading">
@@ -222,6 +260,7 @@
             <button id="sheet-load-button" class="secondary-button" type="button">從 Sheet 讀取</button>
           </div>
           <p id="sheet-sync-status" class="settings-status" role="status">尚未同步。</p>
+          <p id="sync-health-status" class="settings-status" role="status"></p>
         </form>
       </section>
       <div class="privacy-note">
