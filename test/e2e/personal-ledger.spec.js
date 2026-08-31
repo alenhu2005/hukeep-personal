@@ -371,11 +371,37 @@ test('可設定分類預算、查看趨勢並在手機使用', async ({ page }) 
   await expect(page.getByText('飲食預算')).toBeVisible();
 
   await page.getByRole('button', { name: '趨勢' }).click();
-  await expect(page.getByRole('heading', { name: '趨勢' })).toBeVisible();
+  await expect(page.locator('#insights-title')).toHaveCount(1);
   await expect(page.locator('#trend-chart')).toBeVisible();
-  await expect(page.getByRole('button', { name: '近 7 天' })).toBeVisible();
-  await expect(page.getByText('支出分類', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '本週' })).toBeVisible();
+  await expect(page.getByText('分類支出', { exact: true })).toBeVisible();
   await expect(page.locator('body')).not.toHaveCSS('overflow-x', 'scroll');
+});
+
+test('趨勢工作台可切換區間、翻閱上一週並點日期看明細', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('hukeep_personal_state_v1', JSON.stringify({
+      schemaVersion: 1,
+      accounts: [],
+      budgets: [],
+      transactions: [
+        { id: 'week-now', type: 'expense', name: '本週午餐', amount: 120, category: '飲食', subcategory: '便當', account: 'cash', date: '2026-08-31', note: '', source: 'manual' },
+        { id: 'week-previous', type: 'expense', name: '上週捷運', amount: 40, category: '交通', subcategory: '捷運', account: 'cash', date: '2026-08-24', note: '', source: 'manual' },
+      ],
+      preferences: { theme: 'system', proxyEndpoint: '' },
+    }));
+  });
+  await page.reload();
+  await page.getByRole('button', { name: '趨勢' }).click();
+  await page.getByRole('button', { name: '本週' }).click();
+  await expect(page.locator('.analysis-week-strip .analysis-week-cell')).toHaveCount(7);
+  await expect(page.locator('#trend-chart > strong')).toHaveText('08/30～09/05');
+  await page.getByRole('button', { name: '上一期' }).click();
+  await expect(page.locator('#trend-chart > strong')).toHaveText('08/23～08/29');
+  await page.getByRole('button', { name: /8\/24 支出/ }).click();
+  await expect(page.locator('.analysis-history-head')).toContainText('8/24');
+  await expect(page.locator('.analysis-history-head')).toContainText('當日明細');
+  await expect(page.getByText('上週捷運', { exact: true })).toBeVisible();
 });
 
 test('預算儲存後會自動同步，切換頁面會立即讀取 Sheet', async ({ page }) => {

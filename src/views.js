@@ -25,7 +25,6 @@ export function transactionRows(transactions, accounts, options = {}) {
     return emptyState('沒有符合的紀錄');
   }
   const accountNames = Object.fromEntries(accounts.map(account => [account.id, account.name]));
-  const signals = options.signals || findTransactionSignals(transactions);
   const groupCounts = options.groupCounts || new Map();
   return transactions
     .map(transaction => {
@@ -43,8 +42,6 @@ export function transactionRows(transactions, accounts, options = {}) {
         transaction.name || transaction.note || label || TYPE_LABELS[transaction.type];
       const secondary = [
         groupCounts.get(transaction.groupId) > 1 ? `同段 ${groupCounts.get(transaction.groupId)} 筆` : '',
-        signals.duplicates.get(transaction.id),
-        signals.anomalies.get(transaction.id),
         transferFee,
         label,
         formatDate(transaction.date),
@@ -53,7 +50,7 @@ export function transactionRows(transactions, accounts, options = {}) {
         .join(' · ');
       const sign = isExpense ? '-' : isIncome ? '+' : '';
       return `
-        <article class="transaction-row" data-transaction-row data-type="${transaction.type}" ${signals.duplicates.has(transaction.id) || signals.anomalies.has(transaction.id) ? 'data-attention="true"' : ''}>
+        <article class="transaction-row" data-transaction-row data-type="${transaction.type}">
           <button class="transaction-summary" type="button" data-detail-id="${escapeHtml(transaction.id)}" aria-label="查看 ${escapeHtml(primaryName)} 詳情">
             ${categoryMark(transaction.category || '轉')}
             <span class="transaction-copy">
@@ -85,7 +82,6 @@ function groupedTransactions(transactions) {
 
 function rowsForState(state, transactions) {
   return transactionRows(transactions, state.accounts, {
-    signals: findTransactionSignals(state.transactions),
     groupCounts: groupedTransactions(state.transactions),
   });
 }
@@ -303,54 +299,104 @@ function daysInRange(from, to) {
 }
 
 export function renderInsights(state, month, options = {}) {
-  const filters = options.insightFilters || { period: 'month', date: '' };
+  const today = todayInTaipei();
+  const filters = options.insightFilters || { period: 'month', date: '', anchorDate: today };
   const period = ['week', 'month', 'year'].includes(filters.period) ? filters.period : 'month';
+  const anchorDate = /^\d{4}-\d{2}-\d{2}$/.test(filters.anchorDate) ? filters.anchorDate : today;
   const workspace = buildAnalysisWorkspace(state.transactions, {
     period,
     selectedMonth: month,
-    today: todayInTaipei(),
+    today: anchorDate,
   });
   const dailyByDate = new Map(workspace.dailyRows.map(item => [item.date, item.amount]));
-  const maxDailyAmount = Math.max(1, ...workspace.dailyRows.map(item => item.amount));
   const selectedDate = filters.date >= workspace.range.from && filters.date <= workspace.range.to
     ? filters.date
     : '';
   const selectedTransactions = selectedDate
     ? workspace.scoped.filter(transaction => transaction.date === selectedDate)
     : [];
-  const periodTabs = [['week', '近 7 天'], ['month', '本月'], ['year', '本年']]
+  const periodTabs = [['week', '本週'], ['month', '本月'], ['year', '本年']]
     .map(([value, label]) => `<button type="button" data-insight-period="${value}" aria-pressed="${period === value}">${label}</button>`)
     .join('');
-  const dailyButtons = daysInRange(workspace.range.from, workspace.range.to).map(date => {
+  const dateButton = (date, className, label) => {
     const amount = dailyByDate.get(date) || 0;
-    const height = amount ? Math.max(8, Math.round((amount / maxDailyAmount) * 100)) : 2;
-    return `<button type="button" class="analysis-day-cell ${selectedDate === date ? 'active' : ''}" data-insight-date="${date}" aria-pressed="${selectedDate === date}" aria-label="${formatDate(date)} 支出 ${formatMoney(amount)}"><span>${formatDate(date)}</span><i style="height:${height}%"></i></button>`;
-  }).join('');
+    const selected = selectedDate === date;
+    const todayClass = date === today ? ' analysis-period-today' : '';
+    return `<button type="button" class="${className}${selected ? ' analysis-period-selected' : ''}${todayClass}" data-insight-date="${date}" aria-pressed="${selected}" aria-label="${formatDate(date)} 支出 ${formatMoney(amount)}">${label}</button>`;
+  };
+  const weekDays = daysInRange(workspace.range.from, workspace.range.to)
+    .map((date, index) => {
+      const amount = dailyByDate.get(date) || 0;
+      return dateButton(date, 'analysis-week-cell', `<span>${['日', '一', '二', '三', '四', '五', '六'][index]}</span><strong>${Number(date.slice(8))}</strong>${amount ? '<i></i>' : ''}`);
+    })
+    .join('');
+  const calendarDates = (() => {
+    const first = new Date(`${month}-01T00:00:00Z`);
+    const count = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+    const cells = [
+      ...Array(first.getUTCDay()).fill(''),
+      ...Array.from({ length: count }, (_, index) => `${month}-${String(index + 1).padStart(2, '0')}`),
+    ];
+    while (cells.length % 7) cells.push('');
+    return cells;
+  })();
+  const calendarCells = calendarDates
+    .map(date => {
+      if (!date) return '<span class="analysis-cal-empty" aria-hidden="true"></span>';
+      const amount = dailyByDate.get(date) || 0;
+      return dateButton(date, 'analysis-cal-cell', `<strong>${Number(date.slice(8))}</strong><small>${amount ? formatCompactMoney(amount) : ''}</small>`);
+    })
+    .join('');
+  const yearMonths = workspace.monthRows
+    .map(item => {
+      const monthNumber = Number(item.month.slice(5));
+      return `<button type="button" class="analysis-year-mo" data-insight-month="${item.month}" aria-label="${monthNumber} 月支出 ${formatMoney(item.amount)}"><span>${monthNumber} 月</span><strong>${item.amount ? formatCompactMoney(item.amount) : '—'}</strong></button>`;
+    })
+    .join('');
+  const periodLabel = period === 'week'
+    ? workspace.range.label
+    : period === 'month'
+      ? monthLabel(month)
+      : `${workspace.range.from.slice(0, 4)} 年`;
+  const periodContent = period === 'week'
+    ? `<div class="analysis-week-strip" role="group" aria-label="本週各日">${weekDays}</div>`
+    : period === 'month'
+      ? `<div class="analysis-cal-weekdays" aria-hidden="true"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div><div class="analysis-cal-grid" role="grid" aria-label="月曆，點選單日">${calendarCells}</div>`
+      : `<div class="analysis-year-months" role="group" aria-label="各月支出">${yearMonths}</div>`;
+  const categoryColors = ['#236b56', '#d96545', '#c28724', '#71896b', '#7a6b96', '#4d7c9a', '#9b5b76', '#7b7e51'];
+  let angle = 0;
+  const pieStops = workspace.categoryRows.slice(0, 8).map((item, index) => {
+    const start = angle;
+    angle += item.percent;
+    return `${categoryColors[index]} ${start}% ${angle}%`;
+  });
+  const pieStyle = pieStops.length ? `background:conic-gradient(${pieStops.join(', ')})` : '';
+  const categoryLegend = workspace.categoryRows.length
+    ? workspace.categoryRows.slice(0, 8).map((item, index) => `<div class="analysis-legend-row"><i style="background:${categoryColors[index]}"></i>${categoryMark(item.category)}<strong>${escapeHtml(item.category)}</strong><small>${item.percent}%</small><b>${formatCompactMoney(item.amount)}</b></div>`).join('')
+    : emptyState('本期沒有支出');
   return `<section class="view insights-view" aria-labelledby="insights-title">
-    <div class="page-heading"><div><p class="eyebrow">${workspace.range.label}</p><h1 id="insights-title">趨勢</h1></div></div>
-    <section class="analysis-workspace panel">
+    <h1 id="insights-title" class="visually-hidden">趨勢</h1>
+    <section class="daily-analysis-shell">
       <div class="analysis-tabs" role="group" aria-label="分析區間">${periodTabs}</div>
-      <div class="analysis-period-nav">
+      <div id="trend-chart" class="analysis-period-nav analysis-period-nav--${period}">
         <button type="button" data-insight-shift="-1" aria-label="上一期">‹</button>
-        <strong>${period === 'week' ? workspace.range.label : monthLabel(month)}</strong>
+        <strong>${periodLabel}</strong>
         <button type="button" data-insight-shift="1" aria-label="下一期">›</button>
+        ${periodContent}
       </div>
-      <div class="analysis-overview">
-        <div><span>支出</span><strong>${formatMoney(workspace.totals.expense)}</strong><small>${workspace.expenseTransactions.length} 筆</small></div>
-        <div><span>收入</span><strong>${formatMoney(workspace.totals.income)}</strong><small>結餘 ${formatMoney(workspace.totals.income - workspace.totals.expense, { showPlus: true })}</small></div>
+      <div class="daily-analysis-overview" aria-label="收支摘要">
+        <div class="daily-analysis-total"><span>支出</span><strong>${formatMoney(workspace.totals.expense)}</strong><small>${workspace.expenseTransactions.length} 筆</small></div>
+        <div class="daily-analysis-metrics"><div><span>收入</span><strong>${formatMoney(workspace.totals.income)}</strong></div><div><span>結餘</span><strong class="${workspace.totals.income - workspace.totals.expense < 0 ? 'negative' : ''}">${formatMoney(workspace.totals.income - workspace.totals.expense, { showPlus: true })}</strong></div></div>
       </div>
-      <section class="analysis-section">
-        <div class="analysis-section-head"><strong>每日支出</strong><small>點日期看明細</small></div>
-        <div id="trend-chart" class="analysis-day-strip" role="group" aria-label="每日支出">${dailyButtons}</div>
+      <section class="daily-analysis-insights" aria-label="分析重點">
+        <div class="daily-analysis-section-head"><strong>分析重點</strong><small>${periodLabel}</small></div>
+        <div class="daily-analysis-insight-list">${workspace.insights.map(item => `<div><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></div>`).join('')}</div>
       </section>
-      <section class="analysis-section">
-        <div class="analysis-section-head"><strong>支出分類</strong><small>${formatMoney(workspace.totals.expense)}</small></div>
-        <div class="analysis-category-list">${workspace.categoryRows.length ? workspace.categoryRows.map(item => `<div class="analysis-category-row">${categoryMark(item.category)}<div><span><strong>${escapeHtml(item.category)}</strong><small>${item.percent}%</small></span><i><b style="width:${Math.max(4, item.percent)}%"></b></i></div><strong>${formatCompactMoney(item.amount)}</strong></div>`).join('') : emptyState('本期沒有支出')}</div>
+      <section class="daily-analysis-breakdown" aria-label="分類支出">
+        <div class="daily-analysis-section-head"><strong>分類支出</strong><small>${formatMoney(workspace.totals.expense)}</small></div>
+        <div class="daily-analysis-breakdown-body"><div class="analysis-donut" style="${pieStyle}"><div><span>支出</span><strong>${formatCompactMoney(workspace.totals.expense)}</strong></div></div><div class="daily-analysis-legend">${categoryLegend}</div></div>
       </section>
-      <section class="analysis-section analysis-key-points">
-        ${workspace.insights.map(item => `<div><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></div>`).join('')}
-      </section>
-      ${selectedDate ? `<section class="analysis-section analysis-day-detail"><div class="analysis-section-head"><strong>${escapeHtml(formatDate(selectedDate))} 明細</strong><button type="button" data-insight-date="">清除</button></div><div class="transaction-list compact">${rowsForState(state, selectedTransactions)}</div></section>` : ''}
+      ${selectedDate ? `<section class="analysis-history-section"><div class="analysis-history-head"><div><strong>${escapeHtml(formatDate(selectedDate))}</strong><span>當日明細</span></div><button type="button" data-insight-date="">顯示整段</button></div><div class="transaction-list compact">${rowsForState(state, selectedTransactions)}</div></section>` : ''}
     </section>
   </section>`;
 }

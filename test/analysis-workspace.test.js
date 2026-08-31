@@ -3,7 +3,7 @@ import { analysisRange, buildAnalysisWorkspace } from '../src/domain/analysis-wo
 
 describe('分析工作台', () => {
   it('可建立週、月、年範圍', () => {
-    expect(analysisRange('week', '2026-08', '2026-08-31')).toEqual({ from: '2026-08-25', to: '2026-08-31', label: '近 7 天' });
+    expect(analysisRange('week', '2026-08', '2026-08-31')).toEqual({ from: '2026-08-30', to: '2026-09-05', label: '08/30～09/05' });
     expect(analysisRange('month', '2026-02', '2026-08-31')).toEqual({ from: '2026-02-01', to: '2026-02-28', label: '2026-02' });
     expect(analysisRange('year', '2026-08', '2026-08-31')).toEqual({ from: '2026-01-01', to: '2026-12-31', label: '2026 年' });
   });
@@ -31,5 +31,27 @@ describe('分析工作台', () => {
     expect(model.categoryRows).toEqual([]);
     expect(model.insights.map(item => item.value)).toEqual(['尚無支出', '尚無可比較資料', '尚無資料']);
     expect(buildAnalysisWorkspace(undefined, { period: 'week', selectedMonth: '2026-03', today: '2026-03-04' }).scoped).toEqual([]);
+  });
+
+  it('年度視圖只彙總 12 個月份，不建立 365 個日格', () => {
+    const model = buildAnalysisWorkspace([
+      { type: 'expense', amount: 300, category: '飲食', name: '午餐', date: '2026-01-05' },
+      { type: 'expense', amount: 80, category: '交通', name: '捷運', date: '2026-08-31' },
+    ], { period: 'year', selectedMonth: '2026-08', today: '2026-08-31' });
+    expect(model.monthRows).toHaveLength(12);
+    expect(model.monthRows[0]).toEqual({ month: '2026-01', amount: 300 });
+    expect(model.monthRows[7]).toEqual({ month: '2026-08', amount: 80 });
+    expect(model.monthRows[11]).toEqual({ month: '2026-12', amount: 0 });
+  });
+
+  it('不完整的交易仍會保留在安全的預設分類與年度彙總中', () => {
+    const model = buildAnalysisWorkspace([
+      { type: 'expense', date: '2026-02-03', amount: undefined, category: '', name: '' },
+      { type: 'expense', date: '2026-02-04', amount: 40, category: '', name: '' },
+    ], { period: 'year', selectedMonth: '2026-08', today: '2026-08-31' });
+
+    expect(model.categoryRows).toEqual([{ category: '其他', amount: 40, percent: 100 }]);
+    expect(model.monthRows[1]).toEqual({ month: '2026-02', amount: 40 });
+    expect(model.insights[2].value).toBe('未命名 · 40');
   });
 });

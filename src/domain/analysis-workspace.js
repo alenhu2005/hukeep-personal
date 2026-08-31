@@ -20,9 +20,20 @@ function addDays(value, days) {
   return dateText(date);
 }
 
+function weekStart(value) {
+  const date = dateFromText(value);
+  if (!date) return '';
+  date.setUTCDate(date.getUTCDate() - date.getUTCDay());
+  return dateText(date);
+}
+
 export function analysisRange(period, selectedMonth, today) {
   const month = /^\d{4}-\d{2}$/.test(selectedMonth) ? selectedMonth : today.slice(0, 7);
-  if (period === 'week') return { from: addDays(today, -6), to: today, label: '近 7 天' };
+  if (period === 'week') {
+    const from = weekStart(today);
+    const to = addDays(from, 6);
+    return { from, to, label: `${from.slice(5).replace('-', '/')}～${to.slice(5).replace('-', '/')}` };
+  }
   if (period === 'year') {
     const year = month.slice(0, 4);
     return { from: `${year}-01-01`, to: `${year}-12-31`, label: `${year} 年` };
@@ -50,7 +61,8 @@ function compareRange(range) {
 }
 
 export function buildAnalysisWorkspace(transactions, options) {
-  const range = analysisRange(options?.period, options?.selectedMonth, options?.today);
+  const period = options?.period;
+  const range = analysisRange(period, options?.selectedMonth, options?.today);
   const scoped = (transactions || []).filter(transaction => inRange(transaction, range));
   const expenseTransactions = scoped.filter(transaction => transaction.type === 'expense');
   const totalsNow = totals(scoped);
@@ -76,6 +88,17 @@ export function buildAnalysisWorkspace(transactions, options) {
   )
     .map(([date, amount]) => ({ date, amount }))
     .toSorted((left, right) => left.date.localeCompare(right.date));
+  const monthRows = period === 'year'
+    ? Array.from({ length: 12 }, (_, index) => {
+        const month = `${range.from.slice(0, 4)}-${String(index + 1).padStart(2, '0')}`;
+        return {
+          month,
+          amount: expenseTransactions
+            .filter(transaction => transaction.date.slice(0, 7) === month)
+            .reduce((sum, transaction) => sum + (Number(transaction.amount) || 0), 0),
+        };
+      })
+    : [];
   const largest = expenseTransactions
     .map(transaction => ({ name: transaction.name, amount: Number(transaction.amount) || 0, date: transaction.date }))
     .toSorted((left, right) => right.amount - left.amount)[0] || null;
@@ -96,6 +119,7 @@ export function buildAnalysisWorkspace(transactions, options) {
     previousTotals,
     categoryRows,
     dailyRows,
+    monthRows,
     largest,
     insights,
   };

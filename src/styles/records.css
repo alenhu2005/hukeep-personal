@@ -20,11 +20,6 @@
   border-bottom: 0;
 }
 
-.transaction-row[data-attention='true'] {
-  padding-left: 7px;
-  border-left: 2px solid var(--amber);
-}
-
 .transaction-summary,
 .transaction-copy,
 .transaction-amount {

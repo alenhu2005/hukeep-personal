@@ -27,6 +27,21 @@ describe('交易列表', () => {
     expect(html).toContain('飲食 · 咖啡 · 8/29');
     expect(html).not.toContain('<b>星巴克</b>');
   });
+
+  it('不在交易卡片標示背景異常或重複判斷', () => {
+    const html = transactionRows([
+      {
+        id: 'tx-attention', type: 'expense', amount: 30010,
+        category: '學習', subcategory: '課程', account: 'post', date: '2026-08-30', name: '學費', note: '',
+      },
+    ], [{ id: 'post', name: '郵局' }], {
+      signals: { duplicates: new Map([['tx-attention', '可能重複']]), anomalies: new Map([['tx-attention', '金額異常']]) },
+    });
+
+    expect(html).not.toContain('金額異常');
+    expect(html).not.toContain('可能重複');
+    expect(html).not.toContain('data-attention');
+  });
 });
 
 describe('總覽', () => {

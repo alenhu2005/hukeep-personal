@@ -63,6 +63,13 @@ function shiftMonth(month, offset) {
   return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}`;
 }
 
+function shiftDate(dateText, offset) {
+  const date = new Date(`${dateText}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return todayInTaipei();
+  date.setUTCDate(date.getUTCDate() + offset);
+  return date.toISOString().slice(0, 10);
+}
+
 function downloadText(filename, text, type) {
   const url = URL.createObjectURL(new Blob([text], { type }));
   const link = document.createElement('a');
@@ -115,7 +122,7 @@ export function createApp() {
   let view = safeViewFromHash();
   let selectedMonth = todayInTaipei().slice(0, 7);
   let historyFilters = { query: '', type: '', account: '', preset: 'all' };
-  let insightFilters = { period: 'month', date: '' };
+  let insightFilters = { period: 'month', date: '', anchorDate: todayInTaipei() };
   let toastTimer = null;
   let smartImportController = null;
   let classificationReady = false;
@@ -821,13 +828,32 @@ export function createApp() {
     const target = event.target.closest('button');
     if (!target) return;
     if (target.dataset.insightPeriod) {
-      insightFilters = { period: target.dataset.insightPeriod, date: '' };
+      insightFilters = {
+        period: target.dataset.insightPeriod,
+        date: '',
+        anchorDate: insightFilters.anchorDate || todayInTaipei(),
+      };
       render();
       return;
     }
     if (target.dataset.insightShift) {
-      selectedMonth = shiftMonth(selectedMonth, Number(target.dataset.insightShift));
-      insightFilters = { ...insightFilters, date: '' };
+      const offset = Number(target.dataset.insightShift);
+      if (insightFilters.period === 'week') {
+        insightFilters = {
+          ...insightFilters,
+          date: '',
+          anchorDate: shiftDate(insightFilters.anchorDate || todayInTaipei(), offset * 7),
+        };
+      } else {
+        selectedMonth = shiftMonth(selectedMonth, insightFilters.period === 'year' ? offset * 12 : offset);
+        insightFilters = { ...insightFilters, date: '' };
+      }
+      render();
+      return;
+    }
+    if (target.dataset.insightMonth) {
+      selectedMonth = target.dataset.insightMonth;
+      insightFilters = { period: 'month', date: '', anchorDate: todayInTaipei() };
       render();
       return;
     }
