@@ -6,7 +6,7 @@ export class ValidationError extends Error {
 }
 
 const VALID_TYPES = new Set(['expense', 'income', 'transfer']);
-const VALID_SOURCES = new Set(['manual', 'ocr', 'carrier', 'voice']);
+const VALID_SOURCES = new Set(['manual', 'ocr', 'carrier', 'voice', 'recurring']);
 const MAX_ID_LENGTH = 80;
 const MAX_TIMESTAMP_LENGTH = 40;
 
@@ -108,6 +108,9 @@ function normalizeOptionalMetadata(input) {
   const aiStatus = cleanBoundedText(input?.aiStatus, 24);
   const aiReviewedAt = cleanBoundedText(input?.aiReviewedAt, MAX_TIMESTAMP_LENGTH);
   const rawTranscript = cleanBoundedText(input?.rawTranscript, 240);
+  const groupId = cleanBoundedText(input?.groupId, 80);
+  const receiptId = cleanBoundedText(input?.receiptId, 160);
+  const receiptName = cleanBoundedText(input?.receiptName, 160);
   const ocrConfidence = Number(input?.ocrConfidence);
 
   if (input?.type !== 'transfer' && subcategory) metadata.subcategory = subcategory;
@@ -120,6 +123,20 @@ function normalizeOptionalMetadata(input) {
   if (aiStatus) metadata.aiStatus = aiStatus;
   if (aiReviewedAt) metadata.aiReviewedAt = aiReviewedAt;
   if (rawTranscript) metadata.rawTranscript = rawTranscript;
+  if (groupId) metadata.groupId = groupId;
+  if (receiptId) metadata.receiptId = receiptId;
+  if (receiptName) metadata.receiptName = receiptName;
+  if (Array.isArray(input?.aiChanges)) {
+    const aiChanges = input.aiChanges
+      .slice(0, 12)
+      .flatMap(change => {
+        const field = cleanBoundedText(change?.field, 40);
+        const before = cleanBoundedText(change?.before, 120);
+        const after = cleanBoundedText(change?.after, 120);
+        return field && before !== after ? [{ field, before, after }] : [];
+      });
+    if (aiChanges.length) metadata.aiChanges = aiChanges;
+  }
   if (Number.isFinite(ocrConfidence)) {
     metadata.ocrConfidence = Math.min(1, Math.max(0, ocrConfidence));
   }

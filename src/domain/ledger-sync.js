@@ -35,6 +35,9 @@ export function mergeLedgerStates(local, remote) {
       ? remote.budgets.map(budget => ({ ...budget }))
       : (local?.budgets ?? []).map(budget => ({ ...budget })),
     preferences: { ...(local?.preferences ?? {}) },
+    featureSettings: remote?.featureSettings
+      ? { ...remote.featureSettings }
+      : { ...(local?.featureSettings ?? {}) },
   };
 }
 
@@ -115,7 +118,7 @@ function reconcileEntities(localItems, remoteItems, pending, keyOf) {
 }
 
 export function hasPendingSheetChanges(value) {
-  return [
+  const coreChanges = [
     value?.upserts,
     value?.deletes,
     value?.accountUpserts,
@@ -123,6 +126,7 @@ export function hasPendingSheetChanges(value) {
     value?.budgetUpserts,
     value?.budgetDeletes,
   ].some(items => entityIds(items).length > 0);
+  return coreChanges || Boolean(value?.features);
 }
 
 export function updatePendingSheetChanges(current, beforeState, afterState) {
@@ -177,6 +181,10 @@ export function updatePendingSheetChanges(current, beforeState, afterState) {
     accountDeletes: accounts.deletes,
     budgetUpserts: budgets.upserts,
     budgetDeletes: budgets.deletes,
+    features: Boolean(current?.features) || transactionChanged(
+      beforeState?.featureSettings ?? {},
+      afterState?.featureSettings ?? {},
+    ),
   };
 }
 
@@ -216,5 +224,10 @@ export function reconcileLedgerFromSheet(local, remote, pendingChanges = {}) {
       deletes: pendingChanges?.budgetDeletes,
     }, budget => String(budget?.category ?? '').trim()),
     preferences: { ...(local?.preferences ?? {}) },
+    featureSettings: pendingChanges?.features
+      ? { ...(local?.featureSettings ?? {}) }
+      : remote?.featureSettings
+        ? { ...remote.featureSettings }
+        : { ...(local?.featureSettings ?? {}) },
   };
 }

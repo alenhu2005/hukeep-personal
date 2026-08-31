@@ -208,6 +208,41 @@
   grid-template-columns: minmax(300px, 0.8fr) minmax(0, 1.2fr);
 }
 
+.operations-panel {
+  margin-top: 14px;
+}
+
+.operation-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.operation-actions button {
+  display: flex;
+  min-height: 48px;
+  padding: 9px 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-strong);
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.operation-actions button:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.operation-actions strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+
 .panel {
   padding: 18px;
   border: 1px solid var(--line);

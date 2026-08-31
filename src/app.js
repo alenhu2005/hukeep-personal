@@ -16,8 +16,14 @@ import {
   updatePendingSheetChanges,
 } from './domain/ledger-sync.js';
 import {
+  applyRecurringRules,
+  createMonthlySnapshot,
+  normalizeFeatureSettings,
+} from './domain/ledger-enhancements.js';
+import {
   ValidationError,
   createTransaction,
+  filterTransactions,
   normalizeStoredTransaction,
   removeTransaction,
   updateTransaction,
@@ -25,6 +31,7 @@ import {
 import { escapeHtml, formatMoney, monthLabel, todayInTaipei } from './format.js';
 import { hydrateIcons, icon } from './icons.js';
 import { createLedgerRepository } from './storage/ledger-repository.js';
+import { readReceiptUrl, removeReceipt } from './storage/receipt-store.js';
 import { createSmartImportController } from './smart-import-controller.js';
 import {
   claimDevicePairingCode,
@@ -107,7 +114,8 @@ export function createApp() {
   let state = repository.load();
   let view = safeViewFromHash();
   let selectedMonth = todayInTaipei().slice(0, 7);
-  let historyFilters = { query: '', type: '', account: '' };
+  let historyFilters = { query: '', type: '', account: '', preset: 'all' };
+  let insightFilters = { period: 'month', date: '' };
   let toastTimer = null;
   let smartImportController = null;
   let classificationReady = false;
@@ -118,6 +126,7 @@ export function createApp() {
   let lastSheetPullAt = 0;
   let pendingSheetSyncTimer = null;
   let deviceBindingLink = '';
+  let activeReceiptUrl = '';
 
   const main = document.querySelector('#app-main');
   const transactionDialog = document.querySelector('#transaction-dialog');
@@ -232,6 +241,7 @@ export function createApp() {
         accountDeletes: Array.isArray(value?.accountDeletes) ? value.accountDeletes : [],
         budgetUpserts: Array.isArray(value?.budgetUpserts) ? value.budgetUpserts : [],
         budgetDeletes: Array.isArray(value?.budgetDeletes) ? value.budgetDeletes : [],
+        features: Boolean(value?.features),
       };
     } catch {
       return {
@@ -241,6 +251,7 @@ export function createApp() {
         accountDeletes: [],
         budgetUpserts: [],
         budgetDeletes: [],
+        features: false,
       };
     }
   }
@@ -341,6 +352,32 @@ export function createApp() {
     }
   }
 
+  function applyDueRecurringTransactions() {
+    const featureSettings = normalizeFeatureSettings(state.featureSettings);
+    const { created } = applyRecurringRules(
+      featureSettings.recurringRules,
+      state.transactions,
+      todayInTaipei(),
+    );
+    if (!created.length) return false;
+    return persist({ ...state, featureSettings, transactions: [...state.transactions, ...created] });
+  }
+
+  function captureCompletedMonthSnapshot() {
+    const [year, month] = todayInTaipei().slice(0, 7).split('-').map(Number);
+    const completedMonth = shiftMonth(`${year}-${String(month).padStart(2, '0')}`, -1);
+    const featureSettings = normalizeFeatureSettings(state.featureSettings);
+    if (featureSettings.monthlySnapshots.some(snapshot => snapshot.month === completedMonth)) return false;
+    const snapshot = createMonthlySnapshot(state, completedMonth);
+    return persist({
+      ...state,
+      featureSettings: {
+        ...featureSettings,
+        monthlySnapshots: [...featureSettings.monthlySnapshots, snapshot],
+      },
+    });
+  }
+
   function showToast(message, tone = 'default', action = null) {
     clearTimeout(toastTimer);
     toast.className = `toast ${tone}`;
@@ -363,7 +400,7 @@ export function createApp() {
   }
 
   function render(options = {}) {
-    main.innerHTML = renderView(view, state, selectedMonth, historyFilters);
+    main.innerHTML = renderView(view, state, selectedMonth, historyFilters, { insightFilters });
     document.querySelector('#month-title').textContent = monthLabel(selectedMonth);
     document.querySelectorAll('[data-nav-view]').forEach(button => {
       const active = button.dataset.navView === view;
@@ -477,8 +514,9 @@ export function createApp() {
     if (transaction?.toAccount) updateDestinationAccounts(transaction.toAccount);
     document.querySelector('#transaction-dialog-title').textContent = transaction ? '編輯這筆' : '記一筆';
     document.querySelector('#voice-transcript').value = '';
-    document.querySelector('#voice-status').textContent =
-      '用鍵盤麥克風輸入後直接送出；Sheet 會先收到，AI 再從後台審查。';
+    const voiceStatus = document.querySelector('#voice-status');
+    voiceStatus.textContent = '';
+    voiceStatus.hidden = true;
     transactionDialog.showModal();
     requestAnimationFrame(() =>
       (transaction ? transactionForm.elements.name : document.querySelector('#voice-transcript')).focus(),
@@ -550,19 +588,24 @@ export function createApp() {
     const credentials = proxySession();
     if (!credentials.endpoint || !credentials.proxyToken) {
       status.textContent = '這台裝置尚未綁定 Google Sheet，請先完成裝置授權。';
+      status.hidden = false;
       showToast('這台裝置尚未綁定 Sheet。', 'error');
       return;
     }
     const drafts = parseSpokenTransactions(transcript, { today: todayInTaipei() });
+    const groupId = drafts.length > 1
+      ? (globalThis.crypto?.randomUUID?.() || `voice-group-${Date.now()}`)
+      : '';
     button.disabled = true;
     setSyncStatus('syncing');
-    status.textContent = '正在上傳 Sheet…不需等待 AI 審查。';
+    status.hidden = true;
     try {
       const firstResult = await enqueueSpokenEntry({
         ...credentials,
         transcript,
         draft: drafts[0],
         drafts,
+        groupId,
       });
       // Older deployed GAS versions only consume the legacy `draft` field and
       // therefore return one transaction even when the web app has detected
@@ -584,6 +627,7 @@ export function createApp() {
             transcript: itemTranscript,
             draft,
             drafts: [draft],
+            groupId,
           });
           return [...results, result];
         },
@@ -613,6 +657,7 @@ export function createApp() {
       );
     } catch (error) {
       status.textContent = error.message;
+      status.hidden = false;
       setSyncStatus('error', { detail: `Sheet 上傳失敗：${error.message}` });
       showToast(error.message, 'error');
     } finally {
@@ -667,6 +712,11 @@ export function createApp() {
     }
     if (!persist({ ...state, transactions: removeTransaction(state.transactions, id) })) return;
     acknowledgePendingTransactionDelete(id);
+    if (transaction.receiptId) {
+      void removeReceipt(transaction.receiptId).catch(() => {
+        // The Sheet deletion succeeded; an unavailable local image must not block it.
+      });
+    }
     rememberProxySession(credentials.endpoint, credentials.proxyToken);
     rememberSuccessfulSync();
     render();
@@ -721,6 +771,10 @@ export function createApp() {
       ? `${accounts[transaction.account] || transaction.account} → ${accounts[transaction.toAccount] || transaction.toAccount}`
       : accounts[transaction.account] || transaction.account;
     const amount = `${transaction.type === 'expense' ? '-' : transaction.type === 'income' ? '+' : ''}${formatMoney(transaction.amount)}`;
+    const aiChanges = Array.isArray(transaction.aiChanges) ? transaction.aiChanges : [];
+    const groupCount = transaction.groupId
+      ? state.transactions.filter(item => item.groupId === transaction.groupId).length
+      : 0;
     const detailDialog = document.querySelector('#transaction-detail-dialog');
     detailDialog.querySelector('#transaction-detail-title').textContent = transaction.name || '交易詳情';
     detailDialog.querySelector('#transaction-detail-content').innerHTML = `
@@ -730,15 +784,68 @@ export function createApp() {
         <div><dt>分類</dt><dd>${escapeHtml(category)}</dd></div>
         <div><dt>帳戶</dt><dd>${escapeHtml(account)}</dd></div>
         <div><dt>備註</dt><dd>${escapeHtml(transaction.note || '—')}</dd></div>
+        ${transaction.fee ? `<div><dt>轉帳手續費</dt><dd>${escapeHtml(formatMoney(transaction.fee))}</dd></div>` : ''}
+        ${groupCount > 1 ? `<div><dt>同段記帳</dt><dd>${groupCount} 筆</dd></div>` : ''}
+        <div><dt>AI 審查</dt><dd>${escapeHtml(transaction.aiStatus === 'reviewed' ? '已審查' : transaction.aiStatus === 'pending' ? '待審查' : '—')}</dd></div>
+        ${aiChanges.length ? `<div><dt>AI 修正</dt><dd>${aiChanges.map(change => `${escapeHtml(change.field)}：${escapeHtml(change.before)} → ${escapeHtml(change.after)}`).join('<br />')}</dd></div>` : ''}
+        ${transaction.userEditedAt ? `<div><dt>人工鎖定</dt><dd>已手動修改，AI 不會覆寫</dd></div>` : ''}
+        ${transaction.receiptName ? `<div><dt>收據截圖</dt><dd><span>${escapeHtml(transaction.receiptName)}</span><div id="transaction-receipt-preview" data-receipt-id="${escapeHtml(transaction.receiptId || '')}">載入中…</div></dd></div>` : ''}
         <div><dt>建立時間</dt><dd>${escapeHtml(formatDetailTimestamp(transaction.createdAt))}</dd></div>
         <div><dt>最後更新</dt><dd>${escapeHtml(formatDetailTimestamp(transaction.updatedAt))}</dd></div>
       </dl>`;
     detailDialog.showModal();
+    if (transaction.receiptId) {
+      void readReceiptUrl(transaction.receiptId)
+        .then(url => {
+          const preview = detailDialog.querySelector('#transaction-receipt-preview');
+          if (!preview || preview.dataset.receiptId !== transaction.receiptId) return;
+          if (!url) {
+            preview.textContent = '此收據只保存在原本上傳的裝置。';
+            return;
+          }
+          if (activeReceiptUrl) URL.revokeObjectURL(activeReceiptUrl);
+          activeReceiptUrl = url;
+          preview.replaceChildren(Object.assign(document.createElement('img'), {
+            src: url,
+            alt: transaction.receiptName || '收據截圖',
+          }));
+        })
+        .catch(() => {
+          const preview = detailDialog.querySelector('#transaction-receipt-preview');
+          if (preview) preview.textContent = '無法載入收據截圖。';
+        });
+    }
   }
 
   function handleMainClick(event) {
     const target = event.target.closest('button');
     if (!target) return;
+    if (target.dataset.insightPeriod) {
+      insightFilters = { period: target.dataset.insightPeriod, date: '' };
+      render();
+      return;
+    }
+    if (target.dataset.insightShift) {
+      selectedMonth = shiftMonth(selectedMonth, Number(target.dataset.insightShift));
+      insightFilters = { ...insightFilters, date: '' };
+      render();
+      return;
+    }
+    if (Object.hasOwn(target.dataset, 'insightDate')) {
+      insightFilters = { ...insightFilters, date: target.dataset.insightDate || '' };
+      render();
+      return;
+    }
+    if (target.dataset.historyPreset) {
+      historyFilters = { ...historyFilters, preset: target.dataset.historyPreset };
+      if (target.dataset.goView) {
+        navigate(target.dataset.goView);
+      } else {
+        render();
+        requestAnimationFrame(() => main.querySelector(`[data-history-preset="${target.dataset.historyPreset}"]`)?.focus());
+      }
+      return;
+    }
     if (target.dataset.historyFilter) {
       const key = target.dataset.historyFilter;
       const value = target.dataset.historyValue || '';
@@ -779,6 +886,7 @@ export function createApp() {
       query: document.querySelector('#history-search')?.value || '',
       type: historyFilters.type,
       account: historyFilters.account,
+      preset: historyFilters.preset,
     };
     render();
     if (event.target.id === 'history-search') {
@@ -806,7 +914,15 @@ export function createApp() {
     if (format === 'json') {
       downloadText(`hukeep-personal-${date}.json`, serializeBackup(state), 'application/json');
     } else {
-      downloadText(`hukeep-personal-${date}.csv`, transactionsToCsv(state.transactions), 'text/csv;charset=utf-8');
+      const monthly = format === 'month-csv';
+      const transactions = monthly
+        ? filterTransactions(state.transactions, { month: selectedMonth })
+        : state.transactions;
+      downloadText(
+        `hukeep-personal-${monthly ? selectedMonth : date}.csv`,
+        transactionsToCsv(transactions),
+        'text/csv;charset=utf-8',
+      );
     }
     showToast('備份已開始下載。');
   }
@@ -834,7 +950,142 @@ export function createApp() {
         account => `<label><span>${escapeHtml(account.name)}初始金額</span><input name="${escapeHtml(account.id)}" type="number" step="1" inputmode="numeric" value="${account.openingBalance}" required /></label>`,
       )
       .join('');
+    const recurringForm = document.querySelector('#recurring-rule-form');
+    const reconciliationForm = document.querySelector('#reconciliation-form');
+    const accountOptionsHtml = state.accounts
+      .map(account => `<option value="${escapeHtml(account.id)}">${escapeHtml(account.name)}</option>`)
+      .join('');
+    recurringForm.elements.account.innerHTML = accountOptionsHtml;
+    recurringForm.elements.toAccount.innerHTML = accountOptionsHtml;
+    if (!recurringForm.elements.startDate.value) recurringForm.elements.startDate.value = todayInTaipei();
+    configureRecurringFields();
+    reconciliationForm.elements.accountId.innerHTML = accountOptionsHtml;
+    if (!reconciliationForm.elements.date.value) reconciliationForm.elements.date.value = todayInTaipei();
+    renderRecurringRules();
+    renderReconciliations();
+    updateSyncHealthStatus();
     updateDeviceBindingStatus();
+  }
+
+  function configureRecurringFields() {
+    const form = document.querySelector('#recurring-rule-form');
+    const type = form.elements.type.value;
+    const transfer = type === 'transfer';
+    const categories = type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+    form.querySelector('.recurring-category').hidden = transfer;
+    form.querySelector('.recurring-to-account').hidden = !transfer;
+    form.querySelector('.recurring-fee').hidden = !transfer;
+    form.elements.category.required = !transfer;
+    form.elements.toAccount.required = transfer;
+    form.elements.category.innerHTML = transfer
+      ? ''
+      : categories.map(category => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`).join('');
+    [...form.elements.toAccount.options].forEach(option => {
+      option.disabled = option.value === form.elements.account.value;
+    });
+    if (form.elements.toAccount.value === form.elements.account.value) {
+      form.elements.toAccount.value = state.accounts.find(account => account.id !== form.elements.account.value)?.id || '';
+    }
+  }
+
+  function renderRecurringRules() {
+    const list = document.querySelector('#recurring-rule-list');
+    const rules = normalizeFeatureSettings(state.featureSettings).recurringRules;
+    list.innerHTML = rules.length
+      ? rules.map(rule => `<article><div><strong>${escapeHtml(rule.name)}</strong><span>${escapeHtml(rule.cadence === 'weekly' ? '每週' : `每月 ${rule.day} 日`)} · ${formatMoney(rule.amount)}</span></div><button type="button" data-remove-recurring="${escapeHtml(rule.id)}" aria-label="刪除 ${escapeHtml(rule.name)}">×</button></article>`).join('')
+      : '<p class="settings-empty">尚未設定固定流水。</p>';
+  }
+
+  function renderReconciliations() {
+    const list = document.querySelector('#reconciliation-list');
+    const accounts = Object.fromEntries(state.accounts.map(account => [account.id, account]));
+    const reconciliations = normalizeFeatureSettings(state.featureSettings).reconciliations
+      .toSorted((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
+    list.innerHTML = reconciliations.length
+      ? reconciliations.slice(0, 10).map(item => `<article><div><strong>${escapeHtml(accounts[item.accountId]?.name || item.accountId)} · ${escapeHtml(item.date)}</strong><span>實際 ${formatMoney(item.actualBalance)}${item.note ? ` · ${escapeHtml(item.note)}` : ''}</span></div></article>`).join('')
+      : '<p class="settings-empty">尚未儲存對帳結果。</p>';
+  }
+
+  function updateSyncHealthStatus() {
+    const status = document.querySelector('#sync-health-status');
+    if (!status) return;
+    const pending = readPendingSheetChanges();
+    const queued = [pending.upserts, pending.deletes, pending.accountUpserts, pending.accountDeletes, pending.budgetUpserts, pending.budgetDeletes]
+      .reduce((sum, values) => sum + values.length, 0) + (pending.features ? 1 : 0);
+    const review = state.transactions.filter(transaction => transaction.aiStatus === 'pending').length;
+    status.textContent = `同步佇列 ${queued} 項 · AI 待審 ${review} 筆 · 切換頁面時會自動同步。`;
+  }
+
+  function saveRecurringRule(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = Object.fromEntries(new FormData(form));
+    const featureSettings = normalizeFeatureSettings(state.featureSettings);
+    const rule = {
+      ...values,
+      id: globalThis.crypto?.randomUUID?.() || `rule-${Date.now()}`,
+      amount: Number(values.amount),
+      day: Number(values.day),
+      fee: Number(values.fee || 0),
+      enabled: true,
+      createdAt: new Date().toISOString(),
+    };
+    const nextFeatures = normalizeFeatureSettings({
+      ...featureSettings,
+      recurringRules: [...featureSettings.recurringRules, rule],
+    });
+    if (nextFeatures.recurringRules.length !== featureSettings.recurringRules.length + 1) {
+      showToast('固定流水資料不完整，請檢查欄位。', 'error');
+      return;
+    }
+    if (!persist({ ...state, featureSettings: nextFeatures })) return;
+    applyDueRecurringTransactions();
+    form.reset();
+    form.elements.startDate.value = todayInTaipei();
+    configureToolsForms();
+    render();
+    showToast('固定流水已儲存。');
+  }
+
+  function saveReconciliation(event) {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.currentTarget));
+    const featureSettings = normalizeFeatureSettings(state.featureSettings);
+    const item = {
+      ...values,
+      id: globalThis.crypto?.randomUUID?.() || `reconcile-${Date.now()}`,
+      actualBalance: Number(values.actualBalance),
+      createdAt: new Date().toISOString(),
+    };
+    const nextFeatures = normalizeFeatureSettings({
+      ...featureSettings,
+      reconciliations: [...featureSettings.reconciliations, item],
+    });
+    if (nextFeatures.reconciliations.length !== featureSettings.reconciliations.length + 1) {
+      showToast('對帳資料不完整，請檢查帳戶、餘額與日期。', 'error');
+      return;
+    }
+    if (!persist({ ...state, featureSettings: nextFeatures })) return;
+    event.currentTarget.reset();
+    configureToolsForms();
+    render();
+    showToast('對帳結果已儲存。');
+  }
+
+  function removeRecurringRule(id) {
+    const featureSettings = normalizeFeatureSettings(state.featureSettings);
+    const rule = featureSettings.recurringRules.find(item => item.id === id);
+    if (!rule || !confirm(`確定要刪除固定流水「${rule.name}」嗎？已建立的交易會保留。`)) return;
+    if (!persist({
+      ...state,
+      featureSettings: {
+        ...featureSettings,
+        recurringRules: featureSettings.recurringRules.filter(item => item.id !== id),
+      },
+    })) return;
+    configureToolsForms();
+    render();
+    showToast('固定流水已刪除。');
   }
 
   function saveOpeningBalances(event) {
@@ -1037,6 +1288,7 @@ export function createApp() {
   });
   document.querySelector('#export-json').addEventListener('click', () => exportData('json'));
   document.querySelector('#export-csv').addEventListener('click', () => exportData('csv'));
+  document.querySelector('#export-month-csv').addEventListener('click', () => exportData('month-csv'));
   document.querySelector('#import-json').addEventListener('change', event => {
     const input = event.target;
     importData(input.files?.[0]).finally(() => {
@@ -1044,6 +1296,14 @@ export function createApp() {
     });
   });
   document.querySelector('#opening-balance-form').addEventListener('submit', saveOpeningBalances);
+  document.querySelector('#recurring-rule-form').addEventListener('submit', saveRecurringRule);
+  document.querySelector('#recurring-rule-form').elements.type.addEventListener('change', configureRecurringFields);
+  document.querySelector('#recurring-rule-form').elements.account.addEventListener('change', configureRecurringFields);
+  document.querySelector('#reconciliation-form').addEventListener('submit', saveReconciliation);
+  toolsDialog.addEventListener('click', event => {
+    const button = event.target.closest('[data-remove-recurring]');
+    if (button) removeRecurringRule(button.dataset.removeRecurring);
+  });
   document.querySelector('#sheet-sync-form').addEventListener('submit', syncSheet);
   document.querySelector('#sheet-load-button').addEventListener('click', loadSheet);
   document.querySelector('#sync-indicator').addEventListener('click', () => {
@@ -1054,6 +1314,10 @@ export function createApp() {
   document.querySelectorAll('.dialog-close').forEach(button =>
     button.addEventListener('click', () => button.closest('dialog').close()),
   );
+  document.querySelector('#transaction-detail-dialog').addEventListener('close', () => {
+    if (activeReceiptUrl) URL.revokeObjectURL(activeReceiptUrl);
+    activeReceiptUrl = '';
+  });
   transactionForm.addEventListener('submit', saveTransaction);
   transactionForm.addEventListener('click', event => {
     const button = event.target.closest('[data-transaction-type]');
@@ -1124,6 +1388,8 @@ export function createApp() {
   document.querySelector('#tools-button').innerHTML = icon('settings', 19);
   lastSheetPullAt = storedLastSyncAt();
   migrateLegacyBudgetChanges();
+  applyDueRecurringTransactions();
+  captureCompletedMonthSnapshot();
   setSyncStatus(lastSheetPullAt ? 'synced' : 'local', { lastAt: lastSheetPullAt });
   applyTheme();
   render();

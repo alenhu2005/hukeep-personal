@@ -78,6 +78,8 @@ export function invoiceToTransaction(invoice, options = {}) {
       invoiceNumber: invoice?.invoiceNumber,
       source: 'ocr',
       sourceId: options.sourceId,
+      receiptId: options.receiptId,
+      receiptName: options.receiptName,
       invoiceItems: invoice?.items,
       ocrConfidence: options.ocrConfidence,
     },

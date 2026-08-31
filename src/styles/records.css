@@ -20,6 +20,11 @@
   border-bottom: 0;
 }
 
+.transaction-row[data-attention='true'] {
+  padding-left: 7px;
+  border-left: 2px solid var(--amber);
+}
+
 .transaction-summary,
 .transaction-copy,
 .transaction-amount {
@@ -154,6 +159,22 @@
   color: var(--income);
 }
 
+#transaction-receipt-preview {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+#transaction-receipt-preview img {
+  display: block;
+  width: min(100%, 320px);
+  max-height: 360px;
+  margin-top: 8px;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
 .empty-state {
   display: grid;
   min-height: 150px;
@@ -229,6 +250,10 @@
   display: grid;
   gap: 5px;
   min-width: 0;
+}
+
+.history-preset-group {
+  grid-column: 1 / -1;
 }
 
 .history-filter-group > span {

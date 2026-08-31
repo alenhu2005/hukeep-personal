@@ -14,7 +14,7 @@ test('可新增收支、重新整理仍保留並透過歷史搜尋', async ({ pa
   await expect(page.getByRole('heading', { name: '總覽' })).toBeVisible();
 
   await page.getByRole('button', { name: '快速記一筆' }).click();
-  await page.getByText('需要手動輸入？展開詳細記帳').click();
+  await page.getByText('手動記帳', { exact: true }).click();
   const transactionForm = page.locator('#transaction-form');
   await expect(page.locator('#category-field')).toBeHidden();
   await expect(page.locator('#subcategory-field')).toBeHidden();
@@ -88,7 +88,7 @@ test('手機記帳移除多餘分類提示，且長對話框仍固定保留關�
   await page.getByRole('button', { name: '快速記一筆' }).click();
   await expect(page.locator('#classification-status')).toHaveCount(0);
   await expect(page.locator('#manual-entry')).not.toHaveAttribute('open', '');
-  await expect(page.getByText('需要手動輸入？展開詳細記帳')).toBeVisible();
+  await expect(page.getByText('手動記帳', { exact: true })).toBeVisible();
   await expect(page.locator('[data-account-for="transaction-account"] button')).toHaveCount(5);
   await expect
     .poll(() =>
@@ -126,7 +126,7 @@ test('手機記帳移除多餘分類提示，且長對話框仍固定保留關�
 
 test('收入也在背景分類，事後編輯才顯示分類', async ({ page }) => {
   await page.getByRole('button', { name: '快速記一筆' }).click();
-  await page.getByText('需要手動輸入？展開詳細記帳').click();
+  await page.getByText('手動記帳', { exact: true }).click();
   await page.getByRole('button', { name: '收入', exact: true }).click();
   const form = page.locator('#transaction-form');
   await expect(page.locator('#category-field')).toBeHidden();
@@ -161,7 +161,7 @@ test('收入也在背景分類，事後編輯才顯示分類', async ({ page }) 
 
 test('手動轉帳可加入手續費，總資產只扣除手續費', async ({ page }) => {
   await page.getByRole('button', { name: '快速記一筆' }).click();
-  await page.getByText('需要手動輸入？展開詳細記帳').click();
+  await page.getByText('手動記帳', { exact: true }).click();
   await page.getByRole('button', { name: '轉帳', exact: true }).click();
   const form = page.locator('#transaction-form');
   await form.getByLabel('名稱').fill('轉入 LINE');
@@ -289,6 +289,13 @@ test('口語多品項會自動拆單並把各自帳戶直接上傳 Sheet', async
       });
       return;
     }
+    if (body.action !== 'enqueueSpokenEntry') {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, data: { accountCount: 5, transactionCount: 0, budgetCount: 0 } }),
+      });
+      return;
+    }
     receivedBodies.push(body);
     const draft = body.draft;
     const requestNumber = receivedBodies.length;
@@ -366,6 +373,8 @@ test('可設定分類預算、查看趨勢並在手機使用', async ({ page }) 
   await page.getByRole('button', { name: '趨勢' }).click();
   await expect(page.getByRole('heading', { name: '趨勢' })).toBeVisible();
   await expect(page.locator('#trend-chart')).toBeVisible();
+  await expect(page.getByRole('button', { name: '近 7 天' })).toBeVisible();
+  await expect(page.getByText('支出分類', { exact: true })).toBeVisible();
   await expect(page.locator('body')).not.toHaveCSS('overflow-x', 'scroll');
 });
 

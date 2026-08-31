@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  hasPendingSheetChanges,
   mergeLedgerStates,
   reconcileLedgerFromSheet,
   updatePendingSheetChanges,
@@ -12,6 +13,7 @@ function state(transactions = [], options = {}) {
     transactions,
     budgets: options.budgets ?? [],
     preferences: options.preferences ?? { theme: 'system' },
+    featureSettings: options.featureSettings,
   };
 }
 
@@ -81,6 +83,7 @@ describe('Sheet 雙向更新合併', () => {
       accountDeletes: [],
       budgetUpserts: [],
       budgetDeletes: [],
+      features: false,
     });
     expect(previous).toEqual({ upserts: ['restored'], deletes: ['added'] });
   });
@@ -197,10 +200,25 @@ describe('Sheet 雙向更新合併', () => {
       transactions: [],
       budgets: [],
       preferences: {},
+      featureSettings: {},
     });
 
     const local = state([{ id: 'same', updatedAt: 'not-a-date', name: '本機' }]);
     const remote = state([{ id: 'same', updatedAt: '', name: 'Sheet' }]);
     expect(mergeLedgerStates(local, remote).transactions[0].name).toBe('本機');
+  });
+
+  it('把功能設定併入同步佇列，並保留尚未送出的本機功能設定', () => {
+    const before = state([], { featureSettings: { recurringRules: [], monthlySnapshots: [], reconciliations: [] } });
+    const after = state([], { featureSettings: { recurringRules: [{ id: 'r1' }], monthlySnapshots: [], reconciliations: [] } });
+    const pending = updatePendingSheetChanges({}, before, after);
+    expect(pending.features).toBe(true);
+    expect(hasPendingSheetChanges(pending)).toBe(true);
+
+    const remote = state([], { featureSettings: { recurringRules: [], monthlySnapshots: [{ month: '2026-08' }], reconciliations: [] } });
+    expect(reconcileLedgerFromSheet(after, remote, pending).featureSettings).toEqual(after.featureSettings);
+    expect(reconcileLedgerFromSheet(before, remote, {}).featureSettings).toEqual(remote.featureSettings);
+    expect(hasPendingSheetChanges({})).toBe(false);
+    expect(mergeLedgerStates(after, state([])).featureSettings).toEqual(after.featureSettings);
   });
 });

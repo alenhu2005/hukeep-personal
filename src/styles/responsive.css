@@ -85,6 +85,10 @@
     grid-template-columns: 1fr;
   }
 
+  .operation-actions {
+    grid-template-columns: 1fr;
+  }
+
   .insight-card {
     min-height: 130px;
   }
@@ -285,6 +289,14 @@
 
   .manual-entry-body {
     padding: 10px;
+  }
+
+  .compact-settings-form {
+    grid-template-columns: 1fr;
+  }
+
+  .compact-settings-form .wide {
+    grid-column: auto;
   }
 
   .transaction-name-field {

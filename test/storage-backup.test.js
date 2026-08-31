@@ -222,6 +222,7 @@ describe('ledger repository', () => {
       ],
       budgets: [{ category: '飲食', limit: 3000 }],
       preferences: { theme: 'system' },
+      featureSettings: { recurringRules: [], monthlySnapshots: [], reconciliations: [] },
     });
   });
 
@@ -325,6 +326,7 @@ describe('備份', () => {
       ],
       budgets: [{ category: '娛樂', limit: 2000 }],
       preferences: { theme: 'system' },
+      featureSettings: { recurringRules: [], monthlySnapshots: [], reconciliations: [] },
     });
   });
 

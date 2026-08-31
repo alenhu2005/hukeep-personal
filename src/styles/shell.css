@@ -349,6 +349,100 @@
   line-height: 1.6;
 }
 
+.compact-settings-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.compact-settings-form label {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.compact-settings-form input,
+.compact-settings-form select {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.compact-settings-form .wide {
+  grid-column: 1 / -1;
+}
+
+.compact-settings-form .primary-button {
+  margin-top: 2px;
+}
+
+.settings-list {
+  display: grid;
+  gap: 0;
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.settings-list article {
+  display: flex;
+  min-height: 46px;
+  padding: 8px 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-list article > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.settings-list strong,
+.settings-list span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-list strong {
+  font-size: 12px;
+}
+
+.settings-list span,
+.settings-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.settings-list button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 18px;
+}
+
+.settings-list button:hover {
+  background: var(--expense-soft);
+  color: var(--expense);
+}
+
 .opening-balance-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

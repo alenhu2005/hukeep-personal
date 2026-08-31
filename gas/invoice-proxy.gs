@@ -30,7 +30,7 @@ var INCOME_TAXONOMY = {
 var LEDGER_TRANSACTION_HEADERS = [
   'ID', '類型', '名稱', '金額', '大分類', '小分類', '帳戶', '目的帳戶', '日期', '備註', '來源',
   '來源ID', '發票號碼', '商家', '發票品項', '建立時間', '更新時間', '使用者修改時間', '匯入時間',
-  'AI審查狀態', 'AI審查時間', '口語原文', '手續費'
+  'AI審查狀態', 'AI審查時間', '口語原文', '手續費', '群組ID', 'AI修正紀錄', '收據ID', '收據名稱'
 ];
 var SPOKEN_QUEUE_HEADERS = ['佇列ID', '口語原文', '送出時間', '狀態', '交易ID', '錯誤', '更新時間', '重試次數'];
 var ACCOUNT_IDS = ['cash', 'line', 'sinopac', 'bot', 'post'];
@@ -187,6 +187,7 @@ function syncLedgerState_(state) {
   var accounts = limitedArray_(state.accounts, 20, '帳戶');
   var transactions = limitedArray_(state.transactions, 5000, '交易');
   var budgets = limitedArray_(state.budgets, 100, '預算');
+  var featureSettings = normalizeFeatureSettings_(state.featureSettings);
   var syncedAt = new Date().toISOString();
   var accountRows = [['帳戶ID', '帳戶名稱', '初始金額']].concat(accounts.map(function (account) {
     return [
@@ -213,6 +214,7 @@ function syncLedgerState_(state) {
     replaceSheetContents_(getOrCreateSheet_(spreadsheet, '小帳_帳戶'), accountRows);
     replaceSheetContents_(transactionSheet, mergeLedgerTransactionRows_(transactionSheet, transactionRows));
     replaceSheetContents_(getOrCreateSheet_(spreadsheet, '小帳_設定'), settingsRows);
+    writeFeatureSettings_(spreadsheet, featureSettings);
     SpreadsheetApp.flush();
   } finally {
     lock.releaseLock();
@@ -233,6 +235,9 @@ function syncLedgerChanges_(changes) {
   var transactionDeletes = limitedTextArray_(changes.transactionDeletes, 5000, 80, '交易刪除');
   var budgets = limitedArray_(changes.budgets, 100, '預算');
   var budgetDeletes = limitedTextArray_(changes.budgetDeletes, 100, 40, '預算刪除');
+  var featureSettings = changes.featureSettings && typeof changes.featureSettings === 'object'
+    ? normalizeFeatureSettings_(changes.featureSettings)
+    : null;
   var syncedAt = new Date().toISOString();
 
   var accountRows = accounts.map(function (account) {
@@ -269,6 +274,7 @@ function syncLedgerChanges_(changes) {
     budgetRows.forEach(function (row) { upsertSheetRowById_(settingsSheet, row); });
     upsertSheetRowById_(settingsSheet, ['schemaVersion', 1]);
     upsertSheetRowById_(settingsSheet, ['syncedAt', syncedAt]);
+    if (featureSettings) writeFeatureSettings_(spreadsheet, featureSettings);
     SpreadsheetApp.flush();
     return {
       accountCount: countSheetRowsById_(accountSheet),
@@ -368,6 +374,7 @@ function loadLedgerState_() {
       accounts: accounts,
       transactions: transactions,
       budgets: budgets,
+      featureSettings: readFeatureSettings_(spreadsheet),
     };
   } finally {
     lock.releaseLock();
@@ -412,6 +419,10 @@ function ledgerTransactionRow_(transaction) {
     safeSheetText_(transaction.aiReviewedAt, 40),
     safeSheetText_(transaction.rawTranscript, 240),
     sheetInteger_(transaction.fee || 0, '轉帳手續費', false),
+    safeSheetText_(transaction.groupId, 80),
+    safeSheetText_(JSON.stringify(transaction.aiChanges || []), 5000),
+    safeSheetText_(transaction.receiptId, 160),
+    safeSheetText_(transaction.receiptName, 160),
   ];
 }
 
@@ -501,6 +512,41 @@ function replaceSheetContents_(sheet, rows) {
   sheet.autoResizeColumns(1, columnCount);
 }
 
+function normalizeFeatureSettings_(value) {
+  var source = value && typeof value === 'object' ? value : {};
+  var settings = {
+    recurringRules: Array.isArray(source.recurringRules) ? source.recurringRules.slice(0, 100) : [],
+    monthlySnapshots: Array.isArray(source.monthlySnapshots) ? source.monthlySnapshots.slice(0, 120) : [],
+    reconciliations: Array.isArray(source.reconciliations) ? source.reconciliations.slice(0, 200) : [],
+  };
+  var text = JSON.stringify(settings);
+  if (text.length > 60000) throw new Error('功能設定資料過大');
+  return settings;
+}
+
+function writeFeatureSettings_(spreadsheet, value) {
+  var settings = normalizeFeatureSettings_(value);
+  replaceSheetContents_(
+    getOrCreateSheet_(spreadsheet, '小帳_功能'),
+    [['項目', 'JSON'], ['featureSettings', safeSheetText_(JSON.stringify(settings), 60000)]]
+  );
+}
+
+function readFeatureSettings_(spreadsheet) {
+  var sheet = getOrCreateSheet_(spreadsheet, '小帳_功能');
+  ensureSheetHeader_(sheet, ['項目', 'JSON']);
+  if (sheet.getLastRow() < 2) return normalizeFeatureSettings_({});
+  var rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues();
+  var row = rows.find(function (item) { return boundedText_(item[0], 40) === 'featureSettings'; });
+  if (!row) return normalizeFeatureSettings_({});
+  var raw = boundedText_(row[1], 60000).replace(/^'/, '');
+  try {
+    return normalizeFeatureSettings_(JSON.parse(raw || '{}'));
+  } catch (error) {
+    return normalizeFeatureSettings_({});
+  }
+}
+
 function deleteSheetRowsById_(sheet, ids) {
   var rowNumbers = ids.map(function (id) { return findSheetRowById_(sheet, id); })
     .filter(function (rowNumber) { return Boolean(rowNumber); })
@@ -544,14 +590,17 @@ function enqueueSpokenEntry_(body) {
   var transcript = boundedText_(body && body.transcript, 240);
   if (!transcript) throw new Error('請輸入口語內容');
   var now = new Date().toISOString();
-  var groupId = Utilities.getUuid();
+  var queueGroupId = Utilities.getUuid();
+  var requestedGroupId = boundedText_(body && body.groupId, 80);
+  if (!/^[a-z0-9:-]{1,80}$/i.test(requestedGroupId)) requestedGroupId = '';
   var drafts = spokenDraftsFromBody_(body);
-  var multiItem = drafts.length > 1;
+  var multiItem = drafts.length > 1 || Boolean(requestedGroupId);
+  var groupId = multiItem ? (requestedGroupId || queueGroupId) : '';
   var queueIds = [];
   var transactions = drafts.map(function (draft, index) {
-    var queueId = multiItem ? 'multi:' + groupId + ':' + (index + 1) : groupId;
+    var queueId = multiItem ? 'multi:' + queueGroupId + ':' + (index + 1) : queueGroupId;
     queueIds.push(queueId);
-    return normalizeSpokenDraft_(draft, transcript, queueId, now);
+    return normalizeSpokenDraft_(draft, transcript, queueId, now, groupId);
   });
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
@@ -583,7 +632,7 @@ function enqueueSpokenEntry_(body) {
     console.warn('口語佇列已寫入，但背景觸發器尚未授權：' + publicError_(triggerError));
   }
   return {
-    queueId: groupId,
+    queueId: queueGroupId,
     queueIds: queueIds,
     status: 'pending',
     transaction: transactions[0] && transactions[0].amount > 0 ? transactions[0] : null,
@@ -597,7 +646,7 @@ function spokenDraftsFromBody_(body) {
   return values.length ? values : [{}];
 }
 
-function normalizeSpokenDraft_(draft, transcript, queueId, now) {
+function normalizeSpokenDraft_(draft, transcript, queueId, now, groupId) {
   var value = draft && typeof draft === 'object' ? draft : {};
   var type = ['expense', 'income', 'transfer'].indexOf(value.type) >= 0 ? value.type : 'expense';
   var amount = Number(value.amount);
@@ -640,6 +689,7 @@ function normalizeSpokenDraft_(draft, transcript, queueId, now) {
     aiReviewedAt: '',
     rawTranscript: transcript,
   };
+  if (groupId) transaction.groupId = groupId;
   if (fee > 0) transaction.fee = fee;
   return transaction;
 }
@@ -828,11 +878,26 @@ function findSpokenTransaction_(transactionId) {
 
 function ledgerTransactionFromRow_(row) {
   var invoiceItems = [];
+  var aiChanges = [];
   try {
     var parsedItems = JSON.parse(boundedText_(row[14], 10000) || '[]');
     if (Array.isArray(parsedItems)) invoiceItems = parsedItems.slice(0, 80);
   } catch (error) {
     invoiceItems = [];
+  }
+  try {
+    var parsedChanges = JSON.parse(boundedText_(row[24], 5000) || '[]');
+    if (Array.isArray(parsedChanges)) {
+      aiChanges = parsedChanges.slice(0, 12).reduce(function (result, change) {
+        var field = boundedText_(change && change.field, 40);
+        var before = boundedText_(change && change.before, 120);
+        var after = boundedText_(change && change.after, 120);
+        if (field && before !== after) result.push({ field: field, before: before, after: after });
+        return result;
+      }, []);
+    }
+  } catch (error) {
+    aiChanges = [];
   }
   var transaction = {
     id: boundedText_(row[0], 80),
@@ -857,9 +922,13 @@ function ledgerTransactionFromRow_(row) {
     aiStatus: boundedText_(row[19], 24),
     aiReviewedAt: boundedText_(row[20], 40),
     rawTranscript: boundedText_(row[21], 240),
+    groupId: boundedText_(row[23], 80),
+    receiptId: boundedText_(row[25], 160),
+    receiptName: boundedText_(row[26], 160),
   };
   var fee = normalizedTransferFee_(row[22], 0);
   if (transaction.type === 'transfer' && fee > 0) transaction.fee = fee;
+  if (aiChanges.length) transaction.aiChanges = aiChanges;
   return transaction;
 }
 
@@ -1014,7 +1083,32 @@ function validateSpokenReview_(review, fallback, transcript) {
     rawTranscript: transcript,
   };
   if (fee > 0) transaction.fee = fee;
+  var groupId = boundedText_(fallback && fallback.groupId, 80);
+  if (groupId) transaction.groupId = groupId;
+  var aiChanges = aiChangeLog_(fallback, transaction);
+  if (aiChanges.length) transaction.aiChanges = aiChanges;
   return transaction;
+}
+
+function aiChangeLog_(fallback, reviewed) {
+  var fields = [
+    ['名稱', 'name'],
+    ['類型', 'type'],
+    ['金額', 'amount'],
+    ['日期', 'date'],
+    ['帳戶', 'account'],
+    ['目的帳戶', 'toAccount'],
+    ['大分類', 'category'],
+    ['小分類', 'subcategory'],
+    ['備註', 'note'],
+    ['手續費', 'fee'],
+  ];
+  return fields.reduce(function (result, field) {
+    var before = boundedText_(fallback && fallback[field[1]], 120);
+    var after = boundedText_(reviewed && reviewed[field[1]], 120);
+    if (before !== after) result.push({ field: field[0], before: before, after: after });
+    return result;
+  }, []).slice(0, 12);
 }
 
 function normalizedTransferFee_(value, fallback) {

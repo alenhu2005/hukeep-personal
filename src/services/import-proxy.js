@@ -1,4 +1,5 @@
 import { validateClassification } from '../domain/category-taxonomy.js';
+import { normalizeFeatureSettings } from '../domain/ledger-enhancements.js';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_SHEET_ACCOUNTS = 20;
@@ -157,6 +158,9 @@ function projectTransaction(transaction) {
     aiStatus: 24,
     aiReviewedAt: 40,
     rawTranscript: 240,
+    groupId: 80,
+    receiptId: 160,
+    receiptName: 160,
   };
   const projected = {
     id,
@@ -178,6 +182,16 @@ function projectTransaction(transaction) {
       .slice(0, 80)
       .map(item => cleanText(item, 160))
       .filter(Boolean);
+  }
+  if (Array.isArray(transaction?.aiChanges)) {
+    projected.aiChanges = transaction.aiChanges
+      .slice(0, 12)
+      .flatMap(change => {
+        const field = cleanText(change?.field, 40);
+        const before = cleanText(change?.before, 120);
+        const after = cleanText(change?.after, 120);
+        return field && before !== after ? [{ field, before, after }] : [];
+      });
   }
   return projected;
 }
@@ -204,6 +218,7 @@ export function projectLedgerForSheet(state) {
     accounts: accounts.map(projectAccount),
     transactions: transactions.map(projectTransaction),
     budgets: budgets.map(projectBudget),
+    featureSettings: normalizeFeatureSettings(state?.featureSettings),
   };
 }
 
@@ -237,6 +252,7 @@ export function projectLedgerChangesForSheet(state, changes) {
     transactionDeletes,
     budgets: changedItems(state?.budgets, budgetUpserts, budget => cleanText(budget?.category, 40), projectBudget),
     budgetDeletes,
+    featureSettings: changes?.features ? normalizeFeatureSettings(state?.featureSettings) : null,
   };
 }
 
@@ -342,6 +358,9 @@ export async function loadLedgerStateFromSheet(input, options = {}) {
     accounts: data.accounts.map(account => ({ ...account })),
     transactions: data.transactions.map(transaction => ({ ...transaction })),
     budgets: data.budgets.map(budget => ({ ...budget })),
+    ...(data?.featureSettings && typeof data.featureSettings === 'object'
+      ? { featureSettings: normalizeFeatureSettings(data.featureSettings) }
+      : {}),
   };
 }
 
@@ -383,6 +402,7 @@ export async function enqueueSpokenEntry(input, options = {}) {
       timezone: 'Asia/Taipei',
       draft: projectSpokenDraft(input?.draft),
       drafts: projectSpokenDrafts(input?.drafts, input?.draft),
+      groupId: cleanText(input?.groupId, 80),
     },
     options,
   );

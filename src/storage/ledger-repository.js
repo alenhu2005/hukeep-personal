@@ -1,4 +1,5 @@
 import { normalizeStoredTransaction } from '../domain/transactions.js';
+import { normalizeFeatureSettings } from '../domain/ledger-enhancements.js';
 
 export const STORAGE_KEY = 'hukeep_personal_state_v1';
 const VALID_THEMES = new Set(['system', 'light', 'dark']);
@@ -117,6 +118,7 @@ export function createEmptyState() {
     transactions: [],
     budgets: [],
     preferences: { theme: 'system' },
+    featureSettings: normalizeFeatureSettings(),
   };
 }
 
@@ -137,6 +139,7 @@ export function normalizeLedgerState(value) {
     transactions: migrated.transactions,
     budgets: normalizeBudgets(value.budgets),
     preferences: normalizePreferences(value.preferences),
+    featureSettings: normalizeFeatureSettings(value.featureSettings),
   };
 }
 

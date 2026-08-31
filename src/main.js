@@ -4,6 +4,8 @@ import './styles/records.css';
 import './styles/shell.css';
 import './styles/imports.css';
 import './styles/responsive.css';
+import './styles/motion.css';
+import './styles/analysis-workspace.css';
 import { createApp } from './app.js';
 
 createApp();

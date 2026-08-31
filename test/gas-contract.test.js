@@ -77,7 +77,9 @@ describe('GAS 同步合約', () => {
 
   it('多品項口語會建立獨立佇列，AI 不得合併或改掉已辨識的付款資訊', () => {
     expect(source).toContain('function spokenDraftsFromBody_(');
-    expect(source).toContain("'multi:' + groupId + ':' + (index + 1)");
+    expect(source).toContain("'multi:' + queueGroupId + ':' + (index + 1)");
+    expect(source).toContain('requestedGroupId');
+    expect(source).toContain('transaction.groupId = groupId');
     expect(source).toContain('一次最多辨識 10 個品項');
     expect(source).toContain('必須保留該草稿的品名、金額、日期與付款帳戶');
     expect(source).toContain("indexOf('multi:') === 0");
@@ -116,7 +118,7 @@ describe('GAS 同步合約', () => {
 
     expect(normalizeRow(legacyRow)).toEqual([
       'voice:test', 'income', '家教', 2500, '接案', '家教', 'bot', '', '2026-08-27', '口語原文',
-      'voice', 'test', '', '', '[]', 'created', 'updated', '', '', 'pending', '', '口語原文', '',
+      'voice', 'test', '', '', '[]', 'created', 'updated', '', '', 'pending', '', '口語原文', '', '', '', '', '',
     ]);
   });
 

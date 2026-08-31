@@ -15,6 +15,7 @@ import {
   sanitizeAiItems,
 } from './services/import-proxy.js';
 import { recognizeReceiptImage } from './services/receipt-ocr.js';
+import { storeReceipt } from './storage/receipt-store.js';
 import { todayInTaipei } from './format.js';
 
 function setOptions(select, values, selected = '') {
@@ -189,11 +190,12 @@ export function createSmartImportController(dependencies) {
     }
   }
 
-  function saveOcrDraft(event) {
+  async function saveOcrDraft(event) {
     event.preventDefault();
     if (!activeFile) return;
     const values = Object.fromEntries(new FormData(ocrForm));
     try {
+      const receipt = await storeReceipt(activeFile);
       const transaction = invoiceToTransaction(
         {
           amount: Number(values.amount),
@@ -205,6 +207,8 @@ export function createSmartImportController(dependencies) {
         {
           source: 'ocr',
           sourceId: createSourceId(activeFile),
+          receiptId: receipt?.id,
+          receiptName: receipt?.name,
           account: values.account,
           category: values.category,
           subcategory: values.subcategory,

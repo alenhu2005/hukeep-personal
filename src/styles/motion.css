@@ -1,0 +1,44 @@
+@keyframes view-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes row-enter {
+  from { opacity: 0; transform: translateX(-5px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes amount-enter {
+  from { opacity: 0; transform: translateY(4px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes toast-enter {
+  from { opacity: 0; transform: translateY(12px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.view { animation: view-enter 180ms ease-out both; }
+.transaction-row { animation: row-enter 180ms ease-out both; }
+.transaction-row:nth-child(2) { animation-delay: 25ms; }
+.transaction-row:nth-child(3) { animation-delay: 50ms; }
+.transaction-row:nth-child(4) { animation-delay: 75ms; }
+.transaction-row:nth-child(5) { animation-delay: 100ms; }
+.cashflow-main strong, .asset-total strong { animation: amount-enter 240ms ease-out both; }
+.toast:not([hidden]) { animation: toast-enter 180ms ease-out both; }
+
+.bottom-nav button, .quick-add, .filter-chip-scroll button, .operation-actions button, .settings-list article, .account-item {
+  transition: transform 150ms ease, background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+.bottom-nav button:active, .quick-add:active, .filter-chip-scroll button:active, .operation-actions button:active { transform: scale(0.96); }
+.app-dialog[open] { animation: view-enter 160ms ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+}
