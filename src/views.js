@@ -80,6 +80,27 @@ function groupedTransactions(transactions) {
   return counts;
 }
 
+function dailyNetByDate(transactions) {
+  const result = new Map();
+  (transactions || []).forEach(transaction => {
+    const date = transaction?.date;
+    if (!date) return;
+    const current = result.get(date) || { income: 0, expense: 0 };
+    const amount = Number(transaction.amount) || 0;
+    const next = transaction.type === 'income'
+      ? { income: current.income + amount, expense: current.expense }
+      : transaction.type === 'expense'
+        ? { income: current.income, expense: current.expense + amount }
+        : current;
+    result.set(date, { ...next, net: next.income - next.expense });
+  });
+  return result;
+}
+
+function formatNetAmount(amount) {
+  return `${amount > 0 ? '+' : ''}${formatCompactMoney(amount)}`;
+}
+
 function rowsForState(state, transactions) {
   return transactionRows(transactions, state.accounts, {
     groupCounts: groupedTransactions(state.transactions),
@@ -194,7 +215,7 @@ export function renderOverview(state, month) {
       </section>
     </div>
     <section class="panel operations-panel">
-      <div class="section-heading"><h2>待處理</h2><span>點一下篩選</span></div>
+      <div class="section-heading"><h2>待處理</h2><span>點選後開啟紀錄</span></div>
       <div class="operation-actions">
         <button type="button" data-go-view="history" data-history-preset="review">AI 待審 <strong>${pendingReviews}</strong></button>
         <button type="button" data-go-view="history" data-history-preset="attention">需確認 <strong>${attentionCount}</strong></button>
@@ -243,8 +264,14 @@ export function renderHistory(state, month, filters) {
         `<button type="button" data-history-filter="account" data-history-value="${escapeHtml(value)}" aria-pressed="${filters.account === value}">${escapeHtml(label)}</button>`,
     )
     .join('');
+  const filterStatus = {
+    attention: '開啟紀錄後修改',
+    review: 'AI 正在背景審查',
+    today: '今天的紀錄',
+    week: '最近 7 天',
+  }[filters.preset] || '以日期由新到舊';
   return `<section class="view history-view" aria-labelledby="history-title">
-    <div class="page-heading"><div><p class="eyebrow">${monthLabel(month)}</p><h1 id="history-title">紀錄</h1></div></div>
+    <div class="page-heading"><div><p class="eyebrow">${monthLabel(month)}</p><h1 id="history-title">紀錄</h1></div><div class="month-stepper" aria-label="切換月份"><button type="button" data-month-shift="-1" aria-label="上個月">‹</button><strong>${Number(month.slice(5))} 月</strong><button type="button" data-month-shift="1" aria-label="下個月">›</button></div></div>
     <section class="panel history-panel">
       <div class="filter-bar">
         <label class="search-field"><span class="visually-hidden">搜尋紀錄</span><span aria-hidden="true">⌕</span><input id="history-search" aria-label="搜尋紀錄" type="search" value="${escapeHtml(filters.query)}" placeholder="搜尋備註、分類、帳戶" /></label>
@@ -252,7 +279,7 @@ export function renderHistory(state, month, filters) {
         <div class="history-filter-group" role="group" aria-label="篩選類型"><span>類型</span><div class="filter-chip-scroll">${typeButtons}</div></div>
         <div class="history-filter-group" role="group" aria-label="篩選帳戶"><span>帳戶</span><div class="filter-chip-scroll">${accountButtons}</div></div>
       </div>
-      <div class="history-result-meta"><strong>${results.length} 筆紀錄</strong><span>以日期由新到舊</span></div>
+      <div class="history-result-meta"><strong>${results.length} 筆紀錄</strong><span id="history-filter-status">${filterStatus}</span></div>
       <div id="history-list" class="transaction-list">${rowsForState(state, results)}</div>
     </section>
   </section>`;
@@ -308,7 +335,7 @@ export function renderInsights(state, month, options = {}) {
     selectedMonth: month,
     today: anchorDate,
   });
-  const dailyByDate = new Map(workspace.dailyRows.map(item => [item.date, item.amount]));
+  const dailyTotalsByDate = dailyNetByDate(workspace.scoped);
   const selectedDate = filters.date >= workspace.range.from && filters.date <= workspace.range.to
     ? filters.date
     : '';
@@ -319,15 +346,22 @@ export function renderInsights(state, month, options = {}) {
     .map(([value, label]) => `<button type="button" data-insight-period="${value}" aria-pressed="${period === value}">${label}</button>`)
     .join('');
   const dateButton = (date, className, label) => {
-    const amount = dailyByDate.get(date) || 0;
+    const daily = dailyTotalsByDate.get(date) || { income: 0, expense: 0, net: 0 };
+    const hasActivity = daily.income > 0 || daily.expense > 0;
+    const toneClass = daily.net < 0
+      ? ' analysis-net-negative'
+      : daily.net > 0
+        ? ' analysis-net-positive'
+        : hasActivity
+          ? ' analysis-net-neutral'
+          : '';
     const selected = selectedDate === date;
     const todayClass = date === today ? ' analysis-period-today' : '';
-    return `<button type="button" class="${className}${selected ? ' analysis-period-selected' : ''}${todayClass}" data-insight-date="${date}" aria-pressed="${selected}" aria-label="${formatDate(date)} 支出 ${formatMoney(amount)}">${label}</button>`;
+    return `<button type="button" class="${className}${toneClass}${selected ? ' analysis-period-selected' : ''}${todayClass}" data-insight-date="${date}" aria-pressed="${selected}" aria-label="${formatDate(date)} 收入 ${formatMoney(daily.income)}，支出 ${formatMoney(daily.expense)}，淨額 ${formatMoney(daily.net, { showPlus: true })}">${label(daily, hasActivity)}</button>`;
   };
   const weekDays = daysInRange(workspace.range.from, workspace.range.to)
     .map((date, index) => {
-      const amount = dailyByDate.get(date) || 0;
-      return dateButton(date, 'analysis-week-cell', `<span>${['日', '一', '二', '三', '四', '五', '六'][index]}</span><strong>${Number(date.slice(8))}</strong>${amount ? '<i></i>' : ''}`);
+      return dateButton(date, 'analysis-week-cell', (_daily, hasActivity) => `<span>${['日', '一', '二', '三', '四', '五', '六'][index]}</span><strong>${Number(date.slice(8))}</strong>${hasActivity ? '<i></i>' : ''}`);
     })
     .join('');
   const calendarDates = (() => {
@@ -343,8 +377,7 @@ export function renderInsights(state, month, options = {}) {
   const calendarCells = calendarDates
     .map(date => {
       if (!date) return '<span class="analysis-cal-empty" aria-hidden="true"></span>';
-      const amount = dailyByDate.get(date) || 0;
-      return dateButton(date, 'analysis-cal-cell', `<strong>${Number(date.slice(8))}</strong><small>${amount ? formatCompactMoney(amount) : ''}</small>`);
+      return dateButton(date, 'analysis-cal-cell', (daily, hasActivity) => `<strong>${Number(date.slice(8))}</strong><small>${hasActivity ? formatNetAmount(daily.net) : ''}</small>`);
     })
     .join('');
   const yearMonths = workspace.monthRows
@@ -386,7 +419,7 @@ export function renderInsights(state, month, options = {}) {
       </div>
       <div class="daily-analysis-overview" aria-label="收支摘要">
         <div class="daily-analysis-total"><span>支出</span><strong>${formatMoney(workspace.totals.expense)}</strong><small>${workspace.expenseTransactions.length} 筆</small></div>
-        <div class="daily-analysis-metrics"><div><span>收入</span><strong>${formatMoney(workspace.totals.income)}</strong></div><div><span>結餘</span><strong class="${workspace.totals.income - workspace.totals.expense < 0 ? 'negative' : ''}">${formatMoney(workspace.totals.income - workspace.totals.expense, { showPlus: true })}</strong></div></div>
+        <div class="daily-analysis-metrics"><div><span>收入</span><strong>${formatMoney(workspace.totals.income)}</strong></div><div><span>結餘</span><strong class="${workspace.totals.income - workspace.totals.expense < 0 ? 'negative' : workspace.totals.income - workspace.totals.expense > 0 ? 'positive' : ''}">${formatMoney(workspace.totals.income - workspace.totals.expense, { showPlus: true })}</strong></div></div>
       </div>
       <section class="daily-analysis-insights" aria-label="分析重點">
         <div class="daily-analysis-section-head"><strong>分析重點</strong><small>${periodLabel}</small></div>

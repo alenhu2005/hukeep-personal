@@ -18,6 +18,7 @@ import {
 import {
   applyRecurringRules,
   createMonthlySnapshot,
+  findTransactionSignals,
   normalizeFeatureSettings,
 } from './domain/ledger-enhancements.js';
 import {
@@ -68,6 +69,23 @@ function shiftDate(dateText, offset) {
   if (Number.isNaN(date.getTime())) return todayInTaipei();
   date.setUTCDate(date.getUTCDate() + offset);
   return date.toISOString().slice(0, 10);
+}
+
+function latestPresetMonth(transactions, preset) {
+  const values = Array.isArray(transactions) ? transactions : [];
+  const matching = preset === 'review'
+    ? values.filter(transaction => transaction?.aiStatus === 'pending')
+    : preset === 'attention'
+      ? (() => {
+          const signals = findTransactionSignals(values);
+          return values.filter(transaction => signals.duplicates.has(transaction?.id) || signals.anomalies.has(transaction?.id));
+        })()
+      : [];
+  const latestDate = matching
+    .map(transaction => transaction?.date)
+    .filter(date => /^\d{4}-\d{2}-\d{2}$/.test(date))
+    .toSorted((left, right) => right.localeCompare(left))[0];
+  return latestDate ? latestDate.slice(0, 7) : '';
 }
 
 function downloadText(filename, text, type) {
@@ -865,7 +883,10 @@ export function createApp() {
     if (target.dataset.historyPreset) {
       historyFilters = { ...historyFilters, preset: target.dataset.historyPreset };
       if (target.dataset.goView) {
+        const targetMonth = latestPresetMonth(state.transactions, target.dataset.historyPreset);
+        if (targetMonth) selectedMonth = targetMonth;
         navigate(target.dataset.goView);
+        requestAnimationFrame(() => main.querySelector(`[data-history-preset="${target.dataset.historyPreset}"]`)?.focus());
       } else {
         render();
         requestAnimationFrame(() => main.querySelector(`[data-history-preset="${target.dataset.historyPreset}"]`)?.focus());

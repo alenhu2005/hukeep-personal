@@ -96,6 +96,8 @@
 .analysis-week-cell > span { font-size: 10px; font-weight: 700; }
 .analysis-week-cell > strong { color: var(--ink); font-size: 14px; }
 .analysis-week-cell > i { width: 4px; height: 4px; border-radius: 50%; background: var(--expense); }
+.analysis-week-cell.analysis-net-positive > i { background: var(--income); }
+.analysis-week-cell.analysis-net-neutral > i { background: var(--muted); }
 
 .analysis-cal-weekdays,
 .analysis-cal-grid {
@@ -127,6 +129,8 @@
 
 .analysis-cal-cell > strong { font-size: 11px; }
 .analysis-cal-cell > small { overflow: hidden; max-width: 100%; color: var(--muted); font-size: 8px; line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
+.analysis-cal-cell.analysis-net-negative > small { color: var(--expense); }
+.analysis-cal-cell.analysis-net-positive > small { color: var(--income); }
 .analysis-cal-empty { background: transparent; }
 
 .analysis-period-selected { border-color: color-mix(in srgb, var(--primary) 55%, var(--line)); color: var(--primary); background: var(--primary-soft); }
@@ -178,6 +182,7 @@
 .daily-analysis-metrics > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 8px; }
 .daily-analysis-metrics strong { overflow: hidden; font-size: 13px; font-variant-numeric: tabular-nums; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
 .daily-analysis-metrics .negative { color: var(--expense); }
+.daily-analysis-metrics .positive { color: var(--income); }
 
 .daily-analysis-insights,
 .daily-analysis-breakdown,

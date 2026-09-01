@@ -185,7 +185,7 @@ test('手動轉帳可加入手續費，總資產只扣除手續費', async ({ pa
 });
 
 test('口語內容直接上傳 Sheet，不等待 AI 審查', async ({ page }) => {
-  let receivedBody;
+  const receivedBodies = [];
   await page.route('https://proxy.example/voice', async route => {
     const body = route.request().postDataJSON();
     if (body.action === 'loadLedgerState') {
@@ -198,7 +198,7 @@ test('口語內容直接上傳 Sheet，不等待 AI 審查', async ({ page }) =>
       });
       return;
     }
-    receivedBody = body;
+    receivedBodies.push(body);
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
@@ -267,12 +267,12 @@ test('口語內容直接上傳 Sheet，不等待 AI 審查', async ({ page }) =>
     name: '高鐵車票',
     aiStatus: 'pending',
   });
-  expect(receivedBody).toMatchObject({
+  expect(receivedBodies).toContainEqual(expect.objectContaining({
     action: 'enqueueSpokenEntry',
     proxyToken: 'session-token',
     transcript: '昨天搭高鐵 1490 元刷卡',
-    draft: { note: '' },
-  });
+    draft: expect.objectContaining({ note: '' }),
+  }));
 });
 
 test('口語多品項會自動拆單並把各自帳戶直接上傳 Sheet', async ({ page }) => {
@@ -398,10 +398,53 @@ test('趨勢工作台可切換區間、翻閱上一週並點日期看明細', as
   await expect(page.locator('#trend-chart > strong')).toHaveText('08/30～09/05');
   await page.getByRole('button', { name: '上一期' }).click();
   await expect(page.locator('#trend-chart > strong')).toHaveText('08/23～08/29');
-  await page.getByRole('button', { name: /8\/24 支出/ }).click();
+  await page.getByRole('button', { name: /8\/24 收入/ }).click();
   await expect(page.locator('.analysis-history-head')).toContainText('8/24');
   await expect(page.locator('.analysis-history-head')).toContainText('當日明細');
   await expect(page.getByText('上週捷運', { exact: true })).toBeVisible();
+});
+
+test('待確認會導向紀錄篩選，且紀錄可切換月份', async ({ page }) => {
+  const selectedMonth = await page.evaluate(() => {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts();
+    const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+    return `${values.year}-${values.month}`;
+  });
+  const attentionMonth = (() => {
+    const [year, month] = selectedMonth.split('-').map(Number);
+    const previous = new Date(Date.UTC(year, month - 2, 1));
+    return `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, '0')}`;
+  })();
+  await page.evaluate(({ attentionMonth: month }) => {
+    localStorage.setItem('hukeep_personal_state_v1', JSON.stringify({
+      schemaVersion: 1,
+      accounts: [],
+      budgets: [],
+      transactions: [
+        { id: 'normal-expense', type: 'expense', name: '一般餐費', amount: 100, category: '飲食', subcategory: '便當', account: 'cash', date: `${month}-01`, note: '', source: 'manual' },
+        { id: 'normal-expense-2', type: 'expense', name: '一般晚餐', amount: 100, category: '飲食', subcategory: '便當', account: 'cash', date: `${month}-02`, note: '', source: 'manual' },
+        { id: 'attention-expense', type: 'expense', name: '大額餐費', amount: 800, category: '飲食', subcategory: '聚餐', account: 'cash', date: `${month}-02`, note: '', source: 'manual' },
+      ],
+      preferences: { theme: 'system', proxyEndpoint: '' },
+    }));
+  }, { attentionMonth });
+  await page.reload();
+
+  await page.getByRole('button', { name: /需確認 1/ }).click();
+  await expect(page).toHaveURL(/#history$/);
+  const activeFilter = page.locator('[data-history-preset="attention"]');
+  await expect(activeFilter).toHaveAttribute('aria-pressed', 'true');
+  await expect(activeFilter).toBeFocused();
+  await expect(page.locator('#history-filter-status')).toHaveText('開啟紀錄後修改');
+  await expect(page.locator('.history-view .month-stepper strong')).toHaveText(`${Number(attentionMonth.slice(5))} 月`);
+  await expect(page.locator('#history-list [data-transaction-row]')).toHaveCount(1);
+
+  await page.getByRole('button', { name: '上個月' }).click();
+  await expect(page.locator('#history-list [data-transaction-row]')).toHaveCount(0);
+  await page.getByRole('button', { name: '下個月' }).click();
+  await expect(page.locator('#history-list [data-transaction-row]')).toHaveCount(1);
 });
 
 test('預算儲存後會自動同步，切換頁面會立即讀取 Sheet', async ({ page }) => {
@@ -578,6 +621,13 @@ test('可設定帳戶初始金額並安全同步到 Google Sheet', async ({ page
 });
 
 test('Sheet 刪除既有交易後，從 Sheet 讀取會同步移除網頁資料', async ({ page }) => {
+  const currentDate = await page.evaluate(() => {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts();
+    const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
+  });
   await page.route('https://proxy.example/authoritative', async route => {
     await route.fulfill({
       contentType: 'application/json',
@@ -601,10 +651,10 @@ test('Sheet 刪除既有交易後，從 Sheet 讀取會同步移除網頁資料'
               category: '飲食',
               subcategory: '早餐',
               account: 'cash',
-              date: '2026-08-29',
+              date: currentDate,
               source: 'manual',
-              createdAt: '2026-08-29T01:00:00.000Z',
-              updatedAt: '2026-08-29T01:00:00.000Z',
+              createdAt: `${currentDate}T01:00:00.000Z`,
+              updatedAt: `${currentDate}T01:00:00.000Z`,
             },
           ],
           budgets: [],
@@ -612,7 +662,7 @@ test('Sheet 刪除既有交易後，從 Sheet 讀取會同步移除網頁資料'
       }),
     });
   });
-  await page.evaluate(() => {
+  await page.evaluate(date => {
     const transaction = (id, name, amount) => ({
       id,
       type: 'expense',
@@ -621,10 +671,10 @@ test('Sheet 刪除既有交易後，從 Sheet 讀取會同步移除網頁資料'
       category: '飲食',
       subcategory: '早餐',
       account: 'cash',
-      date: '2026-08-29',
+      date,
       source: 'manual',
-      createdAt: '2026-08-29T01:00:00.000Z',
-      updatedAt: '2026-08-29T01:00:00.000Z',
+      createdAt: `${date}T01:00:00.000Z`,
+      updatedAt: `${date}T01:00:00.000Z`,
     });
     localStorage.setItem('hukeep_personal_state_v1', JSON.stringify({
       schemaVersion: 1,
@@ -644,7 +694,7 @@ test('Sheet 刪除既有交易後，從 Sheet 讀取會同步移除網頁資料'
     }));
     localStorage.setItem('hukeep_device_binding_endpoint_v1', 'https://proxy.example/authoritative');
     localStorage.setItem('hukeep_device_binding_token_v1', 'session-token');
-  });
+  }, currentDate);
   await page.reload();
   await expect(page.getByText('Sheet 已刪資料')).toBeVisible();
 
@@ -660,6 +710,13 @@ test('Sheet 刪除既有交易後，從 Sheet 讀取會同步移除網頁資料'
 });
 
 test('刪除前會確認，確認後會實際刪除 Google Sheet 的交易與預算', async ({ page }) => {
+  const currentDate = await page.evaluate(() => {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts();
+    const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
+  });
   const deleteRequests = [];
   await page.route('https://proxy.example/delete', async route => {
     const body = route.request().postDataJSON();
@@ -694,7 +751,7 @@ test('刪除前會確認，確認後會實際刪除 Google Sheet 的交易與預
       body: JSON.stringify({ ok: true, data: { deleted: true } }),
     });
   });
-  await page.evaluate(() => {
+  await page.evaluate(date => {
     localStorage.setItem('hukeep_personal_state_v1', JSON.stringify({
       schemaVersion: 1,
       accounts: [
@@ -706,15 +763,15 @@ test('刪除前會確認，確認後會實際刪除 Google Sheet 的交易與預
       ],
       transactions: [{
         id: 'delete-me', type: 'expense', name: '要刪除的午餐', amount: 180,
-        category: '飲食', subcategory: '便當', account: 'cash', date: '2026-08-29',
-        source: 'manual', createdAt: '2026-08-29T01:00:00.000Z', updatedAt: '2026-08-29T01:00:00.000Z',
+        category: '飲食', subcategory: '便當', account: 'cash', date,
+        source: 'manual', createdAt: `${date}T01:00:00.000Z`, updatedAt: `${date}T01:00:00.000Z`,
       }],
       budgets: [{ category: '飲食', limit: 3000 }],
       preferences: { theme: 'system', proxyEndpoint: 'https://proxy.example/delete' },
     }));
     localStorage.setItem('hukeep_device_binding_endpoint_v1', 'https://proxy.example/delete');
     localStorage.setItem('hukeep_device_binding_token_v1', 'delete-token');
-  });
+  }, currentDate);
   await page.reload();
 
   await page.getByRole('button', { name: '紀錄', exact: true }).click();

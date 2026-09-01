@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderOverview, transactionRows } from '../src/views.js';
+import { renderHistory, renderInsights, renderOverview, transactionRows } from '../src/views.js';
 
 describe('交易列表', () => {
   it('以名稱為主文字，列表只保留分類與日期並安全跳脫', () => {
@@ -66,6 +66,45 @@ describe('總覽', () => {
     expect(html).not.toContain('平均每筆');
     expect(html).toContain('data-testid="summary-income"');
     expect(html).toContain('data-testid="summary-expense"');
+  });
+});
+
+describe('紀錄篩選與月份', () => {
+  const accounts = [{ id: 'cash', name: '現金', icon: '現', openingBalance: 0 }];
+  const transactions = [{
+    id: 'attention-1', type: 'expense', amount: 800, category: '飲食', subcategory: '便當',
+    account: 'cash', date: '2026-09-01', name: '午餐', note: '',
+  }];
+
+  it('紀錄頁能切換月份，且需確認篩選會說明下一步', () => {
+    const html = renderHistory({ accounts, transactions }, '2026-09', {
+      query: '', type: '', account: '', preset: 'attention',
+    });
+
+    expect(html).toContain('aria-label="切換月份"');
+    expect(html).toContain('data-month-shift="-1"');
+    expect(html).toContain('data-month-shift="1"');
+    expect(html).toContain('開啟紀錄後修改');
+    expect(html).toContain('data-history-preset="attention" aria-pressed="true"');
+  });
+});
+
+describe('趨勢每日淨額', () => {
+  it('以每日收支淨額標示紅色支出與綠色收入', () => {
+    const html = renderInsights({
+      accounts: [{ id: 'cash', name: '現金', icon: '現', openingBalance: 0 }],
+      transactions: [
+        { id: 'loss', type: 'expense', amount: 120, category: '飲食', account: 'cash', date: '2026-09-01', name: '午餐' },
+        { id: 'gain', type: 'income', amount: 200, category: '薪資', account: 'cash', date: '2026-09-02', name: '薪水' },
+      ],
+      budgets: [],
+    }, '2026-09', { insightFilters: { period: 'month', date: '', anchorDate: '2026-09-01' } });
+
+    expect(html).toContain('data-insight-date="2026-09-01"');
+    expect(html).toContain('analysis-net-negative');
+    expect(html).toContain('-120');
+    expect(html).toContain('analysis-net-positive');
+    expect(html).toContain('+200');
   });
 });
 
