@@ -154,6 +154,11 @@
   color: var(--income);
 }
 
+.detail-confirm-button {
+  width: 100%;
+  margin-top: 16px;
+}
+
 #transaction-receipt-preview {
   margin-top: 8px;
   color: var(--muted);

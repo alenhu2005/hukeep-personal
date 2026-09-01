@@ -129,7 +129,17 @@
 
 .analysis-cal-cell > strong { font-size: 11px; }
 .analysis-cal-cell > small { overflow: hidden; max-width: 100%; color: var(--muted); font-size: 8px; line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
+.analysis-cal-cell.analysis-net-negative {
+  background: color-mix(in srgb, var(--expense) 32%, var(--surface));
+  border-color: color-mix(in srgb, var(--expense) 60%, var(--line));
+}
+.analysis-cal-cell.analysis-net-positive {
+  background: color-mix(in srgb, var(--income) 32%, var(--surface));
+  border-color: color-mix(in srgb, var(--income) 60%, var(--line));
+}
+.analysis-cal-cell.analysis-net-negative > strong,
 .analysis-cal-cell.analysis-net-negative > small { color: var(--expense); }
+.analysis-cal-cell.analysis-net-positive > strong,
 .analysis-cal-cell.analysis-net-positive > small { color: var(--income); }
 .analysis-cal-empty { background: transparent; }
 

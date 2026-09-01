@@ -265,7 +265,7 @@ export function renderHistory(state, month, filters) {
     )
     .join('');
   const filterStatus = {
-    attention: '開啟紀錄後修改',
+    attention: '查看原因後確認無誤',
     review: 'AI 正在背景審查',
     today: '今天的紀錄',
     week: '最近 7 天',

@@ -437,14 +437,20 @@ test('待確認會導向紀錄篩選，且紀錄可切換月份', async ({ page 
   const activeFilter = page.locator('[data-history-preset="attention"]');
   await expect(activeFilter).toHaveAttribute('aria-pressed', 'true');
   await expect(activeFilter).toBeFocused();
-  await expect(page.locator('#history-filter-status')).toHaveText('開啟紀錄後修改');
+  await expect(page.locator('#history-filter-status')).toHaveText('查看原因後確認無誤');
   await expect(page.locator('.history-view .month-stepper strong')).toHaveText(`${Number(attentionMonth.slice(5))} 月`);
   await expect(page.locator('#history-list [data-transaction-row]')).toHaveCount(1);
+
+  await page.getByRole('button', { name: '查看 大額餐費 詳情' }).click();
+  await expect(page.getByText('需確認原因', { exact: true })).toBeVisible();
+  await expect(page.getByText('金額異常', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '確認無誤' }).click();
+  await expect(page.locator('#history-list [data-transaction-row]')).toHaveCount(0);
 
   await page.getByRole('button', { name: '上個月' }).click();
   await expect(page.locator('#history-list [data-transaction-row]')).toHaveCount(0);
   await page.getByRole('button', { name: '下個月' }).click();
-  await expect(page.locator('#history-list [data-transaction-row]')).toHaveCount(1);
+  await expect(page.locator('#history-list [data-transaction-row]')).toHaveCount(0);
 });
 
 test('預算儲存後會自動同步，切換頁面會立即讀取 Sheet', async ({ page }) => {

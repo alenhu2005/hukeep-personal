@@ -173,7 +173,10 @@ export function findTransactionSignals(transactions) {
   const duplicates = new Map();
   const byIdentity = new Map();
   const byCategory = new Map();
-  (transactions || []).filter(transaction => transaction?.type === 'expense').forEach(transaction => {
+  const candidates = (transactions || []).filter(
+    transaction => transaction?.type === 'expense' && !transaction?.userEditedAt,
+  );
+  candidates.forEach(transaction => {
     const identity = [transaction.date, transaction.account, transaction.amount, normalizedName(transaction.name)].join('|');
     const group = byIdentity.get(identity) || [];
     byIdentity.set(identity, [...group, transaction.id]);
@@ -186,7 +189,7 @@ export function findTransactionSignals(transactions) {
   });
   const anomalies = new Map();
   const thresholds = new Map([...byCategory].map(([category, amounts]) => [category, Math.max(500, median(amounts) * 3)]));
-  (transactions || []).filter(transaction => transaction?.type === 'expense').forEach(transaction => {
+  candidates.forEach(transaction => {
     if (Number(transaction.amount) > thresholds.get(transaction.category || '其他')) anomalies.set(transaction.id, '金額異常');
   });
   return { duplicates, anomalies };

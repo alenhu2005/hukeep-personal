@@ -55,6 +55,23 @@ describe('帳本補強功能', () => {
     expect(signals.anomalies.get('d')).toBe('金額異常');
   });
 
+  it('略過已由使用者確認無誤的提醒，避免持續出現在待確認清單', () => {
+    const signals = findTransactionSignals([
+      {
+        id: 'confirmed', type: 'expense', name: '午餐', amount: 900,
+        category: '飲食', account: 'cash', date: '2026-08-01',
+        userEditedAt: '2026-08-01T08:00:00.000Z',
+      },
+      {
+        id: 'other', type: 'expense', name: '午餐', amount: 900,
+        category: '飲食', account: 'cash', date: '2026-08-01',
+      },
+    ]);
+
+    expect(signals.duplicates.size).toBe(0);
+    expect(signals.anomalies.size).toBe(0);
+  });
+
   it('儲存月結快照並計算對帳差額', () => {
     const snapshot = createMonthlySnapshot({
       accounts: [{ id: 'cash', openingBalance: 1000 }],

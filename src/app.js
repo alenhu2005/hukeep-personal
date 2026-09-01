@@ -797,6 +797,11 @@ export function createApp() {
       : accounts[transaction.account] || transaction.account;
     const amount = `${transaction.type === 'expense' ? '-' : transaction.type === 'income' ? '+' : ''}${formatMoney(transaction.amount)}`;
     const aiChanges = Array.isArray(transaction.aiChanges) ? transaction.aiChanges : [];
+    const signals = findTransactionSignals(state.transactions);
+    const attentionReasons = [
+      signals.duplicates.get(transaction.id),
+      signals.anomalies.get(transaction.id),
+    ].filter(Boolean);
     const groupCount = transaction.groupId
       ? state.transactions.filter(item => item.groupId === transaction.groupId).length
       : 0;
@@ -809,6 +814,7 @@ export function createApp() {
         <div><dt>分類</dt><dd>${escapeHtml(category)}</dd></div>
         <div><dt>帳戶</dt><dd>${escapeHtml(account)}</dd></div>
         <div><dt>備註</dt><dd>${escapeHtml(transaction.note || '—')}</dd></div>
+        ${attentionReasons.length ? `<div><dt>需確認原因</dt><dd>${escapeHtml(attentionReasons.join('、'))}</dd></div>` : ''}
         ${transaction.fee ? `<div><dt>轉帳手續費</dt><dd>${escapeHtml(formatMoney(transaction.fee))}</dd></div>` : ''}
         ${groupCount > 1 ? `<div><dt>同段記帳</dt><dd>${groupCount} 筆</dd></div>` : ''}
         <div><dt>AI 審查</dt><dd>${escapeHtml(transaction.aiStatus === 'reviewed' ? '已審查' : transaction.aiStatus === 'pending' ? '待審查' : '—')}</dd></div>
@@ -818,6 +824,12 @@ export function createApp() {
         <div><dt>建立時間</dt><dd>${escapeHtml(formatDetailTimestamp(transaction.createdAt))}</dd></div>
         <div><dt>最後更新</dt><dd>${escapeHtml(formatDetailTimestamp(transaction.updatedAt))}</dd></div>
       </dl>`;
+    if (attentionReasons.length) {
+      detailDialog.querySelector('#transaction-detail-content').insertAdjacentHTML(
+        'beforeend',
+        `<button class="secondary-button detail-confirm-button" type="button" data-confirm-attention-id="${escapeHtml(transaction.id)}">確認無誤</button>`,
+      );
+    }
     detailDialog.showModal();
     if (transaction.receiptId) {
       void readReceiptUrl(transaction.receiptId)
@@ -839,6 +851,29 @@ export function createApp() {
           const preview = detailDialog.querySelector('#transaction-receipt-preview');
           if (preview) preview.textContent = '無法載入收據截圖。';
         });
+    }
+  }
+
+  function confirmTransactionAttention(id) {
+    const transaction = state.transactions.find(item => item.id === id);
+    if (!transaction) return;
+    const signals = findTransactionSignals(state.transactions);
+    const hasAttention = signals.duplicates.has(id) || signals.anomalies.has(id);
+    if (!hasAttention) {
+      showToast('這筆已不需要確認。');
+      return;
+    }
+    try {
+      const transactions = updateTransaction(state.transactions, id, {}, {
+        now: new Date().toISOString(),
+      });
+      if (!persist({ ...state, transactions })) return;
+      setSyncStatus('local', { detail: '已確認無誤，正在同步到 Sheet' });
+      document.querySelector('#transaction-detail-dialog').close();
+      render();
+      showToast('已確認無誤，已從待確認清單移除。');
+    } catch (error) {
+      showToast(error instanceof ValidationError ? error.message : '確認失敗，請再試一次。', 'error');
     }
   }
 
@@ -1364,6 +1399,10 @@ export function createApp() {
   document.querySelector('#transaction-detail-dialog').addEventListener('close', () => {
     if (activeReceiptUrl) URL.revokeObjectURL(activeReceiptUrl);
     activeReceiptUrl = '';
+  });
+  document.querySelector('#transaction-detail-dialog').addEventListener('click', event => {
+    const button = event.target.closest('[data-confirm-attention-id]');
+    if (button) confirmTransactionAttention(button.dataset.confirmAttentionId);
   });
   transactionForm.addEventListener('submit', saveTransaction);
   transactionForm.addEventListener('click', event => {

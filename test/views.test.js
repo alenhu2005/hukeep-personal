@@ -84,7 +84,7 @@ describe('紀錄篩選與月份', () => {
     expect(html).toContain('aria-label="切換月份"');
     expect(html).toContain('data-month-shift="-1"');
     expect(html).toContain('data-month-shift="1"');
-    expect(html).toContain('開啟紀錄後修改');
+    expect(html).toContain('查看原因後確認無誤');
     expect(html).toContain('data-history-preset="attention" aria-pressed="true"');
   });
 });
