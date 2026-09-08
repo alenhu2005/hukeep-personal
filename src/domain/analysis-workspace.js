@@ -1,3 +1,5 @@
+import { expenseAmount, expenseCategory } from './insights.js';
+
 function dateFromText(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value ?? ''))
     ? new Date(`${value}T00:00:00Z`)
@@ -46,32 +48,31 @@ function inRange(transaction, range) {
 }
 
 function totals(transactions) {
-  return transactions.reduce((result, transaction) => {
-    const amount = Number(transaction.amount) || 0;
-    if (transaction.type === 'income') result.income += amount;
-    if (transaction.type === 'expense') result.expense += amount;
-    return result;
-  }, { income: 0, expense: 0 });
+  return transactions.reduce((result, transaction) => ({
+    income: result.income + (transaction.type === 'income' ? Number(transaction.amount) || 0 : 0),
+    expense: result.expense + expenseAmount(transaction),
+  }), { income: 0, expense: 0 });
 }
 
-function compareRange(range) {
-  const days = Math.max(1, Math.round((Date.parse(`${range.to}T00:00:00Z`) - Date.parse(`${range.from}T00:00:00Z`)) / 86_400_000) + 1);
+function compareRange(range, period) {
   const to = addDays(range.from, -1);
-  return { from: addDays(to, -(days - 1)), to };
+  if (period === 'week') return { from: addDays(range.from, -7), to };
+  if (period === 'year') return { from: `${to.slice(0, 4)}-01-01`, to };
+  return { from: `${to.slice(0, 7)}-01`, to };
 }
 
 export function buildAnalysisWorkspace(transactions, options) {
   const period = options?.period;
   const range = analysisRange(period, options?.selectedMonth, options?.today);
   const scoped = (transactions || []).filter(transaction => inRange(transaction, range));
-  const expenseTransactions = scoped.filter(transaction => transaction.type === 'expense');
+  const expenseTransactions = scoped.filter(transaction => expenseAmount(transaction) > 0);
   const totalsNow = totals(scoped);
-  const previousTotals = totals((transactions || []).filter(transaction => inRange(transaction, compareRange(range))));
+  const previousRange = compareRange(range, period);
+  const previousTotals = totals((transactions || []).filter(transaction => inRange(transaction, previousRange)));
   const categoryRows = Object.entries(
     expenseTransactions.reduce((result, transaction) => {
-      const category = transaction.category || '其他';
-      result[category] = (result[category] || 0) + (Number(transaction.amount) || 0);
-      return result;
+      const category = expenseCategory(transaction);
+      return { ...result, [category]: (result[category] || 0) + expenseAmount(transaction) };
     }, {}),
   )
     .map(([category, amount]) => ({
@@ -81,10 +82,10 @@ export function buildAnalysisWorkspace(transactions, options) {
     }))
     .toSorted((left, right) => right.amount - left.amount || left.category.localeCompare(right.category));
   const dailyRows = Object.entries(
-    expenseTransactions.reduce((result, transaction) => {
-      result[transaction.date] = (result[transaction.date] || 0) + (Number(transaction.amount) || 0);
-      return result;
-    }, {}),
+    expenseTransactions.reduce((result, transaction) => ({
+      ...result,
+      [transaction.date]: (result[transaction.date] || 0) + expenseAmount(transaction),
+    }), {}),
   )
     .map(([date, amount]) => ({ date, amount }))
     .toSorted((left, right) => left.date.localeCompare(right.date));
@@ -95,12 +96,12 @@ export function buildAnalysisWorkspace(transactions, options) {
           month,
           amount: expenseTransactions
             .filter(transaction => transaction.date.slice(0, 7) === month)
-            .reduce((sum, transaction) => sum + (Number(transaction.amount) || 0), 0),
+            .reduce((sum, transaction) => sum + expenseAmount(transaction), 0),
         };
       })
     : [];
   const largest = expenseTransactions
-    .map(transaction => ({ name: transaction.name, amount: Number(transaction.amount) || 0, date: transaction.date }))
+    .map(transaction => ({ name: transaction.name, amount: expenseAmount(transaction), date: transaction.date }))
     .toSorted((left, right) => right.amount - left.amount)[0] || null;
   const top = categoryRows[0] || null;
   const change = previousTotals.expense

@@ -68,7 +68,8 @@ describe('帳本補強功能', () => {
       },
     ]);
 
-    expect(signals.duplicates.size).toBe(0);
+    expect(signals.duplicates.has('confirmed')).toBe(false);
+    expect(signals.duplicates.get('other')).toBe('可能重複');
     expect(signals.anomalies.size).toBe(0);
   });
 

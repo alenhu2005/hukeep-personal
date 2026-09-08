@@ -199,6 +199,7 @@ export function updateTransaction(transactions, id, changes, options = {}) {
     ...currentWithoutFee,
     ...normalized,
     ...normalizeOptionalMetadata({ ...current, ...changes }),
+    ...(current.aiStatus === 'pending' ? { aiStatus: 'confirmed' } : {}),
     userEditedAt: updatedAt,
     id: current.id,
     createdAt: current.createdAt,

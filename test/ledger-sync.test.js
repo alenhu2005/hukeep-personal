@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  acknowledgePendingSheetChanges,
   hasPendingSheetChanges,
   mergeLedgerStates,
   reconcileLedgerFromSheet,
@@ -220,5 +221,64 @@ describe('Sheet 雙向更新合併', () => {
     expect(reconcileLedgerFromSheet(before, remote, {}).featureSettings).toEqual(remote.featureSettings);
     expect(hasPendingSheetChanges({})).toBe(false);
     expect(mergeLedgerStates(after, state([])).featureSettings).toEqual(after.featureSettings);
+  });
+
+  it('只確認實際送出且仍是同一版本的交易，保留同步期間的再次編輯', () => {
+    const sentState = state([{ id: 'edited', amount: 100 }, { id: 'done', amount: 50 }]);
+    const currentState = state([{ id: 'edited', amount: 200 }, { id: 'done', amount: 50 }, { id: 'new', amount: 30 }]);
+    const sent = { upserts: ['edited', 'done'], deletes: [] };
+    const current = { upserts: ['edited', 'done', 'new'], deletes: [] };
+    const remaining = acknowledgePendingSheetChanges(current, sent, sentState, currentState);
+
+    expect(remaining.upserts).toEqual(['edited', 'new']);
+    expect(current.upserts).toEqual(['edited', 'done', 'new']);
+    expect(sent.upserts).toEqual(['edited', 'done']);
+    expect(reconcileLedgerFromSheet(currentState, sentState, remaining).transactions).toEqual(currentState.transactions);
+  });
+
+  it('送出後刪除或還原的交易仍保留下一次同步所需的相反操作', () => {
+    const sentState = state([{ id: 'removed-during-sync', amount: 10 }]);
+    const currentState = state([{ id: 'restored-during-sync', amount: 20 }]);
+    const sent = { upserts: ['removed-during-sync'], deletes: ['restored-during-sync', 'deleted'] };
+    const current = { upserts: ['restored-during-sync'], deletes: ['removed-during-sync', 'deleted'] };
+
+    expect(acknowledgePendingSheetChanges(current, sent, sentState, currentState)).toMatchObject({
+      upserts: ['restored-during-sync'],
+      deletes: ['removed-during-sync'],
+    });
+  });
+
+  it('帳戶、預算與功能設定在送出後再次修改仍會保留待同步版本', () => {
+    const sentState = state([], {
+      accounts: [{ id: 'cash', openingBalance: 100 }, { id: 'done', openingBalance: 0 }],
+      budgets: [{ category: '飲食', limit: 1000 }],
+      featureSettings: { recurringRules: [{ id: 'rule', amount: 10 }] },
+    });
+    const currentState = state([], {
+      accounts: [{ id: 'cash', openingBalance: 200 }, { id: 'done', openingBalance: 0 }],
+      budgets: [{ category: '飲食', limit: 2000 }],
+      featureSettings: { recurringRules: [{ id: 'rule', amount: 20 }] },
+    });
+    const sent = {
+      accountUpserts: ['cash', 'done'], accountDeletes: ['closed'],
+      budgetUpserts: ['飲食'], budgetDeletes: ['娛樂'], features: true,
+    };
+
+    expect(acknowledgePendingSheetChanges(sent, sent, sentState, currentState)).toMatchObject({
+      accountUpserts: ['cash'], accountDeletes: [],
+      budgetUpserts: ['飲食'], budgetDeletes: [], features: true,
+    });
+  });
+
+  it('只有本機偏好不同時仍確認已送出的所有版本', () => {
+    const sentState = state([{ id: 'done', amount: 10 }], {
+      accounts: [{ id: 'cash', openingBalance: 100 }],
+      budgets: [{ category: '飲食', limit: 1000 }],
+      featureSettings: { recurringRules: [] },
+    });
+    const sent = { upserts: ['done'], accountUpserts: ['cash'], budgetUpserts: ['飲食'], features: true };
+    const currentState = { ...sentState, preferences: { theme: 'dark' } };
+
+    expect(hasPendingSheetChanges(acknowledgePendingSheetChanges(sent, sent, sentState, currentState))).toBe(false);
   });
 });

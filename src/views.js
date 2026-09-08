@@ -3,6 +3,7 @@ import {
   calculateAccountBalances,
   calculateBudgetProgress,
   calculateTotalAssets,
+  expenseAmount,
   summarizeMonth,
 } from './domain/insights.js';
 import { filterTransactions } from './domain/transactions.js';
@@ -89,9 +90,7 @@ function dailyNetByDate(transactions) {
     const amount = Number(transaction.amount) || 0;
     const next = transaction.type === 'income'
       ? { income: current.income + amount, expense: current.expense }
-      : transaction.type === 'expense'
-        ? { income: current.income, expense: current.expense + amount }
-        : current;
+      : { income: current.income, expense: current.expense + expenseAmount(transaction) };
     result.set(date, { ...next, net: next.income - next.expense });
   });
   return result;

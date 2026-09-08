@@ -11,6 +11,16 @@ function transferFee(transaction) {
   return Number.isInteger(fee) && fee > 0 ? fee : 0;
 }
 
+export function expenseAmount(transaction) {
+  if (!validAmount(transaction)) return 0;
+  if (transaction.type === 'expense') return transaction.amount;
+  return transaction.type === 'transfer' ? transferFee(transaction) : 0;
+}
+
+export function expenseCategory(transaction) {
+  return transaction?.type === 'transfer' ? '帳單' : transaction?.category || '其他';
+}
+
 export function summarizeMonth(transactions, month) {
   const summary = transactions.reduce(
     (result, transaction) => {
@@ -23,16 +33,17 @@ export function summarizeMonth(transactions, month) {
           count: result.count + 1,
         };
       }
-      if (transaction.type !== 'expense') return result;
-      const category = transaction.category || '其他';
+      const amount = expenseAmount(transaction);
+      if (!amount) return result;
+      const category = expenseCategory(transaction);
       return {
         ...result,
-        expense: result.expense + transaction.amount,
-        balance: result.balance - transaction.amount,
+        expense: result.expense + amount,
+        balance: result.balance - amount,
         count: result.count + 1,
         byCategory: {
           ...result.byCategory,
-          [category]: (result.byCategory[category] || 0) + transaction.amount,
+          [category]: (result.byCategory[category] || 0) + amount,
         },
       };
     },

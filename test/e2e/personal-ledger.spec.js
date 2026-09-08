@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-09-01T04:00:00Z'));
   await page.goto('./');
   await page.evaluate(() => {
     localStorage.clear();
@@ -580,13 +581,18 @@ test('手機可直接輸入一次性短碼完成綁定', async ({ page }) => {
 
 test('可設定帳戶初始金額並安全同步到 Google Sheet', async ({ page }) => {
   let receivedBody;
+  let remote = { schemaVersion: 1, accounts: [], transactions: [], budgets: [] };
   await page.route('https://proxy.example/sheet', async route => {
-    receivedBody = route.request().postDataJSON();
+    const body = route.request().postDataJSON();
+    if (body.action === 'syncLedgerChanges') {
+      receivedBody = body;
+      remote = { ...remote, accounts: body.changes.accounts };
+    }
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
         ok: true,
-        data: { accountCount: 5, transactionCount: 0, budgetCount: 0 },
+        data: body.action === 'loadLedgerState' ? remote : { accountCount: 5, transactionCount: 0, budgetCount: 0 },
       }),
     });
   });
@@ -613,9 +619,9 @@ test('可設定帳戶初始金額並安全同步到 Google Sheet', async ({ page
   await expect(page.getByText('同步完成：5 個帳戶、0 筆交易、0 筆預算。')).toBeVisible();
   await expect(page.locator('#sync-indicator')).toContainText('已同步');
   expect(receivedBody).toMatchObject({
-    action: 'syncLedgerState',
+    action: 'syncLedgerChanges',
     proxyToken: 'session-token',
-    state: {
+    changes: {
       accounts: expect.arrayContaining([
         { id: 'cash', name: '現金', openingBalance: 15000 },
         { id: 'sinopac', name: '永豐', openingBalance: -1200 },

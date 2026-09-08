@@ -11,6 +11,7 @@ import {
 } from './domain/category-taxonomy.js';
 import { parseSpokenTransactions } from './domain/spoken-entry.js';
 import {
+  acknowledgePendingSheetChanges,
   hasPendingSheetChanges,
   reconcileLedgerFromSheet,
   updatePendingSheetChanges,
@@ -42,7 +43,6 @@ import {
   enqueueSpokenEntry,
   loadLedgerStateFromSheet,
   syncLedgerChangesToSheet,
-  syncLedgerStateToSheet,
 } from './services/import-proxy.js';
 import {
   createDeviceBindingPayload,
@@ -289,14 +289,6 @@ export function createApp() {
     }
   }
 
-  function clearPendingSheetChanges() {
-    try {
-      localStorage.removeItem(PENDING_SHEET_CHANGES_KEY);
-    } catch {
-      // A stale journal is safer than discarding unsynced local changes.
-    }
-  }
-
   function migrateLegacyBudgetChanges() {
     try {
       if (localStorage.getItem(BUDGET_SYNC_MIGRATION_KEY)) return;
@@ -314,6 +306,7 @@ export function createApp() {
   }
 
   function acknowledgePendingTransactionDelete(transactionId) {
+    if (sheetWriteInFlight || sheetPullInFlight) return;
     const pending = readPendingSheetChanges();
     writePendingSheetChanges({
       ...pending,
@@ -813,11 +806,12 @@ export function createApp() {
         <div><dt>金額</dt><dd class="${escapeHtml(transaction.type)}">${escapeHtml(amount)}</dd></div>
         <div><dt>分類</dt><dd>${escapeHtml(category)}</dd></div>
         <div><dt>帳戶</dt><dd>${escapeHtml(account)}</dd></div>
+        <div><dt>交易日期</dt><dd>${escapeHtml(transaction.date)}</dd></div>
         <div><dt>備註</dt><dd>${escapeHtml(transaction.note || '—')}</dd></div>
         ${attentionReasons.length ? `<div><dt>需確認原因</dt><dd>${escapeHtml(attentionReasons.join('、'))}</dd></div>` : ''}
         ${transaction.fee ? `<div><dt>轉帳手續費</dt><dd>${escapeHtml(formatMoney(transaction.fee))}</dd></div>` : ''}
         ${groupCount > 1 ? `<div><dt>同段記帳</dt><dd>${groupCount} 筆</dd></div>` : ''}
-        <div><dt>AI 審查</dt><dd>${escapeHtml(transaction.aiStatus === 'reviewed' ? '已審查' : transaction.aiStatus === 'pending' ? '待審查' : '—')}</dd></div>
+        <div><dt>AI 審查</dt><dd>${escapeHtml(transaction.aiStatus === 'confirmed' ? '已人工確認' : transaction.aiStatus === 'reviewed' ? '已審查' : transaction.aiStatus === 'pending' ? '待審查' : '—')}</dd></div>
         ${aiChanges.length ? `<div><dt>AI 修正</dt><dd>${aiChanges.map(change => `${escapeHtml(change.field)}：${escapeHtml(change.before)} → ${escapeHtml(change.after)}`).join('<br />')}</dd></div>` : ''}
         ${transaction.userEditedAt ? `<div><dt>人工鎖定</dt><dd>已手動修改，AI 不會覆寫</dd></div>` : ''}
         ${transaction.receiptName ? `<div><dt>收據截圖</dt><dd><span>${escapeHtml(transaction.receiptName)}</span><div id="transaction-receipt-preview" data-receipt-id="${escapeHtml(transaction.receiptId || '')}">載入中…</div></dd></div>` : ''}
@@ -864,7 +858,7 @@ export function createApp() {
       return;
     }
     try {
-      const transactions = updateTransaction(state.transactions, id, {}, {
+      const transactions = updateTransaction(state.transactions, id, { aiStatus: 'confirmed' }, {
         now: new Date().toISOString(),
       });
       if (!persist({ ...state, transactions })) return;
@@ -1200,6 +1194,7 @@ export function createApp() {
     const credentials = proxySession();
     if (
       sheetWriteInFlight ||
+      sheetPullInFlight ||
       document.hidden ||
       !hasPendingSheetChanges(changes) ||
       !credentials.bound
@@ -1210,7 +1205,9 @@ export function createApp() {
     setSyncStatus('syncing');
     try {
       await syncLedgerChangesToSheet({ ...credentials, state, changes });
-      if (state === stateAtRequest) clearPendingSheetChanges();
+      writePendingSheetChanges(acknowledgePendingSheetChanges(
+        readPendingSheetChanges(), changes, stateAtRequest, state,
+      ));
       rememberProxySession(credentials.endpoint, credentials.proxyToken);
       rememberSuccessfulSync();
       completed = true;
@@ -1229,7 +1226,9 @@ export function createApp() {
   function syncOnViewChange() {
     if (document.hidden) return;
     if (hasPendingSheetChanges(readPendingSheetChanges())) {
-      void syncPendingSheetChanges();
+      void syncPendingSheetChanges().then(completed => {
+        if (completed) void refreshSheetInBackground({ force: true });
+      });
       return;
     }
     void refreshSheetInBackground({ force: true });
@@ -1237,32 +1236,29 @@ export function createApp() {
 
   async function syncSheet(event) {
     event.preventDefault();
+    if (sheetWriteInFlight || sheetPullInFlight) {
+      showToast('正在同步，請稍候再試。');
+      return;
+    }
     const button = document.querySelector('#sheet-sync-button');
     const status = document.querySelector('#sheet-sync-status');
     const credentials = proxySession();
     clearTimeout(pendingSheetSyncTimer);
     button.disabled = true;
-    sheetWriteInFlight = true;
     setSyncStatus('syncing');
     status.classList.remove('error');
     status.textContent = '正在安全同步…';
     try {
-      const result = await syncLedgerStateToSheet({
-        ...credentials,
-        state,
-      });
-      if (
-        !persist({
-          ...state,
-          preferences: { ...state.preferences, proxyEndpoint: credentials.endpoint },
-        })
-      ) {
-        return;
+      if (hasPendingSheetChanges(readPendingSheetChanges()) && !await syncPendingSheetChanges()) {
+        throw new Error('尚有資料未上傳，請稍後重試。');
       }
+      sheetWriteInFlight = true;
+      const remote = await loadStableSheetState(credentials);
+      if (!persist(reconcileLedgerFromSheet(state, remote, readPendingSheetChanges()), { sheetSourced: true })) return;
       rememberProxySession(credentials.endpoint, credentials.proxyToken);
-      clearPendingSheetChanges();
       rememberSuccessfulSync();
-      status.textContent = `同步完成：${result.accountCount} 個帳戶、${result.transactionCount} 筆交易、${result.budgetCount} 筆預算。`;
+      render();
+      status.textContent = `同步完成：${state.accounts.length} 個帳戶、${state.transactions.length} 筆交易、${state.budgets.length} 筆預算。`;
       showToast('Google Sheet 同步完成。');
     } catch (error) {
       setSyncStatus('error', { detail: `Sheet 同步失敗：${error.message}` });
@@ -1272,22 +1268,34 @@ export function createApp() {
     } finally {
       sheetWriteInFlight = false;
       button.disabled = false;
+      schedulePendingSheetSync();
     }
   }
 
+  async function loadStableSheetState(credentials) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const before = state;
+      const remote = await loadLedgerStateFromSheet(credentials);
+      if (state === before) return remote;
+    }
+    throw new Error('讀取期間帳本仍在更新，請稍後再同步。');
+  }
+
   async function loadSheet() {
+    if (sheetWriteInFlight || sheetPullInFlight) return;
     const syncButton = document.querySelector('#sheet-sync-button');
     const loadButton = document.querySelector('#sheet-load-button');
     const status = document.querySelector('#sheet-sync-status');
     const credentials = proxySession();
     if (!confirm('要從 Sheet 取回最新資料嗎？Sheet 已刪除的紀錄也會從網頁移除；尚未上傳的本機修改會保留。')) return;
+    sheetPullInFlight = true;
     syncButton.disabled = true;
     loadButton.disabled = true;
     setSyncStatus('syncing');
     status.classList.remove('error');
     status.textContent = '正在從 Sheet 讀取…';
     try {
-      const sheetState = await loadLedgerStateFromSheet({
+      const sheetState = await loadStableSheetState({
         ...credentials,
       });
       const merged = reconcileLedgerFromSheet(state, sheetState, readPendingSheetChanges());
@@ -1310,6 +1318,8 @@ export function createApp() {
     } finally {
       syncButton.disabled = false;
       loadButton.disabled = false;
+      sheetPullInFlight = false;
+      schedulePendingSheetSync();
     }
   }
 
@@ -1329,7 +1339,7 @@ export function createApp() {
     sheetPullInFlight = true;
     setSyncStatus('syncing');
     try {
-      const remote = await loadLedgerStateFromSheet(credentials);
+      const remote = await loadStableSheetState(credentials);
       const reconciled = reconcileLedgerFromSheet(state, remote, readPendingSheetChanges());
       if (!persist(reconciled, { sheetSourced: true })) return;
       rememberSuccessfulSync();
@@ -1338,6 +1348,7 @@ export function createApp() {
       setSyncStatus('error', { detail: `背景 Sheet 更新失敗：${error.message}` });
     } finally {
       sheetPullInFlight = false;
+      schedulePendingSheetSync();
     }
   }
 

@@ -153,6 +153,13 @@ describe('交易集合操作', () => {
     expect(result[0].userEditedAt).toBe('2026-08-29T03:00:00.000Z');
   });
 
+  it('手動修改待審交易後結束 AI 待審狀態', () => {
+    const pending = original.map(item => ({ ...item, aiStatus: 'pending' }));
+    const result = updateTransaction(pending, 'tx-fixed', { note: '已核對' });
+    expect(result[0].aiStatus).toBe('confirmed');
+    expect(pending[0].aiStatus).toBe('pending');
+  });
+
   it('保留口語後台審查狀態與原文', () => {
     const transaction = createTransaction(
       expense({

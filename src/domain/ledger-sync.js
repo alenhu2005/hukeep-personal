@@ -129,6 +129,36 @@ export function hasPendingSheetChanges(value) {
   return coreChanges || Boolean(value?.features);
 }
 
+function acknowledgeEntities(current, sent, sentItems, currentItems, keyOf, upsertField, deleteField) {
+  const sentById = new Map((sentItems ?? []).map(item => [keyOf(item), item]));
+  const currentById = new Map((currentItems ?? []).map(item => [keyOf(item), item]));
+  const sentUpserts = new Set(entityIds(sent?.[upsertField]));
+  const sentDeletes = new Set(entityIds(sent?.[deleteField]));
+  return {
+    [upsertField]: entityIds(current?.[upsertField]).filter(id =>
+      !sentUpserts.has(id) || !sentById.has(id) || !currentById.has(id) ||
+      transactionChanged(sentById.get(id), currentById.get(id))),
+    [deleteField]: entityIds(current?.[deleteField]).filter(id =>
+      !sentDeletes.has(id) || currentById.has(id)),
+  };
+}
+
+// A successful request acknowledges its snapshot, never edits made while it was in flight.
+export function acknowledgePendingSheetChanges(current, sent, sentState, currentState) {
+  const idOf = item => String(item?.id ?? '').trim();
+  return {
+    ...acknowledgeEntities(current, sent, sentState?.transactions, currentState?.transactions,
+      idOf, 'upserts', 'deletes'),
+    ...acknowledgeEntities(current, sent, sentState?.accounts, currentState?.accounts,
+      idOf, 'accountUpserts', 'accountDeletes'),
+    ...acknowledgeEntities(current, sent, sentState?.budgets, currentState?.budgets,
+      item => String(item?.category ?? '').trim(), 'budgetUpserts', 'budgetDeletes'),
+    features: Boolean(current?.features) && (!sent?.features || transactionChanged(
+      sentState?.featureSettings ?? {}, currentState?.featureSettings ?? {},
+    )),
+  };
+}
+
 export function updatePendingSheetChanges(current, beforeState, afterState) {
   const upserts = new Set(transactionIds(current?.upserts));
   const deletes = new Set(transactionIds(current?.deletes));

@@ -4,6 +4,8 @@ import {
   calculateAccountBalances,
   calculateBudgetProgress,
   calculateTotalAssets,
+  expenseAmount,
+  expenseCategory,
   summarizeMonth,
 } from '../src/domain/insights.js';
 
@@ -35,6 +37,54 @@ describe('summarizeMonth', () => {
       count: 0,
       byCategory: {},
     });
+  });
+
+  it('轉帳手續費計入帳單支出，與預算、趨勢及總資產變化一致', () => {
+    const accounts = [
+      { id: 'cash', openingBalance: 1000 },
+      { id: 'bank', openingBalance: 2000 },
+    ];
+    const entries = [
+      { type: 'income', amount: 500, account: 'cash', date: '2026-08-01' },
+      { type: 'expense', amount: 100, category: '帳單', account: 'cash', date: '2026-08-02' },
+      { type: 'transfer', amount: 300, fee: 15, category: '轉帳', account: 'cash', toAccount: 'bank', date: '2026-08-03' },
+      { type: 'transfer', amount: 50, fee: 0, account: 'bank', toAccount: 'cash', date: '2026-08-04' },
+    ];
+    const summary = summarizeMonth(entries, '2026-08');
+
+    expect(summary).toEqual({
+      month: '2026-08', income: 500, expense: 115, balance: 385, count: 3, byCategory: { '帳單': 115 },
+    });
+    expect(calculateTotalAssets(calculateAccountBalances(accounts, entries)) - 3000).toBe(summary.balance);
+    expect(calculateBudgetProgress([{ category: '帳單', limit: 100 }], entries, '2026-08')).toEqual([
+      { category: '帳單', limit: 100, spent: 115, remaining: -15, ratio: 1.15, status: 'over' },
+    ]);
+    expect(buildMonthlyTrend(entries, '2026-08', 1)).toEqual([
+      { month: '2026-08', income: 500, expense: 115, balance: 385 },
+    ]);
+  });
+});
+
+describe('交易支出部分', () => {
+  it('一般支出保留金額與分類，轉帳只取手續費並歸入帳單', () => {
+    expect(expenseAmount({ type: 'expense', amount: 100, fee: 20 })).toBe(100);
+    expect(expenseCategory({ type: 'expense', category: '飲食' })).toBe('飲食');
+    expect(expenseCategory({ type: 'expense', category: '' })).toBe('其他');
+    expect(expenseAmount({ type: 'transfer', amount: 1000, fee: '15' })).toBe(15);
+    expect(expenseCategory({ type: 'transfer', category: '轉帳' })).toBe('帳單');
+  });
+
+  it.each([
+    undefined,
+    { type: 'income', amount: 100, fee: 20 },
+    { type: 'expense', amount: -100 },
+    { type: 'expense', amount: undefined },
+    { type: 'transfer', amount: 1000 },
+    { type: 'transfer', amount: 1000, fee: -15 },
+    { type: 'transfer', amount: 1000, fee: 1.5 },
+    { type: 'transfer', amount: 0, fee: 15 },
+  ])('沒有有效支出部分時回傳零：%j', transaction => {
+    expect(expenseAmount(transaction)).toBe(0);
   });
 });
 

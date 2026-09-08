@@ -130,22 +130,30 @@
 .analysis-cal-cell > strong { font-size: 11px; }
 .analysis-cal-cell > small { overflow: hidden; max-width: 100%; color: var(--muted); font-size: 8px; line-height: 1; text-overflow: ellipsis; white-space: nowrap; }
 .analysis-cal-cell.analysis-net-negative {
-  background: color-mix(in srgb, var(--expense) 32%, var(--surface));
+  background: #f6d2c7;
   border-color: color-mix(in srgb, var(--expense) 60%, var(--line));
 }
 .analysis-cal-cell.analysis-net-positive {
-  background: color-mix(in srgb, var(--income) 32%, var(--surface));
+  background: #cce4d4;
   border-color: color-mix(in srgb, var(--income) 60%, var(--line));
 }
 .analysis-cal-cell.analysis-net-negative > strong,
-.analysis-cal-cell.analysis-net-negative > small { color: var(--expense); }
+.analysis-cal-cell.analysis-net-negative > small { color: #982f22; }
 .analysis-cal-cell.analysis-net-positive > strong,
-.analysis-cal-cell.analysis-net-positive > small { color: var(--income); }
+.analysis-cal-cell.analysis-net-positive > small { color: #14513c; }
 .analysis-cal-empty { background: transparent; }
 
 .analysis-period-selected { border-color: color-mix(in srgb, var(--primary) 55%, var(--line)); color: var(--primary); background: var(--primary-soft); }
 .analysis-period-selected > strong { color: var(--primary); }
 .analysis-period-today { box-shadow: inset 0 0 0 1px var(--primary); }
+
+.analysis-cal-cell.analysis-period-selected { outline: 2px solid var(--primary); outline-offset: 1px; }
+:root[data-theme='dark'] .analysis-cal-cell.analysis-net-negative { background: #4a2925; }
+:root[data-theme='dark'] .analysis-cal-cell.analysis-net-positive { background: #243e2e; }
+:root[data-theme='dark'] .analysis-cal-cell.analysis-net-negative > strong,
+:root[data-theme='dark'] .analysis-cal-cell.analysis-net-negative > small { color: #ffb09b; }
+:root[data-theme='dark'] .analysis-cal-cell.analysis-net-positive > strong,
+:root[data-theme='dark'] .analysis-cal-cell.analysis-net-positive > small { color: #a2dbb2; }
 
 .analysis-year-months {
   display: grid;
