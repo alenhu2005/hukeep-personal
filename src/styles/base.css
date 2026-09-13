@@ -251,6 +251,10 @@ button,
   background: currentColor;
 }
 
+.sync-indicator strong {
+  white-space: nowrap;
+}
+
 .sync-indicator[data-status='syncing'],
 .sync-indicator[data-status='pending'] {
   color: var(--primary);

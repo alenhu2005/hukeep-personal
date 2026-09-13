@@ -11,7 +11,9 @@ function sheet() {
     rows, writes,
     getMaxColumns: () => 30,
     getMaxRows: () => 1000,
+    clearContents() { rows.splice(0, rows.length); },
     getLastRow: () => rows.length,
+    autoResizeColumns() {},
     setFrozenRows() {},
     appendRow(row) { rows.push(row); },
     getRange(start, column, count = 1, width = 1) {
@@ -111,6 +113,45 @@ describe('GAS spoken upload batching', () => {
     expect(lock.tryLock).toHaveBeenCalledWith(5000);
     expect(sheets.size).toBe(0);
     expect(lock.releaseLock).not.toHaveBeenCalled();
+  });
+
+  it('replaying the same client IDs returns existing rows without appending duplicates', () => {
+    const { context, sheets } = harness();
+    const body = {
+      transcript: '午餐100飲料20',
+      groupId: 'voice-group-1',
+      drafts: [
+        { clientId: 'voice-group-1:1', name: '午餐', amount: 100, account: 'cash' },
+        { clientId: 'voice-group-1:2', name: '飲料', amount: 20, account: 'cash' },
+      ],
+    };
+    const first = context.enqueueSpokenEntry_(body);
+    const queueRowsAfterFirst = sheets.get('小帳_語音佇列').rows.length;
+    const transactionRowsAfterFirst = sheets.get('小帳_交易').rows.length;
+    const second = context.enqueueSpokenEntry_(body);
+    expect(second.transactions.map(row => row.id)).toEqual(first.transactions.map(row => row.id));
+    expect(sheets.get('小帳_語音佇列').rows.length).toBe(queueRowsAfterFirst);
+    expect(sheets.get('小帳_交易').rows.length).toBe(transactionRowsAfterFirst);
+  });
+
+  it('uploads an offline voice transaction into the AI queue once the journal reconnects', () => {
+    const { context, sheets } = harness();
+    const changes = {
+      accounts: [], accountDeletes: [],
+      transactions: [{
+        id: 'voice:offline-1', type: 'expense', name: '早餐', amount: 80,
+        category: '飲食', subcategory: '早餐', account: 'cash', toAccount: '',
+        date: '2026-09-13', source: 'voice', sourceId: 'offline-1',
+        rawTranscript: '現金買早餐80', aiStatus: 'pending',
+        createdAt: '2026-09-13T01:00:00.000Z', updatedAt: '2026-09-13T01:00:00.000Z',
+      }],
+      transactionDeletes: [], budgets: [], budgetDeletes: [],
+    };
+    context.syncLedgerChanges_(changes);
+    context.syncLedgerChanges_(changes);
+    expect(sheets.get('小帳_交易').rows).toHaveLength(2);
+    expect(sheets.get('小帳_語音佇列').rows).toHaveLength(2);
+    expect(sheets.get('小帳_語音佇列').rows[1][4]).toBe('voice:offline-1');
   });
 
   it('releases an acquired lock when a Sheet write fails', () => {

@@ -55,6 +55,8 @@ const LAST_SHEET_SYNC_KEY = 'hukeep_last_sheet_sync_at';
 const PENDING_SHEET_CHANGES_KEY = 'hukeep_pending_sheet_changes_v1';
 const BUDGET_SYNC_MIGRATION_KEY = 'hukeep_budget_sync_migrated_v2';
 const AUTO_SYNC_DEBOUNCE_MS = 800;
+const SHEET_RETRY_BASE_DELAY_MS = 4_000;
+const SHEET_RETRY_MAX_DELAY_MS = 60_000;
 const BACKGROUND_PULL_INTERVAL_MS = 2 * 60 * 1000;
 const RESUME_PULL_THRESHOLD_MS = 15 * 1000;
 
@@ -149,8 +151,12 @@ export function createApp() {
   let sheetPullInFlight = false;
   let sheetWriteInFlight = false;
   let voiceUploadInFlight = false;
+  let voiceUploadCount = 0;
   let lastSheetPullAt = 0;
   let pendingSheetSyncTimer = null;
+  let pendingSheetRetryCount = 0;
+  let backgroundPullRetryTimer = null;
+  let backgroundPullRetryCount = 0;
   let deviceBindingLink = '';
   let activeReceiptUrl = '';
 
@@ -324,15 +330,17 @@ export function createApp() {
       syncing: '同步中',
       pending: 'AI 待審',
       synced: '已同步',
-      error: '同步失敗',
+      error: '待重試',
     };
     const lastAt = options.lastAt || storedLastSyncAt();
     const timeLabel = lastAt
-      ? new Intl.DateTimeFormat('zh-TW', { hour: '2-digit', minute: '2-digit' }).format(lastAt)
+      ? new Intl.DateTimeFormat('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false }).format(lastAt)
       : '';
     const label = labels[status] || labels.local;
     indicator.dataset.status = status;
-    indicator.querySelector('strong').textContent = label;
+    indicator.querySelector('strong').textContent = status === 'synced' && timeLabel
+      ? `${label} ${timeLabel}`
+      : label;
     indicator.setAttribute(
       'aria-label',
       options.detail || `${label}${timeLabel ? `，最後更新 ${timeLabel}` : ''}`,
@@ -343,12 +351,17 @@ export function createApp() {
   function rememberSuccessfulSync() {
     const now = Date.now();
     lastSheetPullAt = now;
+    pendingSheetRetryCount = 0;
+    backgroundPullRetryCount = 0;
+    clearTimeout(backgroundPullRetryTimer);
+    backgroundPullRetryTimer = null;
     try {
       localStorage.setItem(LAST_SHEET_SYNC_KEY, String(now));
     } catch {
       // The visual state still updates when timestamp persistence is unavailable.
     }
     setSyncStatus('synced', { lastAt: now });
+    updateSyncHealthStatus();
   }
 
   function persist(nextState, options = {}) {
@@ -360,10 +373,12 @@ export function createApp() {
         const nextPending = updatePendingSheetChanges(previousPending, previousState, savedState);
         writePendingSheetChanges(nextPending);
         if (JSON.stringify(previousPending) !== JSON.stringify(nextPending) && hasPendingSheetChanges(nextPending)) {
+          pendingSheetRetryCount = 0;
           schedulePendingSheetSync();
         }
       }
       state = savedState;
+      updateSyncHealthStatus();
       return true;
     } catch (error) {
       showToast('無法儲存，請先匯出備份並檢查瀏覽器空間。', 'error');
@@ -597,6 +612,38 @@ export function createApp() {
     });
   }
 
+  function localSpokenTransactions(drafts, transcript, groupId) {
+    const now = new Date().toISOString();
+    return drafts.flatMap((draft, index) => {
+      if (!Number.isSafeInteger(Number(draft?.amount)) || Number(draft.amount) <= 0) return [];
+      const clientId = draft.clientId || `${groupId}:${index + 1}`;
+      try {
+        return [createTransaction({
+          ...draft,
+          source: 'voice',
+          sourceId: clientId,
+          rawTranscript: transcript,
+          aiStatus: 'pending',
+          groupId,
+          note: draft.note || '',
+        }, { id: `voice:${clientId}`, now })];
+      } catch {
+        return [];
+      }
+    });
+  }
+
+  function acknowledgeUploadedSpokenTransactions(uploadedIds, sentState) {
+    if (!uploadedIds.length) return;
+    const pending = readPendingSheetChanges();
+    writePendingSheetChanges(acknowledgePendingSheetChanges(
+      pending,
+      { upserts: uploadedIds, deletes: [] },
+      { transactions: sentState.transactions.filter(transaction => uploadedIds.includes(transaction.id)) },
+      state,
+    ));
+  }
+
   async function submitSpokenEntry(value) {
     const button = document.querySelector('#voice-submit-button');
     if (button.disabled) return;
@@ -605,96 +652,122 @@ export function createApp() {
       showToast('請先說一句或輸入口語內容。', 'error');
       return;
     }
-    const status = document.querySelector('#voice-status');
     const credentials = proxySession();
-    if (!credentials.endpoint || !credentials.proxyToken) {
-      status.textContent = '這台裝置尚未綁定 Google Sheet，請先完成裝置授權。';
-      status.hidden = false;
-      showToast('這台裝置尚未綁定 Sheet。', 'error');
+    const drafts = parseSpokenTransactions(transcript, { today: todayInTaipei() });
+    const groupId = globalThis.crypto?.randomUUID?.() || `voice-group-${Date.now()}`;
+    const stableDrafts = drafts.map((draft, index) => ({
+      ...draft,
+      clientId: `${drafts.length > 1 ? 'multi:' : ''}${groupId}:${index + 1}`,
+    }));
+    const localTransactions = localSpokenTransactions(stableDrafts, transcript, groupId);
+    if (!localTransactions.length) {
+      showToast('這段內容沒有辨識到正整數金額，請補上金額後再試。', 'error');
       return;
     }
-    const drafts = parseSpokenTransactions(transcript, { today: todayInTaipei() });
-    const groupId = drafts.length > 1
-      ? (globalThis.crypto?.randomUUID?.() || `voice-group-${Date.now()}`)
-      : '';
-    button.disabled = true;
-    button.textContent = '上傳中…';
-    voiceUploadInFlight = true;
-    setSyncStatus('syncing');
-    status.textContent = '正在寫入 Sheet，AI 會在後台處理。';
-    status.hidden = false;
-    let savedCount = 0;
-    const keepUploaded = result => {
+    // Local-first: the record is successful immediately. The network request
+    // runs in the background and the same stable IDs make retries idempotent.
+    if (credentials.bound) {
+      voiceUploadCount += 1;
+      voiceUploadInFlight = true;
+    }
+    if (!persist({ ...state, transactions: [...state.transactions, ...localTransactions] })) {
+      voiceUploadCount = Math.max(0, voiceUploadCount - (credentials.bound ? 1 : 0));
+      voiceUploadInFlight = voiceUploadCount > 0;
+      return;
+    }
+    document.querySelector('#voice-transcript').value = '';
+    transactionDialog.close();
+    render();
+    setSyncStatus('local', {
+      detail: credentials.bound
+        ? '已先儲存在本機，正在背景同步；若離線會在恢復連線後自動上傳'
+        : '已先儲存在本機，綁定 Sheet 後會自動上傳',
+    });
+    showToast(`已先記下 ${localTransactions.length} 筆，網路恢復後會自動上傳。`);
+    if (!credentials.bound) {
+      schedulePendingSheetSync();
+      return;
+    }
+
+    const sentState = state;
+    const mergeUploaded = result => {
       const uploaded = result.transactions.map(normalizeStoredTransaction).filter(Boolean);
+      if (!uploaded.length) return [];
       const byId = new Map(uploaded.map(transaction => [transaction.id, transaction]));
-      const transactions = [
-        ...state.transactions.map(item => byId.get(item.id) || item),
-        ...uploaded.filter(item => !state.transactions.some(existing => existing.id === item.id)),
-      ];
-      if (!persist({ ...state, transactions }, { sheetSourced: true })) throw new Error('Sheet 已收到，但裝置儲存失敗，請先同步，不要重送。');
-      savedCount += uploaded.length;
-      status.textContent = `Sheet 已收到 ${savedCount} 筆。`;
+      const bySourceId = new Map(uploaded.filter(transaction => transaction.sourceId)
+        .map(transaction => [transaction.sourceId, transaction]));
+      const fingerprint = transaction => [
+        transaction.groupId,
+        transaction.type,
+        transaction.amount,
+        transaction.date,
+        transaction.account,
+        transaction.toAccount || '',
+      ].join('|');
+      const byFingerprint = new Map(uploaded.filter(transaction => transaction.groupId)
+        .map(transaction => [fingerprint(transaction), transaction]));
+      const consumedUploadedIds = new Set();
+      const acknowledgedLocalIds = [];
+      const merged = state.transactions.map(item => {
+        const replacement = byId.get(item.id) || bySourceId.get(item.sourceId) || byFingerprint.get(fingerprint(item));
+        if (replacement) {
+          consumedUploadedIds.add(replacement.id);
+          acknowledgedLocalIds.push(item.id);
+        }
+        // Keep edits made while the background request was in flight.
+        if (replacement && (!item.userEditedAt || item.updatedAt <= sentState.transactions.find(sent => sent.id === item.id)?.updatedAt)) {
+          return replacement;
+        }
+        return item;
+      });
+      const known = new Set(merged.map(transaction => transaction.id));
+      const transactions = [...merged, ...uploaded.filter(transaction =>
+        !consumedUploadedIds.has(transaction.id) && !known.has(transaction.id),
+      )];
+      if (!persist({ ...state, transactions }, { sheetSourced: true })) return [];
+      acknowledgeUploadedSpokenTransactions(acknowledgedLocalIds, sentState);
+      return uploaded;
     };
     try {
       const firstResult = await enqueueSpokenEntry({
         ...credentials,
         transcript,
-        draft: drafts[0],
-        drafts,
+        draft: stableDrafts[0],
+        drafts: stableDrafts,
         groupId,
       });
-      keepUploaded(firstResult);
-      // Older deployed GAS versions only consume the legacy `draft` field and
-      // therefore return one transaction even when the web app has detected
-      // several items. Send the remaining drafts individually in that case,
-      // using a self-contained transcript so legacy AI review cannot merge
-      // them back into one record.
-      const handledDrafts = Math.max(1, Math.min(firstResult.transactions.length, drafts.length));
-      const remainingDrafts = drafts.slice(handledDrafts);
-      const additionalResults = await remainingDrafts.reduce(
-        async (resultsPromise, draft) => {
-          const results = await resultsPromise;
-          const accountName = state.accounts.find(account => account.id === draft.account)?.name
-            || draft.account
-            || '現金';
-          const direction = draft.type === 'income' ? '收入' : '用';
-          const itemTranscript = `${draft.name} ${draft.amount} 元${direction}${accountName}`;
-          const result = await enqueueSpokenEntry({
-            ...credentials,
-            transcript: itemTranscript,
-            draft,
-            drafts: [draft],
-            groupId,
-          });
-          keepUploaded(result);
-          return [...results, result];
-        },
-        Promise.resolve([]),
-      );
-      const uploaded = [firstResult, ...additionalResults]
-        .flatMap(result => result.transactions)
-        .map(normalizeStoredTransaction)
-        .filter(Boolean);
+      mergeUploaded(firstResult);
+      // Older GAS versions consume only `draft`; keep the compatibility path,
+      // but each fallback draft still carries its stable clientId.
+      const handledDrafts = Math.max(1, Math.min(firstResult.transactions.length, stableDrafts.length));
+      const remainingDrafts = stableDrafts.slice(handledDrafts);
+      for (const draft of remainingDrafts) {
+        const accountName = state.accounts.find(account => account.id === draft.account)?.name
+          || draft.account
+          || '現金';
+        const direction = draft.type === 'income' ? '收入' : '用';
+        const itemTranscript = `${draft.name} ${draft.amount} 元${direction}${accountName}`;
+        const result = await enqueueSpokenEntry({
+          ...credentials,
+          transcript: itemTranscript,
+          draft,
+          drafts: [draft],
+          groupId,
+        });
+        mergeUploaded(result);
+      }
       rememberProxySession(credentials.endpoint, credentials.proxyToken);
-      document.querySelector('#voice-transcript').value = '';
-      transactionDialog.close();
       render();
-      setSyncStatus('pending', { detail: '已上傳 Sheet，AI 後台待審' });
-      showToast(
-        uploaded.length > 1
-          ? `已上傳 ${uploaded.length} 筆到 Sheet，AI 會在後台審查更新。`
-          : '已上傳 Sheet，AI 會在後台審查更新。',
-      );
+      updateSyncHealthStatus();
     } catch (error) {
-      if (savedCount) render();
-      status.textContent = savedCount ? `已收到 ${savedCount} 筆，其餘未確認。請先同步核對，不要整段重送。${error.message}` : error.message;
-      status.hidden = false;
-      setSyncStatus('error', { detail: `Sheet 上傳失敗：${error.message}` });
-      showToast(error.message, 'error');
+      // The local record remains authoritative until a later retry succeeds.
+      // Do not alarm the user or ask them to resend the same sentence.
+      console.warn('背景語音上傳暫緩：', error);
+      setSyncStatus('local', { detail: '已儲存在本機，網路恢復後會自動上傳' });
+      updateSyncHealthStatus();
     } finally {
-      button.disabled = false;
-      button.textContent = '直接記帳';
-      voiceUploadInFlight = false;
+      voiceUploadCount = Math.max(0, voiceUploadCount - 1);
+      voiceUploadInFlight = voiceUploadCount > 0;
       schedulePendingSheetSync();
     }
   }
@@ -726,6 +799,13 @@ export function createApp() {
     }
   }
 
+  async function waitForSheetIdle() {
+    for (let attempt = 0; attempt < 150 && (sheetWriteInFlight || sheetPullInFlight || voiceUploadInFlight); attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    return !(sheetWriteInFlight || sheetPullInFlight || voiceUploadInFlight);
+  }
+
   async function deleteTransaction(id) {
     const transaction = state.transactions.find(item => item.id === id);
     if (!transaction) return;
@@ -736,13 +816,19 @@ export function createApp() {
       showToast('這台裝置尚未綁定 Google Sheet，無法確認同步刪除。', 'error');
       return;
     }
-    setSyncStatus('syncing');
+    if (!await waitForSheetIdle()) {
+      showToast('更新尚未完成，稍後會自動接續。');
+      return;
+    }
+    sheetWriteInFlight = true;
     try {
       await deleteLedgerTransactionFromSheet({ ...credentials, transactionId: id });
     } catch (error) {
       setSyncStatus('error', { detail: `Sheet 刪除失敗：${error.message}` });
       showToast(`尚未刪除：${error.message}`, 'error');
       return;
+    } finally {
+      sheetWriteInFlight = false;
     }
     if (!persist({ ...state, transactions: removeTransaction(state.transactions, id) })) return;
     acknowledgePendingTransactionDelete(id);
@@ -764,13 +850,19 @@ export function createApp() {
       showToast('這台裝置尚未綁定 Google Sheet，無法確認同步刪除。', 'error');
       return;
     }
-    setSyncStatus('syncing');
+    if (!await waitForSheetIdle()) {
+      showToast('更新尚未完成，稍後會自動接續。');
+      return;
+    }
+    sheetWriteInFlight = true;
     try {
       await deleteLedgerBudgetFromSheet({ ...credentials, category });
     } catch (error) {
       setSyncStatus('error', { detail: `Sheet 刪除失敗：${error.message}` });
       showToast(`尚未移除預算：${error.message}`, 'error');
       return;
+    } finally {
+      sheetWriteInFlight = false;
     }
     if (!persist({ ...state, budgets: removeBudget(state.budgets, category) })) return;
     rememberProxySession(credentials.endpoint, credentials.proxyToken);
@@ -1055,6 +1147,13 @@ export function createApp() {
     if (!reconciliationForm.elements.date.value) reconciliationForm.elements.date.value = todayInTaipei();
     renderRecurringRules();
     renderReconciliations();
+    const sheetStatus = document.querySelector('#sheet-sync-status');
+    if (sheetStatus && !sheetStatus.classList.contains('error')) {
+      const lastAt = storedLastSyncAt();
+      sheetStatus.textContent = lastAt
+        ? `上次同步：${formatDetailTimestamp(lastAt)}`
+        : '尚未成功同步。';
+    }
     updateSyncHealthStatus();
     updateDeviceBindingStatus();
   }
@@ -1105,7 +1204,9 @@ export function createApp() {
     const queued = [pending.upserts, pending.deletes, pending.accountUpserts, pending.accountDeletes, pending.budgetUpserts, pending.budgetDeletes]
       .reduce((sum, values) => sum + values.length, 0) + (pending.features ? 1 : 0);
     const review = state.transactions.filter(transaction => transaction.aiStatus === 'pending').length;
-    status.textContent = `同步佇列 ${queued} 項 · AI 待審 ${review} 筆 · 切換頁面時會自動同步。`;
+    const lastAt = storedLastSyncAt();
+    const lastLabel = lastAt ? `最後同步 ${formatDetailTimestamp(lastAt)}` : '尚未成功同步';
+    status.textContent = `${lastLabel} · 待上傳 ${queued} 項 · AI 待審 ${review} 筆 · 連線恢復後自動續傳。`;
   }
 
   function saveRecurringRule(event) {
@@ -1196,11 +1297,20 @@ export function createApp() {
 
   function schedulePendingSheetSync(delay = AUTO_SYNC_DEBOUNCE_MS) {
     clearTimeout(pendingSheetSyncTimer);
-    if (document.hidden || !hasPendingSheetChanges(readPendingSheetChanges())) return;
+    if (document.hidden || navigator.onLine === false || !hasPendingSheetChanges(readPendingSheetChanges())) return;
     pendingSheetSyncTimer = setTimeout(() => {
       pendingSheetSyncTimer = null;
       void syncPendingSheetChanges();
     }, delay);
+  }
+
+  function schedulePendingSheetRetry() {
+    pendingSheetRetryCount = Math.min(pendingSheetRetryCount + 1, 8);
+    const delay = Math.min(
+      SHEET_RETRY_BASE_DELAY_MS * (2 ** (pendingSheetRetryCount - 1)),
+      SHEET_RETRY_MAX_DELAY_MS,
+    );
+    schedulePendingSheetSync(delay);
   }
 
   async function syncPendingSheetChanges() {
@@ -1229,13 +1339,19 @@ export function createApp() {
       rememberSuccessfulSync();
       completed = true;
       return true;
-    } catch (error) {
-      setSyncStatus('error', { detail: `自動同步失敗：${error.message}` });
+    } catch {
+      // Keep the local journal authoritative and retry quietly. The user can
+      // continue using the app while the next online window drains the queue.
+      setSyncStatus('local', { detail: '已儲存在本機，連線恢復後會自動上傳' });
+      schedulePendingSheetRetry();
       return false;
     } finally {
       sheetWriteInFlight = false;
       if (completed && state !== stateAtRequest && hasPendingSheetChanges(readPendingSheetChanges())) {
-        schedulePendingSheetSync();
+        // A local edit landed while this request was in flight. Drain it
+        // immediately after the response so it cannot sit behind the normal
+        // debounce window (and never gets folded into a duplicate retry).
+        schedulePendingSheetSync(0);
       }
     }
   }
@@ -1245,7 +1361,7 @@ export function createApp() {
     if (hasPendingSheetChanges(readPendingSheetChanges())) {
       void syncPendingSheetChanges().then(completed => {
         if (completed) void refreshSheetInBackground({ force: true });
-      });
+      }).catch(() => schedulePendingSheetRetry());
       return;
     }
     void refreshSheetInBackground({ force: true });
@@ -1254,12 +1370,19 @@ export function createApp() {
   async function syncSheet(event) {
     event.preventDefault();
     if (sheetWriteInFlight || sheetPullInFlight || voiceUploadInFlight) {
-      showToast('正在同步，請稍候再試。');
-      return;
+      if (!await waitForSheetIdle()) {
+        showToast('更新尚未完成，稍後會自動接續。');
+        return;
+      }
     }
     const button = document.querySelector('#sheet-sync-button');
     const status = document.querySelector('#sheet-sync-status');
     const credentials = proxySession();
+    if (!credentials.bound) {
+      setSyncStatus('local', { detail: '本機資料已保留，綁定 Sheet 後會自動上傳' });
+      showToast('尚未綁定 Google Sheet，已先保留本機資料。', 'error');
+      return;
+    }
     clearTimeout(pendingSheetSyncTimer);
     button.disabled = true;
     setSyncStatus('syncing');
@@ -1278,10 +1401,11 @@ export function createApp() {
       status.textContent = `同步完成：${state.accounts.length} 個帳戶、${state.transactions.length} 筆交易、${state.budgets.length} 筆預算。`;
       showToast('Google Sheet 同步完成。');
     } catch (error) {
-      setSyncStatus('error', { detail: `Sheet 同步失敗：${error.message}` });
-      status.classList.add('error');
-      status.textContent = error.message;
-      showToast(error.message, 'error');
+      setSyncStatus('local', { detail: '本機資料已保留，連線恢復後會自動續傳' });
+      status.classList.remove('error');
+      status.textContent = `本機資料已保留，稍後會自動續傳。${error.message}`;
+      schedulePendingSheetRetry();
+      showToast('本機資料已保留，稍後會自動續傳。');
     } finally {
       sheetWriteInFlight = false;
       button.disabled = false;
@@ -1299,12 +1423,19 @@ export function createApp() {
   }
 
   async function loadSheet() {
-    if (sheetWriteInFlight || sheetPullInFlight || voiceUploadInFlight) return;
     const syncButton = document.querySelector('#sheet-sync-button');
     const loadButton = document.querySelector('#sheet-load-button');
     const status = document.querySelector('#sheet-sync-status');
     const credentials = proxySession();
     if (!confirm('要從 Sheet 取回最新資料嗎？Sheet 已刪除的紀錄也會從網頁移除；尚未上傳的本機修改會保留。')) return;
+    if (!credentials.bound) {
+      showToast('尚未綁定 Google Sheet，已先保留本機資料。', 'error');
+      return;
+    }
+    if (!await waitForSheetIdle()) {
+      showToast('目前仍在更新資料，請稍後再讀取。');
+      return;
+    }
     sheetPullInFlight = true;
     syncButton.disabled = true;
     loadButton.disabled = true;
@@ -1328,16 +1459,27 @@ export function createApp() {
       status.textContent = `讀取完成：${sheetState.accounts.length} 個帳戶、${sheetState.transactions.length} 筆交易、${sheetState.budgets.length} 筆預算。`;
       showToast('Google Sheet 資料已更新到本機。');
     } catch (error) {
-      setSyncStatus('error', { detail: `Sheet 讀取失敗：${error.message}` });
-      status.classList.add('error');
-      status.textContent = error.message;
-      showToast(error.message, 'error');
+      setSyncStatus(lastSheetPullAt ? 'synced' : 'local', { lastAt: lastSheetPullAt });
+      status.classList.remove('error');
+      status.textContent = `讀取暫緩，本機資料未變更。${error.message}`;
+      scheduleBackgroundPullRetry();
+      showToast('讀取暫緩，本機資料未變更。');
     } finally {
       syncButton.disabled = false;
       loadButton.disabled = false;
       sheetPullInFlight = false;
       schedulePendingSheetSync();
     }
+  }
+
+  function scheduleBackgroundPullRetry() {
+    if (backgroundPullRetryTimer || document.hidden || navigator.onLine === false) return;
+    backgroundPullRetryCount = Math.min(backgroundPullRetryCount + 1, 4);
+    const delay = Math.min(SHEET_RETRY_BASE_DELAY_MS * (2 ** (backgroundPullRetryCount - 1)), 60_000);
+    backgroundPullRetryTimer = setTimeout(() => {
+      backgroundPullRetryTimer = null;
+      void refreshSheetInBackground({ force: true });
+    }, delay);
   }
 
   async function refreshSheetInBackground(options = {}) {
@@ -1362,8 +1504,11 @@ export function createApp() {
       if (!persist(reconciled, { sheetSourced: true })) return;
       rememberSuccessfulSync();
       render();
-    } catch (error) {
-      setSyncStatus('error', { detail: `背景 Sheet 更新失敗：${error.message}` });
+    } catch {
+      // Background pulls are best-effort. Keep the last known good state and
+      // try again later without flashing an alarming failure state.
+      setSyncStatus(lastSheetPullAt ? 'synced' : 'local', { lastAt: lastSheetPullAt });
+      scheduleBackgroundPullRetry();
     } finally {
       sheetPullInFlight = false;
       schedulePendingSheetSync();
@@ -1487,7 +1632,13 @@ export function createApp() {
       }
     }
   });
-  window.addEventListener('online', () => syncOnViewChange());
+  window.addEventListener('online', () => {
+    pendingSheetRetryCount = 0;
+    backgroundPullRetryCount = 0;
+    clearTimeout(backgroundPullRetryTimer);
+    backgroundPullRetryTimer = null;
+    syncOnViewChange();
+  });
 
   smartImportController = createSmartImportController({
     getState: () => state,

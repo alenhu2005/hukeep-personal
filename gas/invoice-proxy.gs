@@ -215,6 +215,7 @@ function syncLedgerState_(state) {
     replaceSheetContents_(transactionSheet, mergeLedgerTransactionRows_(transactionSheet, transactionRows));
     replaceSheetContents_(getOrCreateSheet_(spreadsheet, '小帳_設定'), settingsRows);
     writeFeatureSettings_(spreadsheet, featureSettings);
+    ensureVoiceQueueForTransactions_(spreadsheet, transactions);
     SpreadsheetApp.flush();
   } finally {
     lock.releaseLock();
@@ -269,6 +270,7 @@ function syncLedgerChanges_(changes) {
     applySheetChanges_(accountSheet, accountRows, accountDeletes, false, ['帳戶ID', '帳戶名稱', '初始金額']);
     applySheetChanges_(transactionSheet, transactionRows, transactionDeletes, true, LEDGER_TRANSACTION_HEADERS);
     applySheetChanges_(settingsSheet, budgetRows, budgetDeletes.map(function (category) { return '預算:' + category; }), false, ['項目', '值'], ['schemaVersion', 'syncedAt']);
+    ensureVoiceQueueForTransactions_(spreadsheet, transactions);
     upsertSheetRowById_(settingsSheet, ['schemaVersion', 1]);
     upsertSheetRowById_(settingsSheet, ['syncedAt', syncedAt]);
     if (featureSettings) writeFeatureSettings_(spreadsheet, featureSettings);
@@ -310,7 +312,9 @@ function applySheetChanges_(sheet, upserts, deletes, preserveTransactions, heade
       if (keep.has(boundedText_(row[0], 80)) && !rows.some(function (candidate) { return candidate[0] === row[0]; })) rows.push(row);
     });
   }
-  replaceSheetContents_(sheet, [headers].concat(rows));
+  // Incremental sync rewrites one compact range; avoid expensive column
+  // auto-resizing on every phone edit. Full syncs keep the readable layout.
+  replaceSheetContents_(sheet, [headers].concat(rows), { resizeColumns: false });
 }
 
 function deleteLedgerTransaction_(value) {
@@ -523,7 +527,8 @@ function getOrCreateSheet_(spreadsheet, name) {
   return spreadsheet.getSheetByName(name) || spreadsheet.insertSheet(name);
 }
 
-function replaceSheetContents_(sheet, rows) {
+function replaceSheetContents_(sheet, rows, options) {
+  var resizeColumns = !options || options.resizeColumns !== false;
   var rowCount = Math.max(1, rows.length);
   var columnCount = Math.max(1, rows[0].length);
   if (sheet.getMaxRows() < rowCount) {
@@ -535,7 +540,7 @@ function replaceSheetContents_(sheet, rows) {
   sheet.clearContents();
   sheet.getRange(1, 1, rowCount, columnCount).setValues(rows);
   sheet.setFrozenRows(1);
-  sheet.autoResizeColumns(1, columnCount);
+  if (resizeColumns) sheet.autoResizeColumns(1, columnCount);
 }
 
 function normalizeFeatureSettings_(value) {
@@ -624,7 +629,11 @@ function enqueueSpokenEntry_(body) {
   var groupId = multiItem ? (requestedGroupId || queueGroupId) : '';
   var queueIds = [];
   var transactions = drafts.map(function (draft, index) {
-    var queueId = multiItem ? 'multi:' + queueGroupId + ':' + (index + 1) : queueGroupId;
+    var clientId = boundedText_(draft && draft.clientId, 80);
+    if (!/^[a-z0-9:_-]{1,80}$/i.test(clientId)) clientId = '';
+    var queueId = clientId || (requestedGroupId
+      ? (multiItem ? 'multi:' + requestedGroupId + ':' + (index + 1) : requestedGroupId)
+      : (multiItem ? 'multi:' + queueGroupId + ':' + (index + 1) : queueGroupId));
     queueIds.push(queueId);
     return normalizeSpokenDraft_(draft, transcript, queueId, now, groupId);
   });
@@ -645,11 +654,48 @@ function enqueueSpokenEntry_(body) {
     var queueSheet = getOrCreateSheet_(spreadsheet, '小帳_語音佇列');
     ensureSheetHeader_(queueSheet, SPOKEN_QUEUE_HEADERS);
     var transactionSheet = getOrCreateSheet_(spreadsheet, '小帳_交易');
-    // Each submission owns fresh UUIDs; existing-row scans are unnecessary.
     if (transactionRows.length) ensureLedgerTransactionSheet_(transactionSheet);
-    appendSpokenRows_(queueSheet, queueRows);
-    appendSpokenRows_(transactionSheet, transactionRows);
+    var existingQueue = queueSheet.getLastRow() < 2
+      ? []
+      : queueSheet.getRange(2, 1, queueSheet.getLastRow() - 1, SPOKEN_QUEUE_HEADERS.length).getValues();
+    var existingQueueById = new Map(existingQueue.map(function (row) {
+      return [boundedText_(row[0], 80), row];
+    }).filter(function (entry) { return entry[0]; }));
+    var existingTransactions = transactionSheet.getLastRow() < 2
+      ? []
+      : transactionSheet.getRange(2, 1, transactionSheet.getLastRow() - 1, LEDGER_TRANSACTION_HEADERS.length).getValues();
+    var existingTransactionById = new Map(existingTransactions.map(function (row) {
+      return [boundedText_(row[0], 80), row];
+    }).filter(function (entry) { return entry[0]; }));
+    var newQueueRows = [];
+    var newTransactionRows = [];
+    var returnedTransactions = [];
+    transactions.forEach(function (transaction, index) {
+      var queueId = queueIds[index];
+      var existingQueueRow = existingQueueById.get(queueId);
+      var existingTransactionId = boundedText_(existingQueueRow && existingQueueRow[4], 80);
+      var existingTransactionRow = existingTransactionId
+        ? existingTransactionById.get(existingTransactionId)
+        : existingTransactionById.get(transaction.id);
+      if (existingTransactionRow) {
+        var existingTransaction = ledgerTransactionFromRow_(existingTransactionRow);
+        if (existingTransaction.id && existingTransaction.amount > 0) returnedTransactions.push(existingTransaction);
+        return;
+      }
+      if (!existingQueueRow) {
+        newQueueRows.push(queueRows[index]);
+        existingQueueById.set(queueId, queueRows[index]);
+      }
+      if (transaction.amount > 0) {
+        newTransactionRows.push(transactionRows.find(function (row) { return row[0] === transaction.id; }));
+        existingTransactionById.set(transaction.id, newTransactionRows[newTransactionRows.length - 1]);
+        returnedTransactions.push(transaction);
+      }
+    });
+    appendSpokenRows_(queueSheet, newQueueRows);
+    appendSpokenRows_(transactionSheet, newTransactionRows);
     SpreadsheetApp.flush();
+    transactions = returnedTransactions;
   } finally {
     lock.releaseLock();
   }
@@ -676,6 +722,54 @@ function appendSpokenRows_(sheet, rows) {
     sheet.insertRowsAfter(availableRows, requiredRows - availableRows);
   }
   sheet.getRange(start, 1, rows.length, rows[0].length).setValues(rows);
+}
+
+// Local-first voice entries arrive through the normal keyed ledger journal
+// when the original enqueue request was offline. Ensure they still enter the
+// AI queue, while making retries idempotent by sourceId/transactionId.
+function ensureVoiceQueueForTransactions_(spreadsheet, transactions) {
+  var pending = (Array.isArray(transactions) ? transactions : []).filter(function (transaction) {
+    return transaction && transaction.source === 'voice' && transaction.aiStatus === 'pending' &&
+      transaction.amount > 0 && transaction.rawTranscript;
+  });
+  if (!pending.length) return;
+  var queueSheet = getOrCreateSheet_(spreadsheet, '小帳_語音佇列');
+  ensureSheetHeader_(queueSheet, SPOKEN_QUEUE_HEADERS);
+  var existing = queueSheet.getLastRow() < 2
+    ? []
+    : queueSheet.getRange(2, 1, queueSheet.getLastRow() - 1, SPOKEN_QUEUE_HEADERS.length).getValues();
+  var existingKeys = new Set();
+  existing.forEach(function (row) {
+    [row[0], row[4]].forEach(function (value) {
+      var key = boundedText_(value, 80);
+      if (key) existingKeys.add(key);
+    });
+  });
+  var rows = pending.flatMap(function (transaction) {
+    var queueId = boundedText_(transaction.sourceId, 80) || boundedText_(transaction.id, 80);
+    var transactionId = boundedText_(transaction.id, 80);
+    if (!queueId || !transactionId || existingKeys.has(queueId) || existingKeys.has(transactionId)) return [];
+    existingKeys.add(queueId);
+    existingKeys.add(transactionId);
+    return [[
+      safeSheetText_(queueId, 80),
+      safeSheetText_(transaction.rawTranscript, 240),
+      safeSheetText_(transaction.createdAt || new Date().toISOString(), 40),
+      'pending',
+      safeSheetText_(transactionId, 80),
+      '',
+      safeSheetText_(transaction.updatedAt || new Date().toISOString(), 40),
+      0,
+    ]];
+  });
+  appendSpokenRows_(queueSheet, rows);
+  if (rows.length) {
+    try {
+      ensureSpokenQueueTrigger_();
+    } catch (triggerError) {
+      console.warn('口語佇列已寫入，但背景觸發器尚未授權：' + publicError_(triggerError));
+    }
+  }
 }
 
 function spokenDraftsFromBody_(body) {
