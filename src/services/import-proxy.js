@@ -300,15 +300,21 @@ export async function syncLedgerStateToSheet(input, options = {}) {
 }
 
 export async function syncLedgerChangesToSheet(input, options = {}) {
-  const data = await postProxy(
-    input?.endpoint,
-    {
-      action: 'syncLedgerChanges',
-      proxyToken: cleanText(input?.proxyToken, 300),
-      changes: projectLedgerChangesForSheet(input?.state, input?.changes),
-    },
-    options,
-  );
+  const payload = {
+    action: 'syncLedgerChanges',
+    proxyToken: cleanText(input?.proxyToken, 300),
+    changes: projectLedgerChangesForSheet(input?.state, input?.changes),
+  };
+  let data;
+  try {
+    data = await postProxy(input?.endpoint, payload, options);
+  } catch (error) {
+    // Upserts/deletes are keyed by stable IDs in GAS, so one short retry is
+    // safe and resolves transient mobile network or Apps Script cold starts.
+    if (options.signal?.aborted) throw error;
+    await new Promise(resolve => setTimeout(resolve, 600));
+    data = await postProxy(input?.endpoint, payload, options);
+  }
   const counts = ['accountCount', 'transactionCount', 'budgetCount'];
   if (!counts.every(field => Number.isInteger(data?.[field]) && data[field] >= 0)) {
     throw new Error('Sheet 自動同步回傳格式不正確');
@@ -356,14 +362,15 @@ export async function deleteLedgerBudgetFromSheet(input, options = {}) {
 }
 
 export async function loadLedgerStateFromSheet(input, options = {}) {
-  const data = await postProxy(
-    input?.endpoint,
-    {
-      action: 'loadLedgerState',
-      proxyToken: cleanText(input?.proxyToken, 300),
-    },
-    options,
-  );
+  const payload = { action: 'loadLedgerState', proxyToken: cleanText(input?.proxyToken, 300) };
+  let data;
+  try {
+    data = await postProxy(input?.endpoint, payload, options);
+  } catch (error) {
+    if (options.signal?.aborted) throw error;
+    await new Promise(resolve => setTimeout(resolve, 600));
+    data = await postProxy(input?.endpoint, payload, options);
+  }
   if (
     data?.schemaVersion !== 1 ||
     !Array.isArray(data.accounts) ||
