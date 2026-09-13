@@ -131,6 +131,12 @@ export function renderOverview(state, month) {
   const totalBudget = budgetProgress.reduce((sum, item) => sum + item.limit, 0);
   const budgetSpent = budgetProgress.reduce((sum, item) => sum + item.spent, 0);
   const budgetRatio = totalBudget ? Math.min(1, budgetSpent / totalBudget) : 0;
+  const overviewToday = todayInTaipei();
+  const overviewMonthEnd = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 0)).getUTCDate();
+  const overviewDaysLeft = overviewToday.slice(0, 7) === month
+    ? Math.max(1, overviewMonthEnd - Number(overviewToday.slice(8)) + 1)
+    : overviewMonthEnd;
+  const dailyBudgetAllowance = totalBudget ? Math.floor(Math.max(0, totalBudget - budgetSpent) / overviewDaysLeft) : 0;
   const signals = findTransactionSignals(state.transactions);
   const pendingReviews = state.transactions.filter(transaction => transaction.aiStatus === 'pending').length;
   const attentionCount = new Set([...signals.duplicates.keys(), ...signals.anomalies.keys()]).size;
@@ -198,7 +204,7 @@ export function renderOverview(state, month) {
         <div class="section-heading"><h2>預算</h2><button type="button" data-go-view="budgets">設定</button></div>
         <div class="budget-dial-row">
           <div class="budget-dial" style="--progress:${budgetRatio * 360}deg"><span>${Math.round(budgetRatio * 100)}<small>%</small></span></div>
-          <div><strong>${totalBudget ? formatMoney(Math.max(0, totalBudget - budgetSpent)) : '尚未設定'}</strong><p>${totalBudget ? `已用 ${formatMoney(budgetSpent)} / ${formatMoney(totalBudget)}` : '設定每月分類上限'}</p></div>
+          <div><strong>${totalBudget ? formatMoney(Math.max(0, totalBudget - budgetSpent)) : '尚未設定'}</strong><p>${totalBudget ? `已用 ${formatMoney(budgetSpent)} / ${formatMoney(totalBudget)}` : '設定每月分類上限'}</p>${totalBudget ? `<small class="budget-daily-limit">每天還能用 ${formatMoney(dailyBudgetAllowance)}</small>` : ''}</div>
         </div>
       </section>
     </div>
