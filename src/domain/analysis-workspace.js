@@ -61,6 +61,24 @@ function compareRange(range, period) {
   return { from: `${to.slice(0, 7)}-01`, to };
 }
 
+function categoryGroups(transactions, type) {
+  const amountOf = row => type === 'income' ? Number(row.amount) || 0 : expenseAmount(row);
+  const rows = transactions.filter(row => type === 'income' ? row.type === 'income' && amountOf(row) > 0 : amountOf(row) > 0);
+  const total = rows.reduce((sum, row) => sum + amountOf(row), 0);
+  const categoryOf = row => type === 'income' ? row.category || '其他' : expenseCategory(row);
+  return [...new Set(rows.map(categoryOf))].map(category => {
+    const members = rows.filter(row => categoryOf(row) === category);
+    const amount = members.reduce((sum, row) => sum + amountOf(row), 0);
+    const subcategoryOf = row => row.type === 'transfer' ? '轉帳手續費' : row.subcategory || '未細分';
+    const children = [...new Set(members.map(subcategoryOf))].map(subcategory => {
+      const transactions = members.filter(row => subcategoryOf(row) === subcategory);
+      const subtotal = transactions.reduce((sum, row) => sum + amountOf(row), 0);
+      return { subcategory, amount: subtotal, count: transactions.length, percent: Math.round(subtotal / amount * 100), transactions };
+    }).toSorted((a, b) => b.amount - a.amount || a.subcategory.localeCompare(b.subcategory));
+    return { category, amount, count: members.length, percent: Math.round(amount / total * 100), children };
+  }).toSorted((a, b) => b.amount - a.amount || a.category.localeCompare(b.category));
+}
+
 export function buildAnalysisWorkspace(transactions, options) {
   const period = options?.period;
   const range = analysisRange(period, options?.selectedMonth, options?.today);
@@ -112,7 +130,18 @@ export function buildAnalysisWorkspace(transactions, options) {
     change == null ? { label: '較前期', value: '尚無可比較資料' } : { label: '較前期', value: `${change > 0 ? '+' : ''}${change}%` },
     largest ? { label: '最大單筆', value: `${largest.name || '未命名'} · ${largest.amount}` } : { label: '最大單筆', value: '尚無資料' },
   ];
+  const incomeGroups = categoryGroups(scoped, 'income');
+  const incomeLargest = scoped.filter(row => row.type === 'income').toSorted((a, b) => b.amount - a.amount)[0];
+  const incomeChange = previousTotals.income ? Math.round((totalsNow.income / previousTotals.income - 1) * 100) : null;
+  const incomeInsights = [
+    { label: '主要來源', value: incomeGroups.length ? `${incomeGroups[0].category} ${incomeGroups[0].percent}%` : '尚無收入' },
+    { label: '較前期', value: incomeChange == null ? '尚無可比較資料' : `${incomeChange > 0 ? '+' : ''}${incomeChange}%` },
+    { label: '最大單筆', value: incomeLargest ? `${incomeLargest.name || '未命名'} · ${incomeLargest.amount}` : '尚無資料' },
+  ];
   return {
+    incomeGroups,
+    expenseGroups: categoryGroups(scoped, 'expense'),
+    incomeInsights,
     range,
     scoped,
     expenseTransactions,

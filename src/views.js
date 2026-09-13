@@ -395,17 +395,28 @@ export function renderInsights(state, month, options = {}) {
     : period === 'month'
       ? `<div class="analysis-cal-weekdays" aria-hidden="true"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div><div class="analysis-cal-grid" role="grid" aria-label="月曆，點選單日">${calendarCells}</div>`
       : `<div class="analysis-year-months" role="group" aria-label="各月支出">${yearMonths}</div>`;
-  const categoryColors = ['#236b56', '#d96545', '#c28724', '#71896b', '#7a6b96', '#4d7c9a', '#9b5b76', '#7b7e51'];
-  let angle = 0;
-  const pieStops = workspace.categoryRows.slice(0, 8).map((item, index) => {
-    const start = angle;
-    angle += item.percent;
-    return `${categoryColors[index]} ${start}% ${angle}%`;
-  });
-  const pieStyle = pieStops.length ? `background:conic-gradient(${pieStops.join(', ')})` : '';
-  const categoryLegend = workspace.categoryRows.length
-    ? workspace.categoryRows.slice(0, 8).map((item, index) => `<div class="analysis-legend-row"><i style="background:${categoryColors[index]}"></i>${categoryMark(item.category)}<strong>${escapeHtml(item.category)}</strong><small>${item.percent}%</small><b>${formatCompactMoney(item.amount)}</b></div>`).join('')
-    : emptyState('本期沒有支出');
+  const categoryChart = (groups, total, label) => {
+    let angle = 0;
+    const stops = groups.map((group, index) => {
+      const start = angle;
+      angle += group.amount / total * 100;
+      return `hsl(${(index * 137 + 150) % 360} 35% 45%) ${start}% ${angle}%`;
+    });
+    return groups.length ? `<div class="analysis-donut" aria-hidden="true" style="background:conic-gradient(${stops.join(', ')})"><div><span>${label}</span><strong>${formatCompactMoney(total)}</strong></div></div>` : '';
+  };
+  const breakdown = (groups, type, label) => `<section class="daily-analysis-breakdown" aria-label="分類${label}">
+    <div class="daily-analysis-section-head"><strong>分類${label}</strong><small>${formatMoney(workspace.totals[type])}</small></div>
+    ${categoryChart(groups, workspace.totals[type], label)}
+    <div class="analysis-category-tree">${groups.length ? groups.map((group, index) => `<details class="analysis-category-group">
+      <summary><i aria-hidden="true" style="background:hsl(${(index * 137 + 150) % 360} 35% 45%)"></i><strong>${escapeHtml(group.category)}</strong><span>${group.count} 筆 · ${group.percent}%</span><b>${formatMoney(group.amount)}</b></summary>
+      <div class="analysis-subcategories"><small>小分類占比為此大分類內占比</small>${group.children.map(child => `<details>
+        <summary><strong>${escapeHtml(child.subcategory)}</strong><span>${child.count} 筆 · ${child.percent}%</span><b>${formatMoney(child.amount)}</b></summary>
+        <div class="transaction-list compact">${rowsForState(state, child.transactions.map(row => row.type === 'transfer'
+          ? { ...row, type: 'expense', amount: expenseAmount(row), category: '帳單', subcategory: '轉帳手續費', name: `${row.name || '轉帳'}（手續費）` }
+          : row))}</div>
+      </details>`).join('')}</div>
+    </details>`).join('') : emptyState(`本期沒有${label}`)}</div>
+  </section>`;
   return `<section class="view insights-view" aria-labelledby="insights-title">
     <h1 id="insights-title" class="visually-hidden">趨勢</h1>
     <section class="daily-analysis-shell">
@@ -424,10 +435,12 @@ export function renderInsights(state, month, options = {}) {
         <div class="daily-analysis-section-head"><strong>分析重點</strong><small>${periodLabel}</small></div>
         <div class="daily-analysis-insight-list">${workspace.insights.map(item => `<div><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></div>`).join('')}</div>
       </section>
-      <section class="daily-analysis-breakdown" aria-label="分類支出">
-        <div class="daily-analysis-section-head"><strong>分類支出</strong><small>${formatMoney(workspace.totals.expense)}</small></div>
-        <div class="daily-analysis-breakdown-body"><div class="analysis-donut" style="${pieStyle}"><div><span>支出</span><strong>${formatCompactMoney(workspace.totals.expense)}</strong></div></div><div class="daily-analysis-legend">${categoryLegend}</div></div>
+      ${breakdown(workspace.expenseGroups, 'expense', '支出')}
+      <section class="daily-analysis-insights" aria-label="收入分析">
+        <div class="daily-analysis-section-head"><strong>收入分析</strong><small>${formatMoney(workspace.totals.income)}</small></div>
+        <div class="daily-analysis-insight-list">${workspace.incomeInsights.map(item => `<div><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></div>`).join('')}</div>
       </section>
+      ${breakdown(workspace.incomeGroups, 'income', '收入')}
       ${selectedDate ? `<section class="analysis-history-section"><div class="analysis-history-head"><div><strong>${escapeHtml(formatDate(selectedDate))}</strong><span>當日明細</span></div><button type="button" data-insight-date="">顯示整段</button></div><div class="transaction-list compact">${rowsForState(state, selectedTransactions)}</div></section>` : ''}
     </section>
   </section>`;

@@ -2,6 +2,22 @@ import { describe, expect, it } from 'vitest';
 import { analysisRange, buildAnalysisWorkspace } from '../src/domain/analysis-workspace.js';
 
 describe('分析工作台', () => {
+  it('收支各自依大分類與小分類彙總，轉帳只納入手續費', () => {
+    const model = buildAnalysisWorkspace([
+      { id: 'a', type: 'income', amount: 1200, category: '接案', subcategory: '家教', date: '2026-09-01' },
+      { id: 'b', type: 'income', amount: 800, category: '接案', subcategory: '設計', date: '2026-09-02' },
+      { id: 'c', type: 'expense', amount: 100, category: '飲食', subcategory: '火鍋', date: '2026-09-02' },
+      { id: 'd', type: 'expense', amount: 50, category: '飲食', date: '2026-09-02' },
+      { id: 'e', type: 'transfer', amount: 5000, fee: 15, date: '2026-09-02' },
+      { id: 'old', type: 'income', amount: 1000, category: '接案', date: '2026-08-01' },
+    ], { period: 'month', selectedMonth: '2026-09', today: '2026-09-02' });
+    expect(model.incomeGroups[0]).toMatchObject({ category: '接案', amount: 2000, count: 2, percent: 100 });
+    expect(model.incomeGroups[0].children[0]).toMatchObject({ subcategory: '家教', amount: 1200, percent: 60 });
+    expect(model.expenseGroups[0].children.map(row => row.subcategory)).toEqual(['火鍋', '未細分']);
+    expect(model.expenseGroups[1]).toMatchObject({ category: '帳單', amount: 15 });
+    expect(model.expenseGroups[1].children[0].subcategory).toBe('轉帳手續費');
+    expect(model.incomeInsights[1].value).toBe('+100%');
+  });
   it('可建立週、月、年範圍', () => {
     expect(analysisRange('week', '2026-08', '2026-08-31')).toEqual({ from: '2026-08-30', to: '2026-09-05', label: '08/30～09/05' });
     expect(analysisRange('month', '2026-02', '2026-08-31')).toEqual({ from: '2026-02-01', to: '2026-02-28', label: '2026-02' });

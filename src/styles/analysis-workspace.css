@@ -268,6 +268,17 @@
 .analysis-legend-row > small { color: var(--muted); font-size: 9px; text-align: right; }
 .analysis-legend-row > b { font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
+.analysis-category-tree summary { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; border-bottom: 1px solid var(--line); font-size: 12px; }
+.analysis-category-tree summary::before { content: '›'; font-size: 18px; transition: transform 150ms ease; }
+.analysis-category-tree details[open] > summary::before { transform: rotate(90deg); }
+.analysis-category-tree summary strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.analysis-category-tree summary > i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.analysis-category-tree summary span { color: var(--muted); font-size: 10px; }
+.analysis-category-tree summary b { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.analysis-subcategories { padding-left: 12px; border-left: 2px solid var(--primary-soft); }
+.analysis-subcategories > small { display: block; padding-top: 8px; color: var(--muted); font-size: 10px; }
+.analysis-category-tree summary:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .analysis-category-tree summary::before { transition: none; } }
 .analysis-history-head > div { display: flex; align-items: baseline; gap: 7px; }
 .analysis-history-head button { min-height: 30px; padding: 4px 9px; border: 0; border-radius: 5px; color: var(--primary); background: var(--primary-soft); font: inherit; font-size: 10px; font-weight: 800; }
 

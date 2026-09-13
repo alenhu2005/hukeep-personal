@@ -276,6 +276,38 @@ test('口語內容直接上傳 Sheet，不等待 AI 審查', async ({ page }) =>
   }));
 });
 
+test('多品項部分上傳失敗仍保留已成功交易並提示不要整段重送', async ({ page }) => {
+  let calls = 0;
+  let saved = [];
+  await page.route('https://proxy.example/partial', async route => {
+    const body = route.request().postDataJSON();
+    if (body.action !== 'enqueueSpokenEntry') {
+      await route.fulfill({ json: { ok: true, data: { schemaVersion: 1, accounts: [], transactions: saved, budgets: [] } } });
+      return;
+    }
+    calls += 1;
+    if (calls > 1) {
+      await route.fulfill({ json: { ok: false, error: '服務忙碌' } });
+      return;
+    }
+    saved = [{ ...body.draft, id: 'voice:partial', source: 'voice', sourceId: 'partial', aiStatus: 'pending', createdAt: '2026-09-01T04:00:00Z', updatedAt: '2026-09-01T04:00:00Z' }];
+    await route.fulfill({ json: { ok: true, data: { queueId: 'partial', status: 'pending', transaction: saved[0] } } });
+  });
+  await page.evaluate(() => {
+    localStorage.setItem('hukeep_device_binding_endpoint_v1', 'https://proxy.example/partial');
+    localStorage.setItem('hukeep_device_binding_token_v1', 'test-token');
+  });
+  await page.reload();
+  await page.getByRole('button', { name: '快速記一筆' }).click();
+  await page.locator('#voice-transcript').fill('滷肉飯20、貢丸湯30都用現金');
+  await page.locator('#voice-submit-button').click();
+  await expect(page.locator('#voice-status')).toContainText('已收到 1 筆');
+  await expect(page.locator('#voice-status')).toContainText('不要整段重送');
+  await page.locator('#transaction-dialog').getByRole('button', { name: '關閉' }).click();
+  await expect(page.getByRole('button', { name: '查看 滷肉飯 詳情' })).toBeVisible();
+  expect(calls).toBe(2);
+});
+
 test('口語多品項會自動拆單並把各自帳戶直接上傳 Sheet', async ({ page }) => {
   const receivedBodies = [];
   await page.route('https://proxy.example/multi-voice', async route => {
@@ -379,6 +411,31 @@ test('可設定分類預算、查看趨勢並在手機使用', async ({ page }) 
   await expect(page.locator('body')).not.toHaveCSS('overflow-x', 'scroll');
 });
 
+test('趨勢收支分類可展開小分類及交易明細', async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 784 });
+  await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem('hukeep_personal_state_v1'));
+    state.transactions = [
+      { id: 'tutor', type: 'income', name: '數學家教', amount: 1200, category: '接案', subcategory: '家教', account: 'cash', date: '2026-09-01', note: '' },
+      { id: 'meal', type: 'expense', name: '麻辣鍋', amount: 500, category: '飲食', subcategory: '火鍋', account: 'cash', date: '2026-09-01', note: '' },
+    ];
+    localStorage.setItem('hukeep_personal_state_v1', JSON.stringify(state));
+  });
+  await page.reload();
+  await page.getByRole('button', { name: '趨勢', exact: true }).click();
+  const income = page.getByRole('region', { name: '分類收入', exact: true });
+  await income.locator('summary').filter({ hasText: '接案' }).click();
+  await income.locator('summary').filter({ hasText: '家教' }).click();
+  await income.getByRole('button', { name: '查看 數學家教 詳情' }).click();
+  await expect(page.locator('#transaction-detail-dialog')).toContainText('接案 · 家教');
+  await page.locator('#transaction-detail-dialog').getByRole('button', { name: '關閉' }).click();
+  const expense = page.getByRole('region', { name: '分類支出', exact: true });
+  await expense.locator('summary').filter({ hasText: '飲食' }).click();
+  await expense.locator('summary').filter({ hasText: '火鍋' }).click();
+  await expect(expense.getByRole('button', { name: '查看 麻辣鍋 詳情' })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
 test('趨勢工作台可切換區間、翻閱上一週並點日期看明細', async ({ page }) => {
   await page.evaluate(() => {
     localStorage.setItem('hukeep_personal_state_v1', JSON.stringify({
@@ -402,7 +459,7 @@ test('趨勢工作台可切換區間、翻閱上一週並點日期看明細', as
   await page.getByRole('button', { name: /8\/24 收入/ }).click();
   await expect(page.locator('.analysis-history-head')).toContainText('8/24');
   await expect(page.locator('.analysis-history-head')).toContainText('當日明細');
-  await expect(page.getByText('上週捷運', { exact: true })).toBeVisible();
+  await expect(page.locator('.analysis-history-section').getByText('上週捷運', { exact: true })).toBeVisible();
 });
 
 test('待確認會導向紀錄篩選，且紀錄可切換月份', async ({ page }) => {

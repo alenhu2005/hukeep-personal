@@ -40,17 +40,39 @@ export function validateProxyEndpoint(value) {
 
 async function postProxy(endpoint, payload, options = {}) {
   const fetchImpl = options.fetchImpl ?? fetch;
-  const signal = options.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-  const response = await fetchImpl(validateProxyEndpoint(endpoint), {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    body: JSON.stringify(payload),
-    signal,
-  });
-  if (!response.ok) throw new Error(`代理服務暫時無法使用（${response.status}）`);
-  const envelope = await response.json();
-  if (!envelope?.ok) throw new Error(cleanText(envelope?.error, 200) || '代理服務處理失敗');
-  return envelope.data;
+  const url = validateProxyEndpoint(endpoint);
+  if (options.signal?.aborted) throw options.signal.reason || new Error('已取消請求');
+  const controller = new AbortController();
+  const cancel = () => controller.abort(options.signal.reason);
+  options.signal?.addEventListener('abort', cancel, { once: true });
+  const timer = setTimeout(() => controller.abort(new Error('連線逾時')), REQUEST_TIMEOUT_MS);
+  try {
+    let response;
+    let envelope;
+    try {
+      response = await fetchImpl(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      if (response.ok) envelope = await response.json();
+    } catch (error) {
+      if (options.signal?.aborted) throw error;
+      // A lost response does not mean the write failed. Never retry a spoken
+      // enqueue automatically: older GAS deployments generate a fresh ID.
+      const message = payload.action === 'enqueueSpokenEntry'
+        ? '上傳結果尚未確認，請先同步查看紀錄，避免重複送出。'
+        : controller.signal.aborted ? '連線逾時，請稍後再試。' : '無法連線，請檢查網路後再試。';
+      throw new Error(message, { cause: error });
+    }
+    if (!response.ok) throw new Error(`代理服務暫時無法使用（${response.status}）`);
+    if (!envelope?.ok) throw new Error(cleanText(envelope?.error, 200) || '代理服務處理失敗');
+    return envelope.data;
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener('abort', cancel);
+  }
 }
 
 function normalizePairingCode(value) {

@@ -148,6 +148,7 @@ export function createApp() {
   let classificationRequest = 0;
   let sheetPullInFlight = false;
   let sheetWriteInFlight = false;
+  let voiceUploadInFlight = false;
   let lastSheetPullAt = 0;
   let pendingSheetSyncTimer = null;
   let deviceBindingLink = '';
@@ -596,13 +597,14 @@ export function createApp() {
   }
 
   async function submitSpokenEntry(value) {
+    const button = document.querySelector('#voice-submit-button');
+    if (button.disabled) return;
     const transcript = String(value ?? '').trim();
     if (!transcript) {
       showToast('請先說一句或輸入口語內容。', 'error');
       return;
     }
     const status = document.querySelector('#voice-status');
-    const button = document.querySelector('#voice-submit-button');
     const credentials = proxySession();
     if (!credentials.endpoint || !credentials.proxyToken) {
       status.textContent = '這台裝置尚未綁定 Google Sheet，請先完成裝置授權。';
@@ -615,8 +617,23 @@ export function createApp() {
       ? (globalThis.crypto?.randomUUID?.() || `voice-group-${Date.now()}`)
       : '';
     button.disabled = true;
+    button.textContent = '上傳中…';
+    voiceUploadInFlight = true;
     setSyncStatus('syncing');
-    status.hidden = true;
+    status.textContent = '正在寫入 Sheet，AI 會在後台處理。';
+    status.hidden = false;
+    let savedCount = 0;
+    const keepUploaded = result => {
+      const uploaded = result.transactions.map(normalizeStoredTransaction).filter(Boolean);
+      const byId = new Map(uploaded.map(transaction => [transaction.id, transaction]));
+      const transactions = [
+        ...state.transactions.map(item => byId.get(item.id) || item),
+        ...uploaded.filter(item => !state.transactions.some(existing => existing.id === item.id)),
+      ];
+      if (!persist({ ...state, transactions }, { sheetSourced: true })) throw new Error('Sheet 已收到，但裝置儲存失敗，請先同步，不要重送。');
+      savedCount += uploaded.length;
+      status.textContent = `Sheet 已收到 ${savedCount} 筆。`;
+    };
     try {
       const firstResult = await enqueueSpokenEntry({
         ...credentials,
@@ -625,6 +642,7 @@ export function createApp() {
         drafts,
         groupId,
       });
+      keepUploaded(firstResult);
       // Older deployed GAS versions only consume the legacy `draft` field and
       // therefore return one transaction even when the web app has detected
       // several items. Send the remaining drafts individually in that case,
@@ -647,6 +665,7 @@ export function createApp() {
             drafts: [draft],
             groupId,
           });
+          keepUploaded(result);
           return [...results, result];
         },
         Promise.resolve([]),
@@ -655,14 +674,6 @@ export function createApp() {
         .flatMap(result => result.transactions)
         .map(normalizeStoredTransaction)
         .filter(Boolean);
-      if (uploaded.length) {
-        const uploadedById = new Map(uploaded.map(transaction => [transaction.id, transaction]));
-        const transactions = [
-          ...state.transactions.map(item => uploadedById.get(item.id) || item),
-          ...uploaded.filter(transaction => !state.transactions.some(item => item.id === transaction.id)),
-        ];
-        if (!persist({ ...state, transactions }, { sheetSourced: true })) return;
-      }
       rememberProxySession(credentials.endpoint, credentials.proxyToken);
       document.querySelector('#voice-transcript').value = '';
       transactionDialog.close();
@@ -674,12 +685,16 @@ export function createApp() {
           : '已上傳 Sheet，AI 會在後台審查更新。',
       );
     } catch (error) {
-      status.textContent = error.message;
+      if (savedCount) render();
+      status.textContent = savedCount ? `已收到 ${savedCount} 筆，其餘未確認。請先同步核對，不要整段重送。${error.message}` : error.message;
       status.hidden = false;
       setSyncStatus('error', { detail: `Sheet 上傳失敗：${error.message}` });
       showToast(error.message, 'error');
     } finally {
       button.disabled = false;
+      button.textContent = '直接記帳';
+      voiceUploadInFlight = false;
+      schedulePendingSheetSync();
     }
   }
 
@@ -1195,6 +1210,7 @@ export function createApp() {
     if (
       sheetWriteInFlight ||
       sheetPullInFlight ||
+      voiceUploadInFlight ||
       document.hidden ||
       !hasPendingSheetChanges(changes) ||
       !credentials.bound
@@ -1236,7 +1252,7 @@ export function createApp() {
 
   async function syncSheet(event) {
     event.preventDefault();
-    if (sheetWriteInFlight || sheetPullInFlight) {
+    if (sheetWriteInFlight || sheetPullInFlight || voiceUploadInFlight) {
       showToast('正在同步，請稍候再試。');
       return;
     }
@@ -1282,7 +1298,7 @@ export function createApp() {
   }
 
   async function loadSheet() {
-    if (sheetWriteInFlight || sheetPullInFlight) return;
+    if (sheetWriteInFlight || sheetPullInFlight || voiceUploadInFlight) return;
     const syncButton = document.querySelector('#sheet-sync-button');
     const loadButton = document.querySelector('#sheet-load-button');
     const status = document.querySelector('#sheet-sync-status');
@@ -1329,6 +1345,7 @@ export function createApp() {
     if (
       sheetPullInFlight ||
       sheetWriteInFlight ||
+      voiceUploadInFlight ||
       document.hidden ||
       !credentials.endpoint ||
       !credentials.proxyToken ||

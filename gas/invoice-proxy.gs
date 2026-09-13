@@ -602,26 +602,27 @@ function enqueueSpokenEntry_(body) {
     queueIds.push(queueId);
     return normalizeSpokenDraft_(draft, transcript, queueId, now, groupId);
   });
+  var transactionRows = transactions.filter(function (transaction) {
+    return transaction.amount > 0;
+  }).map(ledgerTransactionRow_);
+  var queueRows = transactions.map(function (transaction, index) {
+    return [
+      safeSheetText_(queueIds[index], 80), safeSheetText_(transcript, 240),
+      safeSheetText_(now, 40), 'pending', safeSheetText_(transaction.id, 80),
+      '', safeSheetText_(now, 40), 0,
+    ];
+  });
   var lock = LockService.getScriptLock();
-  lock.waitLock(30000);
+  if (!lock.tryLock(5000)) throw new Error('同步服務忙碌中，請稍後再送出');
   try {
     var spreadsheet = SpreadsheetApp.openById(requiredProperty_('SPREADSHEET_ID'));
     var queueSheet = getOrCreateSheet_(spreadsheet, '小帳_語音佇列');
     ensureSheetHeader_(queueSheet, SPOKEN_QUEUE_HEADERS);
     var transactionSheet = getOrCreateSheet_(spreadsheet, '小帳_交易');
-    transactions.forEach(function (transaction, index) {
-      queueSheet.appendRow([
-        safeSheetText_(queueIds[index], 80),
-        safeSheetText_(transcript, 240),
-        safeSheetText_(now, 40),
-        'pending',
-        safeSheetText_(transaction.id, 80),
-        '',
-        safeSheetText_(now, 40),
-        0,
-      ]);
-      if (transaction.amount > 0) upsertSpokenTransaction_(transactionSheet, transaction);
-    });
+    // Each submission owns fresh UUIDs; existing-row scans are unnecessary.
+    if (transactionRows.length) ensureLedgerTransactionSheet_(transactionSheet);
+    appendSpokenRows_(queueSheet, queueRows);
+    appendSpokenRows_(transactionSheet, transactionRows);
     SpreadsheetApp.flush();
   } finally {
     lock.releaseLock();
@@ -638,6 +639,17 @@ function enqueueSpokenEntry_(body) {
     transaction: transactions[0] && transactions[0].amount > 0 ? transactions[0] : null,
     transactions: transactions.filter(function (transaction) { return transaction.amount > 0; }),
   };
+}
+
+function appendSpokenRows_(sheet, rows) {
+  if (!rows.length) return;
+  var start = sheet.getLastRow() + 1;
+  var requiredRows = start + rows.length - 1;
+  var availableRows = sheet.getMaxRows();
+  if (requiredRows > availableRows) {
+    sheet.insertRowsAfter(availableRows, requiredRows - availableRows);
+  }
+  sheet.getRange(start, 1, rows.length, rows[0].length).setValues(rows);
 }
 
 function spokenDraftsFromBody_(body) {

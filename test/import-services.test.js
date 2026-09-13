@@ -14,6 +14,73 @@ import {
 } from '../src/services/import-proxy.js';
 
 describe('智慧匯入代理', () => {
+  it('不依賴 Safari 的 AbortSignal.timeout，且呼叫端 signal 不會取消逾時保護', async () => {
+    vi.useFakeTimers();
+    const original = AbortSignal.timeout;
+    AbortSignal.timeout = undefined;
+    const fetchImpl = vi.fn((_url, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    }));
+    try {
+      const request = enqueueSpokenEntry({ endpoint: 'https://example.com', transcript: '午餐一百' }, {
+        fetchImpl, signal: new AbortController().signal,
+      });
+      const assertion = expect(request).rejects.toThrow('尚未確認');
+      await vi.advanceTimersByTimeAsync(30_000);
+      await assertion;
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      AbortSignal.timeout = original;
+      vi.useRealTimers();
+    }
+  });
+
+  it('語音網路失敗不重送，說明寫入結果尚未確認', async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+    await expect(enqueueSpokenEntry({ endpoint: 'https://example.com', transcript: '午餐一百' }, { fetchImpl }))
+      .rejects.toThrow('尚未確認');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('已取消的請求不送出', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fetchImpl = vi.fn();
+    await expect(loadLedgerStateFromSheet({ endpoint: 'https://example.com' }, { fetchImpl, signal: controller.signal }))
+      .rejects.toThrow();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('呼叫端可取消進行中請求，並移除逾時計時器', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const fetchImpl = vi.fn((_url, { signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    }));
+    try {
+      const request = loadLedgerStateFromSheet({ endpoint: 'https://example.com' }, { fetchImpl, signal: controller.signal });
+      const assertion = expect(request).rejects.toThrow('使用者取消');
+      controller.abort(new Error('使用者取消'));
+      await assertion;
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('成功回應後清理 timer，不在背景保留逾時工作', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn().mockResolvedValue({ ok: true, json: async () => ({
+        ok: true, data: { schemaVersion: 1, accounts: [], transactions: [], budgets: [] },
+      }) });
+      await loadLedgerStateFromSheet({ endpoint: 'https://example.com' }, { fetchImpl });
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it('不再匯出財政部載具同步 API', () => {
     expect(importProxy).not.toHaveProperty('syncCarrierInvoices');
   });
