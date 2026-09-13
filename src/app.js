@@ -318,6 +318,7 @@ export function createApp() {
 
   function setSyncStatus(status, options = {}) {
     const indicator = document.querySelector('#sync-indicator');
+    if (status === 'syncing') return;
     const labels = {
       local: '僅本機',
       syncing: '同步中',
@@ -1263,7 +1264,7 @@ export function createApp() {
     button.disabled = true;
     setSyncStatus('syncing');
     status.classList.remove('error');
-    status.textContent = '正在安全同步…';
+    status.textContent = '正在更新資料…';
     try {
       if (hasPendingSheetChanges(readPendingSheetChanges()) && !await syncPendingSheetChanges()) {
         throw new Error('尚有資料未上傳，請稍後重試。');

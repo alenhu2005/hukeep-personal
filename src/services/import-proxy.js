@@ -1,7 +1,7 @@
 import { validateClassification } from '../domain/category-taxonomy.js';
 import { normalizeFeatureSettings } from '../domain/ledger-enhancements.js';
 
-const REQUEST_TIMEOUT_MS = 30_000;
+const REQUEST_TIMEOUT_MS = 15_000;
 const MAX_SHEET_ACCOUNTS = 20;
 const MAX_SHEET_TRANSACTIONS = 5000;
 const MAX_SHEET_BUDGETS = 100;

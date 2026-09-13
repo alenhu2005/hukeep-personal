@@ -206,7 +206,7 @@ function syncLedgerState_(state) {
     })
   );
   var lock = LockService.getScriptLock();
-  lock.waitLock(30000);
+  if (!lock.tryLock(5000)) throw new Error('同步服務忙碌中，請稍後再試');
   try {
     var spreadsheet = SpreadsheetApp.openById(requiredProperty_('SPREADSHEET_ID'));
     var transactionSheet = getOrCreateSheet_(spreadsheet, '小帳_交易');
@@ -256,7 +256,7 @@ function syncLedgerChanges_(changes) {
   });
 
   var lock = LockService.getScriptLock();
-  lock.waitLock(30000);
+  if (!lock.tryLock(5000)) throw new Error('同步服務忙碌中，請稍後再試');
   try {
     var spreadsheet = SpreadsheetApp.openById(requiredProperty_('SPREADSHEET_ID'));
     var accountSheet = getOrCreateSheet_(spreadsheet, '小帳_帳戶');
@@ -266,12 +266,9 @@ function syncLedgerChanges_(changes) {
     ensureLedgerTransactionSheet_(transactionSheet);
     ensureSheetHeader_(settingsSheet, ['項目', '值']);
 
-    deleteSheetRowsById_(accountSheet, accountDeletes);
-    accountRows.forEach(function (row) { upsertSheetRowById_(accountSheet, row); });
-    deleteSheetRowsById_(transactionSheet, transactionDeletes);
-    transactionRows.forEach(function (row) { upsertLedgerTransactionRow_(transactionSheet, row); });
-    deleteSheetRowsById_(settingsSheet, budgetDeletes.map(function (category) { return '預算:' + category; }));
-    budgetRows.forEach(function (row) { upsertSheetRowById_(settingsSheet, row); });
+    applySheetChanges_(accountSheet, accountRows, accountDeletes, false, ['帳戶ID', '帳戶名稱', '初始金額']);
+    applySheetChanges_(transactionSheet, transactionRows, transactionDeletes, true, LEDGER_TRANSACTION_HEADERS);
+    applySheetChanges_(settingsSheet, budgetRows, budgetDeletes.map(function (category) { return '預算:' + category; }), false, ['項目', '值'], ['schemaVersion', 'syncedAt']);
     upsertSheetRowById_(settingsSheet, ['schemaVersion', 1]);
     upsertSheetRowById_(settingsSheet, ['syncedAt', syncedAt]);
     if (featureSettings) writeFeatureSettings_(spreadsheet, featureSettings);
@@ -287,11 +284,40 @@ function syncLedgerChanges_(changes) {
   }
 }
 
+function applySheetChanges_(sheet, upserts, deletes, preserveTransactions, headers, keepKeys) {
+  if (!upserts.length && !deletes.length) return;
+  var values = sheet.getLastRow() < 2
+    ? []
+    : sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues();
+  var deleteSet = new Set(deletes);
+  var upsertMap = new Map(upserts.map(function (row) { return [boundedText_(row[0], 80), row]; }));
+  var rows = values.filter(function (row) {
+    var id = boundedText_(row[0], 80);
+    return id && !deleteSet.has(id) && !upsertMap.has(id);
+  });
+  values.forEach(function (row) {
+    var id = boundedText_(row[0], 80);
+    if (!id || deleteSet.has(id) || !upsertMap.has(id)) return;
+    var next = upsertMap.get(id);
+    if (preserveTransactions && preserveExistingLedgerTransactionRow_(row, next)) rows.push(row);
+    else rows.push(next);
+    upsertMap.delete(id);
+  });
+  upsertMap.forEach(function (row) { rows.push(row); });
+  if (Array.isArray(keepKeys)) {
+    var keep = new Set(keepKeys);
+    values.forEach(function (row) {
+      if (keep.has(boundedText_(row[0], 80)) && !rows.some(function (candidate) { return candidate[0] === row[0]; })) rows.push(row);
+    });
+  }
+  replaceSheetContents_(sheet, [headers].concat(rows));
+}
+
 function deleteLedgerTransaction_(value) {
   var transactionId = boundedText_(value, 80);
   if (!transactionId) throw new Error('找不到要刪除的交易');
   var lock = LockService.getScriptLock();
-  lock.waitLock(30000);
+  if (!lock.tryLock(5000)) throw new Error('同步服務忙碌中，請稍後再試');
   try {
     var spreadsheet = SpreadsheetApp.openById(requiredProperty_('SPREADSHEET_ID'));
     var transactionSheet = getOrCreateSheet_(spreadsheet, '小帳_交易');
@@ -310,7 +336,7 @@ function deleteLedgerBudget_(value) {
   var category = boundedText_(value, 40);
   if (!category) throw new Error('找不到要刪除的預算');
   var lock = LockService.getScriptLock();
-  lock.waitLock(30000);
+  if (!lock.tryLock(5000)) throw new Error('同步服務忙碌中，請稍後再試');
   try {
     var spreadsheet = SpreadsheetApp.openById(requiredProperty_('SPREADSHEET_ID'));
     var settingsSheet = getOrCreateSheet_(spreadsheet, '小帳_設定');
@@ -332,7 +358,7 @@ function deleteLedgerBudget_(value) {
 
 function loadLedgerState_() {
   var lock = LockService.getScriptLock();
-  lock.waitLock(30000);
+  if (!lock.tryLock(5000)) throw new Error('同步服務忙碌中，請稍後再試');
   try {
     var spreadsheet = SpreadsheetApp.openById(requiredProperty_('SPREADSHEET_ID'));
     var accountSheet = getOrCreateSheet_(spreadsheet, '小帳_帳戶');
