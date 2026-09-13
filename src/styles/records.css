@@ -407,6 +407,8 @@
 .budget-row-main p {
   color: var(--muted);
 }
+.budget-daily-limit { display: block; margin-top: 3px; color: var(--primary); font-size: 11px; font-weight: 700; }
+.budget-row.over .budget-daily-limit { color: var(--expense); }
 
 .budget-row-main p {
   margin: 6px 0 0;

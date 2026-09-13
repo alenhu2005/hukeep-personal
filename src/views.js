@@ -286,6 +286,10 @@ export function renderHistory(state, month, filters) {
 
 export function renderBudgets(state, month) {
   const progress = calculateBudgetProgress(state.budgets, state.transactions, month);
+  const today = todayInTaipei();
+  const monthEnd = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 0)).getUTCDate();
+  const isCurrentMonth = today.slice(0, 7) === month;
+  const daysLeft = isCurrentMonth ? Math.max(1, monthEnd - Number(today.slice(8)) + 1) : monthEnd;
   return `<section class="view budgets-view" aria-labelledby="budgets-title">
     <div class="page-heading"><div><p class="eyebrow">${monthLabel(month)}</p><h1 id="budgets-title">預算</h1></div></div>
     <div class="budgets-layout">
@@ -302,7 +306,7 @@ export function renderBudgets(state, month) {
             ? progress
                 .map(item => `<article class="budget-row ${item.status}">
                   ${categoryMark(item.category)}
-                  <div class="budget-row-main"><span><strong>${escapeHtml(item.category)}預算</strong><small>${formatMoney(item.spent)} / ${formatMoney(item.limit)}</small></span><div class="progress-track"><i style="width:${Math.min(100, item.ratio * 100)}%"></i></div><p>${item.remaining >= 0 ? `還剩 ${formatMoney(item.remaining)}` : `已超出 ${formatMoney(Math.abs(item.remaining))}`}</p></div>
+                  <div class="budget-row-main"><span><strong>${escapeHtml(item.category)}預算</strong><small>${formatMoney(item.spent)} / ${formatMoney(item.limit)}</small></span><div class="progress-track"><i style="width:${Math.min(100, item.ratio * 100)}%"></i></div><p>${item.remaining >= 0 ? `還剩 ${formatMoney(item.remaining)}` : `已超出 ${formatMoney(Math.abs(item.remaining))}`}</p><small class="budget-daily-limit">${item.remaining >= 0 ? `每天還能用 ${formatMoney(Math.floor(item.remaining / daysLeft))}` : `每天需少用 ${formatMoney(Math.ceil(Math.abs(item.remaining) / daysLeft))}`} · ${isCurrentMonth ? `剩 ${daysLeft} 天` : '按整月計算'}</small></div>
                   <button type="button" data-remove-budget="${escapeHtml(item.category)}" aria-label="移除 ${escapeHtml(item.category)} 預算">×</button>
                 </article>`)
                 .join('')
