@@ -32,6 +32,69 @@ describe('分析工作台', () => {
       { subcategory: '股票', contributed: 0, withdrawn: 3000, net: -3000, count: 1 },
     ]);
   });
+
+  it('未結束期間只與前期相同經過天數比較', () => {
+    const model = buildAnalysisWorkspace([
+      { id: 'now-1', type: 'expense', amount: 60, category: '飲食', date: '2026-09-01' },
+      { id: 'now-2', type: 'expense', amount: 40, category: '飲食', date: '2026-09-03' },
+      { id: 'previous-1', type: 'expense', amount: 20, category: '飲食', date: '2026-08-01' },
+      { id: 'previous-2', type: 'expense', amount: 30, category: '飲食', date: '2026-08-03' },
+      { id: 'previous-late', type: 'expense', amount: 900, category: '飲食', date: '2026-08-20' },
+    ], {
+      period: 'month', selectedMonth: '2026-09', today: '2026-09-03', currentDate: '2026-09-03',
+    });
+
+    expect(model.comparison.range).toEqual({ from: '2026-08-01', to: '2026-08-03' });
+    expect(model.previousTotals.expense).toBe(50);
+    expect(model.comparison.elapsedDays).toBe(3);
+  });
+
+  it('可以下鑽大分類與小分類，並建立趨勢、帳戶與前期對照', () => {
+    const model = buildAnalysisWorkspace([
+      { id: 'tea', type: 'expense', amount: 45, category: '飲食', subcategory: '飲料', account: 'line', date: '2026-09-01' },
+      { id: 'coffee', type: 'expense', amount: 55, category: '飲食', subcategory: '飲料', account: 'cash', date: '2026-09-02' },
+      { id: 'meal', type: 'expense', amount: 120, category: '飲食', subcategory: '台式料理', account: 'cash', date: '2026-09-02' },
+      { id: 'old-tea', type: 'expense', amount: 80, category: '飲食', subcategory: '飲料', account: 'cash', date: '2026-08-02' },
+    ], {
+      period: 'month', selectedMonth: '2026-09', today: '2026-09-02',
+      section: 'expense', category: '飲食', subcategory: '飲料',
+    });
+
+    expect(model.focus).toMatchObject({
+      type: 'expense', category: '飲食', subcategory: '飲料', amount: 100,
+      count: 2, average: 50, previousAmount: 80, changePercent: 25,
+    });
+    expect(model.focus.timeSeries.filter(row => row.amount > 0)).toEqual([
+      { key: '2026-09-01', label: '9/1', amount: 45 },
+      { key: '2026-09-02', label: '9/2', amount: 55 },
+    ]);
+    expect(model.focus.accounts).toEqual([
+      { account: 'cash', amount: 55, count: 1, percent: 55 },
+      { account: 'line', amount: 45, count: 1, percent: 45 },
+    ]);
+    expect(model.expenseGroups[0].children.find(row => row.subcategory === '飲料')).toMatchObject({
+      previousAmount: 80,
+      changePercent: 25,
+    });
+  });
+
+  it('點選日期後提供當日生活收支、投資流向與明細', () => {
+    const model = buildAnalysisWorkspace([
+      { id: 'salary', type: 'income', amount: 1000, category: '薪資', date: '2026-09-02' },
+      { id: 'meal', type: 'expense', amount: 120, category: '飲食', date: '2026-09-02' },
+      { id: 'buy', type: 'transfer', amount: 300, category: '投資', subcategory: 'ETF', account: 'cash', toAccount: 'investment', date: '2026-09-02' },
+    ], {
+      period: 'month', selectedMonth: '2026-09', today: '2026-09-02', selectedDate: '2026-09-02',
+    });
+
+    expect(model.selectedDay).toMatchObject({
+      date: '2026-09-02',
+      totals: { income: 1000, expense: 120 },
+      balance: 880,
+      investmentFlows: { contributed: 300, withdrawn: 0, net: 300, count: 1 },
+    });
+    expect(model.selectedDay.transactions.map(row => row.id)).toEqual(['salary', 'meal', 'buy']);
+  });
   it('可建立週、月、年範圍', () => {
     expect(analysisRange('week', '2026-08', '2026-08-31')).toEqual({ from: '2026-08-30', to: '2026-09-05', label: '08/30～09/05' });
     expect(analysisRange('month', '2026-02', '2026-08-31')).toEqual({ from: '2026-02-01', to: '2026-02-28', label: '2026-02' });

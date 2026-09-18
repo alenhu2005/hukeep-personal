@@ -486,7 +486,7 @@ test('可設定分類預算、查看趨勢並在手機使用', async ({ page }) 
   await expect(page.locator('body')).not.toHaveCSS('overflow-x', 'scroll');
 });
 
-test('趨勢收支分類可展開小分類及交易明細', async ({ page }) => {
+test('趨勢收支分類可下鑽小分類圖表及交易明細', async ({ page }) => {
   await page.setViewportSize({ width: 400, height: 784 });
   await page.evaluate(() => {
     const state = JSON.parse(localStorage.getItem('hukeep_personal_state_v1'));
@@ -498,16 +498,20 @@ test('趨勢收支分類可展開小分類及交易明細', async ({ page }) => 
   });
   await page.reload();
   await page.getByRole('button', { name: '趨勢', exact: true }).click();
-  const income = page.getByRole('region', { name: '分類收入', exact: true });
-  await income.locator('summary').filter({ hasText: '接案' }).click();
-  await income.locator('summary').filter({ hasText: '家教' }).click();
+  await page.getByRole('button', { name: '收入分析', exact: true }).click();
+  const income = page.getByRole('region', { name: '收入大分類排行', exact: true });
+  await income.getByRole('button', { name: /接案/ }).click();
+  const incomeChildren = page.getByRole('region', { name: '接案小分類圖表', exact: true });
+  await incomeChildren.getByRole('button', { name: /家教/ }).click();
   await income.getByRole('button', { name: '查看 數學家教 詳情' }).click();
   await expect(page.locator('#transaction-detail-dialog')).toContainText('接案 · 家教');
   await page.locator('#transaction-detail-dialog').getByRole('button', { name: '關閉' }).click();
-  const expense = page.getByRole('region', { name: '分類支出', exact: true });
-  await expense.locator('summary').filter({ hasText: '飲食' }).click();
-  await expense.locator('summary').filter({ hasText: '火鍋' }).click();
-  await expect(expense.getByRole('button', { name: '查看 麻辣鍋 詳情' })).toBeVisible();
+  await page.getByRole('button', { name: '支出分析', exact: true }).click();
+  const expense = page.getByRole('region', { name: '支出大分類排行', exact: true });
+  await expense.getByRole('button', { name: /飲食/ }).click();
+  const expenseChildren = page.getByRole('region', { name: '飲食小分類圖表', exact: true });
+  await expenseChildren.getByRole('button', { name: /火鍋/ }).click();
+  await expect(page.getByRole('button', { name: '查看 麻辣鍋 詳情' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
@@ -535,6 +539,12 @@ test('趨勢工作台可切換區間、翻閱上一週並點日期看明細', as
   await expect(page.locator('.analysis-history-head')).toContainText('8/24');
   await expect(page.locator('.analysis-history-head')).toContainText('當日明細');
   await expect(page.locator('.analysis-history-section').getByText('上週捷運', { exact: true })).toBeVisible();
+  const detailFollowsChart = await page.evaluate(() => {
+    const chart = document.querySelector('#trend-chart');
+    const detail = document.querySelector('.analysis-history-section');
+    return chart?.nextElementSibling === detail;
+  });
+  expect(detailFollowsChart).toBe(true);
 });
 
 test('待確認會導向紀錄篩選，且紀錄可切換月份', async ({ page }) => {

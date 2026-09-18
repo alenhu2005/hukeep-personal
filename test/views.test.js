@@ -107,7 +107,57 @@ describe('趨勢每日淨額', () => {
     expect(html).toContain('+200');
     expect(html).toContain('analysis-heat-3');
     expect(html).toContain('analysis-heat-5');
-    expect(html).toContain('analysis-subcategory-bar');
+    expect(html).toContain('data-insight-section="overview"');
+    expect(html).toContain('data-insight-section="expense"');
+    expect(html).toContain('data-insight-section="income"');
+    expect(html).toContain('data-insight-section="investment"');
+    expect(html).not.toContain('analysis-history-section');
+  });
+
+  it('把當日摘要與交易明細緊接放在時間圖後', () => {
+    const html = renderInsights({
+      accounts: [{ id: 'cash', name: '現金', icon: '現', openingBalance: 0 }],
+      transactions: [
+        { id: 'income', type: 'income', amount: 500, category: '接案', subcategory: '家教', account: 'cash', date: '2026-09-02', name: '家教' },
+        { id: 'meal', type: 'expense', amount: 100, category: '飲食', subcategory: '便當', account: 'cash', date: '2026-09-02', name: '午餐' },
+        { id: 'buy', type: 'transfer', amount: 300, category: '投資', subcategory: 'ETF', account: 'cash', toAccount: 'investment', date: '2026-09-02', name: '0050' },
+      ],
+      budgets: [],
+    }, '2026-09', {
+      insightFilters: { period: 'month', section: 'overview', category: '', subcategory: '', selectedDate: '2026-09-02', anchorDate: '2026-09-02' },
+    });
+
+    expect(html).toContain('當日明細');
+    expect(html).toContain('投資投入');
+    expect(html).toContain('生活結餘');
+    expect(html.indexOf('analysis-history-section')).toBeLessThan(html.indexOf('analysis-section-tabs'));
+    expect(html).toContain('午餐');
+  });
+
+  it('支出分頁可顯示大分類排行、小分類圖表、趨勢與明細', () => {
+    const html = renderInsights({
+      accounts: [
+        { id: 'cash', name: '現金', icon: '現', openingBalance: 0 },
+        { id: 'line', name: 'LINE', icon: 'L', openingBalance: 0 },
+      ],
+      transactions: [
+        { id: 'tea', type: 'expense', amount: 45, category: '飲食', subcategory: '飲料', account: 'line', date: '2026-09-01', name: '紅茶' },
+        { id: 'meal', type: 'expense', amount: 100, category: '飲食', subcategory: '便當', account: 'cash', date: '2026-09-02', name: '午餐' },
+      ],
+      budgets: [{ category: '飲食', limit: 3000 }],
+    }, '2026-09', {
+      insightFilters: { period: 'month', section: 'expense', category: '飲食', subcategory: '飲料', selectedDate: '', anchorDate: '2026-09-02' },
+    });
+
+    expect(html).toContain('aria-label="支出大分類排行"');
+    expect(html).toContain('data-insight-category="飲食"');
+    expect(html).toContain('aria-label="飲食小分類圖表"');
+    expect(html).toContain('data-insight-subcategory="飲料"');
+    expect(html).toContain('analysis-time-bars');
+    expect(html).toContain('analysis-account-bars');
+    expect(html).toContain('紅茶');
+    expect(html).not.toContain('analysis-donut');
+    expect(html).not.toContain('分析重點');
   });
 
   it('獨立顯示投資投入、領回、淨投入與小分類圖表', () => {
