@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   INVESTMENT_ACCOUNT_ID,
   INVESTMENT_OPENING_ASSET,
+  INVESTMENT_SNAPSHOT_DATE,
   migrateInvestmentAccounting,
   summarizeInvestmentFlows,
 } from '../src/domain/investment-accounting.js';
+import { calculateAccountBalances } from '../src/domain/insights.js';
+import { normalizeLedgerState } from '../src/storage/ledger-repository.js';
 
 describe('投資資產會計', () => {
   it('將安全的舊投資支出轉成資產移轉，並校準為目前 NT$12,891', () => {
@@ -34,6 +37,66 @@ describe('投資資產會計', () => {
       state: migrated.state,
       changedTransactionIds: [],
       accountAdded: false,
+    });
+  });
+
+  it('以固定快照校正既有錯誤負數，兩台裝置會得到相同的投資金額', () => {
+    const transactions = [
+      { id: 'old-buy', type: 'transfer', amount: 11538, account: 'sinopac', toAccount: 'investment', category: '投資', subcategory: 'ETF', date: '2026-09-01' },
+    ];
+    const deviceA = migrateInvestmentAccounting({
+      accounts: [{ id: 'investment', name: '投資資產', icon: '投', openingBalance: -56337 }],
+      transactions,
+    }).state;
+    const deviceB = migrateInvestmentAccounting({
+      accounts: [{ id: 'investment', name: '投資資產', icon: '投', openingBalance: 12891 }],
+      transactions,
+    }).state;
+
+    expect(INVESTMENT_SNAPSHOT_DATE).toBe('2026-09-18');
+    expect(deviceA.accounts[0].openingBalance).toBe(1353);
+    expect(deviceB.accounts[0].openingBalance).toBe(1353);
+    expect(deviceA).toEqual(deviceB);
+    expect(deviceA.accounts[0].openingBalance + transactions[0].amount).toBe(INVESTMENT_OPENING_ASSET);
+  });
+
+  it('快照日後的新買入才會增加投資資產，不會被基準值吃掉', () => {
+    const migrated = migrateInvestmentAccounting({
+      accounts: [{ id: 'investment', name: '投資資產', icon: '投', openingBalance: -99999 }],
+      transactions: [
+        { id: 'old-buy', type: 'transfer', amount: 11538, account: 'sinopac', toAccount: 'investment', category: '投資', subcategory: 'ETF', date: '2026-09-01' },
+        { id: 'new-buy', type: 'transfer', amount: 1000, account: 'sinopac', toAccount: 'investment', category: '投資', subcategory: '股票', date: '2026-09-19' },
+      ],
+    }).state;
+    const investment = migrated.accounts.find(account => account.id === INVESTMENT_ACCOUNT_ID);
+    const balance = investment.openingBalance + 11538 + 1000;
+
+    expect(balance).toBe(13891);
+    expect(migrateInvestmentAccounting(migrated).state).toEqual(migrated);
+  });
+
+  it('不同裝置的舊快取經正規化後會收斂為相同餘額', () => {
+    const transactions = [
+      { id: 'buy', type: 'transfer', amount: 11538, fee: 0, account: 'sinopac', toAccount: 'investment', category: '投資', subcategory: 'ETF', date: '2026-09-01', name: '0050' },
+    ];
+    const baseAccounts = [
+      { id: 'sinopac', name: '永豐', icon: '永', openingBalance: 20000 },
+      { id: 'investment', name: '投資資產', icon: '投', openingBalance: 0 },
+    ];
+    const deviceA = normalizeLedgerState({ accounts: baseAccounts, transactions });
+    const deviceB = normalizeLedgerState({
+      accounts: baseAccounts.map(account => account.id === 'investment'
+        ? { ...account, openingBalance: -56337 }
+        : account),
+      transactions,
+    });
+
+    expect(calculateAccountBalances(deviceA.accounts, deviceA.transactions)).toEqual(
+      calculateAccountBalances(deviceB.accounts, deviceB.transactions),
+    );
+    expect(calculateAccountBalances(deviceA.accounts, deviceA.transactions)).toContainEqual({
+      id: 'investment',
+      balance: INVESTMENT_OPENING_ASSET,
     });
   });
 

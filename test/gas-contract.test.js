@@ -53,6 +53,21 @@ describe('GAS 同步合約', () => {
     expect(source).toContain('沒指定時回 sinopac');
   });
 
+  it('GAS 以完整交易固定校準投資快照，阻止舊裝置覆寫錯誤金額', () => {
+    const canonicalOpening = new Function(`${source}\nreturn canonicalInvestmentOpeningBalance_;`)();
+    const oldTransactions = [
+      { type: 'transfer', amount: 11538, fee: 0, account: 'sinopac', toAccount: 'investment', date: '2026-09-01' },
+    ];
+    const withNewBuy = [
+      ...oldTransactions,
+      { type: 'transfer', amount: 1000, fee: 0, account: 'sinopac', toAccount: 'investment', date: '2026-09-19' },
+    ];
+
+    expect(canonicalOpening(oldTransactions)).toBe(1353);
+    expect(canonicalOpening(withNewBuy)).toBe(1353);
+    expect(source).toContain('repairInvestmentAccountSheet_(accountSheet, transactionSheet)');
+  });
+
   it('轉帳手續費會儲存到 Sheet，並納入口語 AI 審查 schema', () => {
     expect(source).toContain("'手續費'");
     expect(source).toContain("fee: { type: 'NUMBER'");

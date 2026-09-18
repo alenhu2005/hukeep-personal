@@ -34,6 +34,8 @@ var LEDGER_TRANSACTION_HEADERS = [
 ];
 var SPOKEN_QUEUE_HEADERS = ['佇列ID', '口語原文', '送出時間', '狀態', '交易ID', '錯誤', '更新時間', '重試次數'];
 var ACCOUNT_IDS = ['cash', 'line', 'sinopac', 'bot', 'post', 'investment'];
+var INVESTMENT_SNAPSHOT_DATE = '2026-09-18';
+var INVESTMENT_SNAPSHOT_ASSET = 12891;
 
 function doGet() {
   return jsonOutput_({ ok: true, data: { service: 'hukeep-invoice-proxy' } });
@@ -186,6 +188,7 @@ function syncLedgerState_(state) {
   if (!state || typeof state !== 'object') throw new Error('帳本資料格式不正確');
   var accounts = limitedArray_(state.accounts, 20, '帳戶');
   var transactions = limitedArray_(state.transactions, 5000, '交易');
+  accounts = canonicalizeInvestmentAccounts_(accounts, transactions);
   var budgets = limitedArray_(state.budgets, 100, '預算');
   var featureSettings = normalizeFeatureSettings_(state.featureSettings);
   var syncedAt = new Date().toISOString();
@@ -209,10 +212,12 @@ function syncLedgerState_(state) {
   if (!lock.tryLock(5000)) throw new Error('同步服務忙碌中，請稍後再試');
   try {
     var spreadsheet = SpreadsheetApp.openById(requiredProperty_('SPREADSHEET_ID'));
+    var accountSheet = getOrCreateSheet_(spreadsheet, '小帳_帳戶');
     var transactionSheet = getOrCreateSheet_(spreadsheet, '小帳_交易');
     ensureLedgerTransactionSheet_(transactionSheet);
-    replaceSheetContents_(getOrCreateSheet_(spreadsheet, '小帳_帳戶'), accountRows);
+    replaceSheetContents_(accountSheet, accountRows);
     replaceSheetContents_(transactionSheet, mergeLedgerTransactionRows_(transactionSheet, transactionRows));
+    repairInvestmentAccountSheet_(accountSheet, transactionSheet);
     replaceSheetContents_(getOrCreateSheet_(spreadsheet, '小帳_設定'), settingsRows);
     writeFeatureSettings_(spreadsheet, featureSettings);
     ensureVoiceQueueForTransactions_(spreadsheet, transactions);
@@ -269,6 +274,7 @@ function syncLedgerChanges_(changes) {
 
     applySheetChanges_(accountSheet, accountRows, accountDeletes, false, ['帳戶ID', '帳戶名稱', '初始金額']);
     applySheetChanges_(transactionSheet, transactionRows, transactionDeletes, true, LEDGER_TRANSACTION_HEADERS);
+    repairInvestmentAccountSheet_(accountSheet, transactionSheet);
     applySheetChanges_(settingsSheet, budgetRows, budgetDeletes.map(function (category) { return '預算:' + category; }), false, ['項目', '值'], ['schemaVersion', 'syncedAt']);
     ensureVoiceQueueForTransactions_(spreadsheet, transactions);
     upsertSheetRowById_(settingsSheet, ['schemaVersion', 1]);
@@ -325,9 +331,12 @@ function deleteLedgerTransaction_(value) {
   try {
     var spreadsheet = SpreadsheetApp.openById(requiredProperty_('SPREADSHEET_ID'));
     var transactionSheet = getOrCreateSheet_(spreadsheet, '小帳_交易');
+    var accountSheet = getOrCreateSheet_(spreadsheet, '小帳_帳戶');
     ensureLedgerTransactionSheet_(transactionSheet);
     var rowNumber = findSheetRowById_(transactionSheet, transactionId);
     if (rowNumber) transactionSheet.deleteRow(rowNumber);
+    ensureSheetHeader_(accountSheet, ['帳戶ID', '帳戶名稱', '初始金額']);
+    repairInvestmentAccountSheet_(accountSheet, transactionSheet);
     cancelSpokenQueueForTransaction_(getOrCreateSheet_(spreadsheet, '小帳_語音佇列'), transactionId);
     SpreadsheetApp.flush();
     return { deleted: Boolean(rowNumber) };
@@ -371,6 +380,7 @@ function loadLedgerState_() {
     ensureSheetHeader_(accountSheet, ['帳戶ID', '帳戶名稱', '初始金額']);
     ensureLedgerTransactionSheet_(transactionSheet);
     ensureSheetHeader_(settingsSheet, ['項目', '值']);
+    repairInvestmentAccountSheet_(accountSheet, transactionSheet);
     var accounts = accountSheet.getLastRow() < 2
       ? []
       : accountSheet.getRange(2, 1, accountSheet.getLastRow() - 1, 3).getValues().flatMap(function (row) {
@@ -414,6 +424,57 @@ function loadLedgerState_() {
 function accountIcon_(id, name) {
   var icons = { cash: '現', line: 'L', sinopac: '永', bot: '台', post: '郵', investment: '投' };
   return icons[id] || name.slice(0, 1) || '帳';
+}
+
+function investmentBalanceEffect_(transaction) {
+  var amount = Number(transaction && transaction.amount);
+  if (!Number.isSafeInteger(amount) || amount <= 0) return 0;
+  if (transaction.type === 'income' && transaction.account === 'investment') return amount;
+  if (transaction.type === 'expense' && transaction.account === 'investment') return -amount;
+  if (transaction.type !== 'transfer') return 0;
+  if (transaction.toAccount === 'investment') return amount;
+  if (transaction.account !== 'investment') return 0;
+  var fee = Number(transaction.fee);
+  return -(amount + (Number.isSafeInteger(fee) && fee > 0 ? fee : 0));
+}
+
+function canonicalInvestmentOpeningBalance_(transactions) {
+  var historicalFlow = (Array.isArray(transactions) ? transactions : []).reduce(function (total, transaction) {
+    var date = boundedText_(transaction && transaction.date, 10);
+    if (!validLedgerDate_(date) || date > INVESTMENT_SNAPSHOT_DATE) return total;
+    return total + investmentBalanceEffect_(transaction);
+  }, 0);
+  return INVESTMENT_SNAPSHOT_ASSET - historicalFlow;
+}
+
+function canonicalizeInvestmentAccounts_(accounts, transactions) {
+  var openingBalance = canonicalInvestmentOpeningBalance_(transactions);
+  var found = false;
+  var normalized = (Array.isArray(accounts) ? accounts : []).map(function (account) {
+    if (!account || account.id !== 'investment') return account;
+    found = true;
+    return { id: 'investment', name: '投資資產', icon: '投', openingBalance: openingBalance };
+  });
+  if (!found) normalized.push({ id: 'investment', name: '投資資產', icon: '投', openingBalance: openingBalance });
+  return normalized;
+}
+
+function readLedgerTransactionsFromSheet_(sheet) {
+  if (sheet.getLastRow() < 2) return [];
+  return sheet.getRange(
+    2,
+    1,
+    Math.min(sheet.getLastRow() - 1, 5000),
+    LEDGER_TRANSACTION_HEADERS.length
+  ).getValues().flatMap(function (row) {
+    var transaction = ledgerTransactionFromRow_(row);
+    return transaction.id ? [transaction] : [];
+  });
+}
+
+function repairInvestmentAccountSheet_(accountSheet, transactionSheet) {
+  var openingBalance = canonicalInvestmentOpeningBalance_(readLedgerTransactionsFromSheet_(transactionSheet));
+  upsertSheetRowById_(accountSheet, ['investment', '投資資產', openingBalance]);
 }
 
 function ledgerTransactionRows_(transactions) {
@@ -1290,6 +1351,9 @@ function finishSpokenEntry_(job, reviewed) {
     if (!reviewed.id) reviewed.id = job.transactionId || 'voice:' + job.queueId;
     if (!reviewed.sourceId) reviewed.sourceId = job.queueId;
     upsertSpokenTransaction_(transactionSheet, reviewed);
+    var accountSheet = getOrCreateSheet_(spreadsheet, '小帳_帳戶');
+    ensureSheetHeader_(accountSheet, ['帳戶ID', '帳戶名稱', '初始金額']);
+    repairInvestmentAccountSheet_(accountSheet, transactionSheet);
     updateSpokenQueueStatusInSheet_(
       queueSheet,
       job.queueId,

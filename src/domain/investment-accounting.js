@@ -1,5 +1,6 @@
 export const INVESTMENT_ACCOUNT_ID = 'investment';
 export const INVESTMENT_OPENING_ASSET = 12_891;
+export const INVESTMENT_SNAPSHOT_DATE = '2026-09-18';
 export const INVESTMENT_ACCOUNT = Object.freeze({
   id: INVESTMENT_ACCOUNT_ID,
   name: '投資資產',
@@ -37,27 +38,32 @@ function canSafelyMigrate(transaction) {
     transaction.account !== INVESTMENT_ACCOUNT_ID;
 }
 
+function investmentBalanceEffect(transaction) {
+  const amount = Number(transaction?.amount);
+  if (!Number.isSafeInteger(amount) || amount <= 0) return 0;
+  if (transaction.type === 'income' && transaction.account === INVESTMENT_ACCOUNT_ID) return amount;
+  if (transaction.type === 'expense' && transaction.account === INVESTMENT_ACCOUNT_ID) return -amount;
+  if (transaction.type !== 'transfer') return 0;
+  if (transaction.toAccount === INVESTMENT_ACCOUNT_ID) return amount;
+  if (transaction.account !== INVESTMENT_ACCOUNT_ID) return 0;
+  const fee = Number(transaction.fee);
+  return -(amount + (Number.isSafeInteger(fee) && fee > 0 ? fee : 0));
+}
+
+function snapshotInvestmentFlow(transactions) {
+  return transactions.reduce((total, transaction) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(transaction?.date) || transaction.date > INVESTMENT_SNAPSHOT_DATE) {
+      return total;
+    }
+    return total + investmentBalanceEffect(transaction);
+  }, 0);
+}
+
 export function migrateInvestmentAccounting(state) {
   const accounts = Array.isArray(state?.accounts) ? state.accounts : [];
   const transactions = Array.isArray(state?.transactions) ? state.transactions : [];
   const accountAdded = !accounts.some(account => account.id === INVESTMENT_ACCOUNT_ID);
   const changedTransactionIds = transactions.filter(canSafelyMigrate).map(transaction => transaction.id);
-  const migratedPrincipal = transactions
-    .filter(canSafelyMigrate)
-    .reduce((sum, transaction) => sum + transaction.amount, 0);
-
-  if (!accountAdded && !changedTransactionIds.length) {
-    return { state, changedTransactionIds: [], accountAdded: false };
-  }
-
-  const nextAccounts = accountAdded
-    ? [
-        ...accounts,
-        { ...INVESTMENT_ACCOUNT, openingBalance: INVESTMENT_OPENING_ASSET - migratedPrincipal },
-      ]
-    : accounts.map(account => account.id === INVESTMENT_ACCOUNT_ID
-      ? { ...account, openingBalance: (Number(account.openingBalance) || 0) - migratedPrincipal }
-      : account);
   const nextTransactions = transactions.map(transaction => canSafelyMigrate(transaction)
     ? {
         ...transaction,
@@ -66,6 +72,22 @@ export function migrateInvestmentAccounting(state) {
         category: '投資',
       }
     : transaction);
+  const canonicalOpeningBalance = INVESTMENT_OPENING_ASSET - snapshotInvestmentFlow(nextTransactions);
+  const currentInvestment = accounts.find(account => account.id === INVESTMENT_ACCOUNT_ID);
+  const accountChanged = accountAdded ||
+    Number(currentInvestment?.openingBalance) !== canonicalOpeningBalance ||
+    currentInvestment?.name !== INVESTMENT_ACCOUNT.name ||
+    currentInvestment?.icon !== INVESTMENT_ACCOUNT.icon;
+
+  if (!accountChanged && !changedTransactionIds.length) {
+    return { state, changedTransactionIds: [], accountAdded: false };
+  }
+
+  const nextAccounts = accountAdded
+    ? [...accounts, { ...INVESTMENT_ACCOUNT, openingBalance: canonicalOpeningBalance }]
+    : accounts.map(account => account.id === INVESTMENT_ACCOUNT_ID
+      ? { ...account, ...INVESTMENT_ACCOUNT, openingBalance: canonicalOpeningBalance }
+      : account);
 
   return {
     state: { ...state, accounts: nextAccounts, transactions: nextTransactions },

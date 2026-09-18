@@ -55,7 +55,7 @@ import { renderView } from './views.js';
 const LAST_SHEET_SYNC_KEY = 'hukeep_last_sheet_sync_at';
 const PENDING_SHEET_CHANGES_KEY = 'hukeep_pending_sheet_changes_v1';
 const BUDGET_SYNC_MIGRATION_KEY = 'hukeep_budget_sync_migrated_v2';
-const INVESTMENT_SYNC_MIGRATION_KEY = 'hukeep_investment_sync_migrated_v1';
+const INVESTMENT_SYNC_REPAIR_KEY = 'hukeep_investment_sync_repaired_v2';
 const AUTO_SYNC_DEBOUNCE_MS = 800;
 const SHEET_RETRY_BASE_DELAY_MS = 4_000;
 const SHEET_RETRY_MAX_DELAY_MS = 60_000;
@@ -314,21 +314,17 @@ export function createApp() {
     }
   }
 
-  function queueInvestmentMigrationSync() {
+  function discardLegacyInvestmentAccountUpload() {
     try {
-      if (localStorage.getItem(INVESTMENT_SYNC_MIGRATION_KEY)) return;
+      if (localStorage.getItem(INVESTMENT_SYNC_REPAIR_KEY)) return;
       const pending = readPendingSheetChanges();
-      const investmentIds = state.transactions
-        .filter(isInvestmentTransfer)
-        .map(transaction => transaction.id);
       writePendingSheetChanges({
         ...pending,
-        upserts: [...new Set([...pending.upserts, ...investmentIds])],
-        accountUpserts: [...new Set([...pending.accountUpserts, 'investment'])],
+        accountUpserts: pending.accountUpserts.filter(id => id !== 'investment'),
       });
-      localStorage.setItem(INVESTMENT_SYNC_MIGRATION_KEY, '1');
+      localStorage.setItem(INVESTMENT_SYNC_REPAIR_KEY, '1');
     } catch {
-      // The normalized local ledger remains usable and the migration can retry next launch.
+      // A subsequent Sheet pull still repairs the account from the canonical snapshot.
     }
   }
 
@@ -1711,7 +1707,7 @@ export function createApp() {
   document.querySelector('#tools-button').innerHTML = icon('settings', 19);
   lastSheetPullAt = storedLastSyncAt();
   migrateLegacyBudgetChanges();
-  queueInvestmentMigrationSync();
+  discardLegacyInvestmentAccountUpload();
   applyDueRecurringTransactions();
   captureCompletedMonthSnapshot();
   setSyncStatus(lastSheetPullAt ? 'synced' : 'local', { lastAt: lastSheetPullAt });

@@ -301,6 +301,7 @@ test('未連線時口語記帳先儲存在本機，不顯示上傳失敗', async
 });
 
 test('口語投資買入只移動資產，手續費才計入生活支出', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-09-19T04:00:00Z'));
   await page.getByRole('button', { name: '快速記一筆' }).click();
   await page.getByLabel('口語記帳內容').fill('永豐買 0050 一萬元，手續費 20');
   await page.getByRole('button', { name: '直接記帳', exact: true }).click();
@@ -319,6 +320,36 @@ test('口語投資買入只移動資產，手續費才計入生活支出', async
   await page.getByRole('button', { name: '趨勢', exact: true }).click();
   await expect(page.locator('.investment-analysis').getByText('投資流向', { exact: true })).toBeVisible();
   await expect(page.getByText('淨投入', { exact: true })).toBeVisible();
+});
+
+test('舊裝置重複扣減的投資金額會在載入時修回共同快照', async ({ page }) => {
+  await page.evaluate(() => {
+    localStorage.setItem('hukeep_personal_state_v1', JSON.stringify({
+      schemaVersion: 1,
+      accounts: [
+        { id: 'cash', name: '現金', icon: '現', openingBalance: 132 },
+        { id: 'line', name: 'LINE', icon: 'L', openingBalance: 5984 },
+        { id: 'sinopac', name: '永豐', icon: '永', openingBalance: 11947 },
+        { id: 'bot', name: '台銀', icon: '台', openingBalance: 0 },
+        { id: 'post', name: '郵局', icon: '郵', openingBalance: 10310 },
+        { id: 'investment', name: '投資資產', icon: '投', openingBalance: -137103 },
+      ],
+      transactions: [
+        { id: 'old-buy', type: 'transfer', amount: 11538, account: 'sinopac', toAccount: 'investment', category: '投資', subcategory: 'ETF', date: '2026-08-30', name: '股票買入' },
+      ],
+      budgets: [],
+      preferences: { theme: 'system' },
+    }));
+  });
+  await page.reload();
+
+  const investmentCard = page.locator('.account-item').filter({ hasText: '投資資產' });
+  await expect(investmentCard).toContainText('NT$ 12,891');
+  await expect(page.getByTestId('total-assets')).toContainText('NT$ 29,726');
+  const savedOpeningBalance = await page.evaluate(() => JSON.parse(
+    localStorage.getItem('hukeep_personal_state_v1'),
+  ).accounts.find(account => account.id === 'investment').openingBalance);
+  expect(savedOpeningBalance).toBe(1353);
 });
 
 test('多品項背景上傳失敗仍保留本機交易，之後自動續傳', async ({ page }) => {
