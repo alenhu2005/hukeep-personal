@@ -144,7 +144,10 @@ export function createApp() {
   let view = safeViewFromHash();
   let selectedMonth = todayInTaipei().slice(0, 7);
   let historyFilters = { query: '', type: '', account: '', preset: 'all' };
-  let insightFilters = { period: 'month', date: '', anchorDate: todayInTaipei() };
+  let insightFilters = {
+    period: 'month', section: 'overview', category: '', subcategory: '', selectedDate: '',
+    anchorDate: todayInTaipei(),
+  };
   let toastTimer = null;
   let smartImportController = null;
   let classificationReady = false;
@@ -1034,9 +1037,40 @@ export function createApp() {
     if (!target) return;
     if (target.dataset.insightPeriod) {
       insightFilters = {
+        ...insightFilters,
         period: target.dataset.insightPeriod,
-        date: '',
+        selectedDate: '',
         anchorDate: insightFilters.anchorDate || todayInTaipei(),
+      };
+      render();
+      return;
+    }
+    if (target.dataset.insightSection) {
+      insightFilters = {
+        ...insightFilters,
+        section: target.dataset.insightSection,
+        category: '',
+        subcategory: '',
+      };
+      render();
+      requestAnimationFrame(() => main.querySelector(`[data-insight-section="${target.dataset.insightSection}"]`)?.focus());
+      return;
+    }
+    if (Object.hasOwn(target.dataset, 'insightCategory')) {
+      const category = target.dataset.insightCategory || '';
+      insightFilters = {
+        ...insightFilters,
+        category: insightFilters.category === category ? '' : category,
+        subcategory: '',
+      };
+      render();
+      return;
+    }
+    if (Object.hasOwn(target.dataset, 'insightSubcategory')) {
+      const subcategory = target.dataset.insightSubcategory || '';
+      insightFilters = {
+        ...insightFilters,
+        subcategory: insightFilters.subcategory === subcategory ? '' : subcategory,
       };
       render();
       return;
@@ -1046,24 +1080,24 @@ export function createApp() {
       if (insightFilters.period === 'week') {
         insightFilters = {
           ...insightFilters,
-          date: '',
+          selectedDate: '',
           anchorDate: shiftDate(insightFilters.anchorDate || todayInTaipei(), offset * 7),
         };
       } else {
         selectedMonth = shiftMonth(selectedMonth, insightFilters.period === 'year' ? offset * 12 : offset);
-        insightFilters = { ...insightFilters, date: '' };
+        insightFilters = { ...insightFilters, selectedDate: '' };
       }
       render();
       return;
     }
     if (target.dataset.insightMonth) {
       selectedMonth = target.dataset.insightMonth;
-      insightFilters = { period: 'month', date: '', anchorDate: todayInTaipei() };
+      insightFilters = { ...insightFilters, period: 'month', selectedDate: '', anchorDate: todayInTaipei() };
       render();
       return;
     }
     if (Object.hasOwn(target.dataset, 'insightDate')) {
-      insightFilters = { ...insightFilters, date: target.dataset.insightDate || '' };
+      insightFilters = { ...insightFilters, selectedDate: target.dataset.insightDate || '' };
       render();
       return;
     }

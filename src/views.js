@@ -32,6 +32,15 @@ function categoryMark(category) {
   return `<span class="category-mark tone-${tone}" aria-hidden="true">${escapeHtml(symbols[category] || category?.slice(0, 1) || '其')}</span>`;
 }
 
+function transactionTime(transaction) {
+  if (!transaction?.createdAt) return '';
+  const date = new Date(transaction.createdAt);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('zh-TW', {
+    timeZone: 'Asia/Taipei', hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(date);
+}
+
 export function transactionRows(transactions, accounts, options = {}) {
   if (!transactions.length) {
     return emptyState('沒有符合的紀錄');
@@ -61,6 +70,7 @@ export function transactionRows(transactions, accounts, options = {}) {
         isInvestmentTransfer(transaction)
           ? `${accountNames[transaction.account] || transaction.account} → ${accountNames[transaction.toAccount] || transaction.toAccount}`
           : '',
+        options.showTime ? transactionTime(transaction) : '',
         formatDate(transaction.date),
       ]
         .filter(Boolean)
@@ -116,10 +126,24 @@ function formatNetAmount(amount) {
   return `${amount > 0 ? '+' : ''}${formatCompactMoney(amount)}`;
 }
 
-function rowsForState(state, transactions) {
+function rowsForState(state, transactions, options = {}) {
   return transactionRows(transactions, state.accounts, {
     groupCounts: groupedTransactions(state.transactions),
+    ...options,
   });
+}
+
+function expenseDisplayTransactions(transactions) {
+  return transactions.map(row => row.type === 'transfer'
+    ? {
+        ...row,
+        type: 'expense',
+        amount: expenseAmount(row),
+        category: '帳單',
+        subcategory: '轉帳手續費',
+        name: `${row.name || '轉帳'}（手續費）`,
+      }
+    : row);
 }
 
 function categoryBreakdown(summary) {
@@ -353,24 +377,180 @@ function daysInRange(from, to) {
   return result;
 }
 
+function changeLabel(value) {
+  if (value == null) return '無前期資料';
+  if (value === 0) return '與前期相同';
+  return `較前期 ${value > 0 ? '+' : ''}${value}%`;
+}
+
+function analysisTimeBars(rows, label) {
+  const max = Math.max(1, ...rows.map(row => row.amount));
+  return `<div class="analysis-time-bars" role="img" aria-label="${escapeHtml(label)}">${rows.map(row => {
+    const height = row.amount ? Math.max(5, Math.round(row.amount / max * 100)) : 0;
+    return `<div class="analysis-time-bar" title="${escapeHtml(row.label)} ${formatMoney(row.amount)}"><span><b>${row.amount ? formatCompactMoney(row.amount) : ''}</b><i style="height:${height}%"></i></span><small>${escapeHtml(row.label)}</small></div>`;
+  }).join('')}</div>`;
+}
+
+function rankedBarRows(groups, options) {
+  const max = Math.max(1, ...groups.map(group => group.amount));
+  const accountNames = options.accountNames || {};
+  return groups.map(group => {
+    const key = group[options.key];
+    const label = options.key === 'account' ? accountNames[key] || key : key;
+    const width = Math.max(3, Math.round(group.amount / max * 100));
+    const selected = options.selected === key;
+    const attribute = options.attribute ? `${options.attribute}="${escapeHtml(key)}"` : '';
+    const tag = options.attribute ? 'button' : 'div';
+    return `<${tag} class="analysis-ranked-row${selected ? ' is-selected' : ''}" ${attribute}${options.attribute ? ` aria-pressed="${selected}"` : ''}>
+      ${options.showMark ? categoryMark(key) : ''}
+      <span class="analysis-ranked-copy"><span><strong>${escapeHtml(label)}</strong><small>${group.count} 筆 · ${group.percent}%</small></span><i><b style="width:${width}%"></b></i></span>
+      <span class="analysis-ranked-value"><strong>${formatMoney(group.amount)}</strong>${options.showPrevious ? `<small>${changeLabel(group.changePercent)}</small>` : ''}</span>
+    </${tag}>`;
+  }).join('');
+}
+
+function analysisMetricStrip(items, label) {
+  return `<div class="analysis-metric-strip" aria-label="${escapeHtml(label)}">${items.map(item => `<div><span>${escapeHtml(item.label)}</span><strong class="${item.tone || ''}">${item.value}</strong>${item.detail ? `<small>${escapeHtml(item.detail)}</small>` : ''}</div>`).join('')}</div>`;
+}
+
+function renderSelectedDay(state, selectedDay) {
+  if (!selectedDay) return '';
+  const flow = selectedDay.investmentFlows;
+  return `<section class="analysis-history-section" aria-label="${escapeHtml(formatDate(selectedDay.date))}當日明細">
+    <div class="analysis-history-head"><div><strong>${escapeHtml(formatDate(selectedDay.date))}</strong><span>當日明細</span></div><button type="button" data-insight-date="" aria-label="關閉當日明細">關閉</button></div>
+    ${analysisMetricStrip([
+      { label: '收入', value: formatMoney(selectedDay.totals.income), tone: 'positive' },
+      { label: '生活支出', value: formatMoney(selectedDay.totals.expense), tone: 'negative' },
+      { label: '生活結餘', value: formatMoney(selectedDay.balance, { showPlus: true }), tone: selectedDay.balance < 0 ? 'negative' : 'positive' },
+      { label: '投資投入', value: formatMoney(flow.contributed) },
+      { label: '投資領回', value: formatMoney(flow.withdrawn) },
+    ], '當日收支摘要')}
+    <div class="transaction-list compact">${rowsForState(state, selectedDay.transactions, { showTime: true })}</div>
+  </section>`;
+}
+
+function renderOverviewAnalysis(workspace, periodLabel) {
+  const currentMax = Math.max(1, workspace.totals.income, workspace.totals.expense, Math.abs(workspace.balance));
+  const previousMax = Math.max(1, workspace.previousTotals.income, workspace.previousTotals.expense, Math.abs(workspace.comparison.balance));
+  const scale = Math.max(currentMax, previousMax);
+  const comparisonRows = [
+    ['收入', workspace.totals.income, workspace.previousTotals.income, 'income'],
+    ['生活支出', workspace.totals.expense, workspace.previousTotals.expense, 'expense'],
+    ['生活結餘', workspace.balance, workspace.comparison.balance, 'balance'],
+  ];
+  return `<section class="analysis-section-panel" aria-label="總覽分析">
+    ${analysisMetricStrip([
+      { label: '收入', value: formatMoney(workspace.totals.income) },
+      { label: '生活支出', value: formatMoney(workspace.totals.expense) },
+      { label: '生活結餘', value: formatMoney(workspace.balance, { showPlus: true }), tone: workspace.balance < 0 ? 'negative' : 'positive' },
+      { label: '儲蓄率', value: workspace.savingsRate == null ? '—' : `${workspace.savingsRate}%` },
+    ], `${periodLabel}總覽`)}
+    <div class="analysis-block-head"><div><strong>本期與前期</strong><small>相同經過天數</small></div></div>
+    <div class="analysis-comparison-bars">${comparisonRows.map(([label, current, previous, tone]) => `<div class="analysis-comparison-row">
+      <strong>${label}</strong><div><span>本期</span><i><b class="${tone}" style="width:${Math.round(Math.abs(current) / scale * 100)}%"></b></i><em>${formatMoney(current, { showPlus: label === '生活結餘' })}</em></div>
+      <div><span>前期</span><i><b class="previous" style="width:${Math.round(Math.abs(previous) / scale * 100)}%"></b></i><em>${formatMoney(previous, { showPlus: label === '生活結餘' })}</em></div>
+    </div>`).join('')}</div>
+  </section>`;
+}
+
+function renderFocusAnalysis(state, workspace, type, accountNames) {
+  const focus = workspace.focus;
+  if (!focus) return '';
+  const title = focus.subcategory || focus.category;
+  const childRegion = `<div class="analysis-focus-block" role="region" aria-label="${escapeHtml(focus.category)}小分類圖表">
+    <div class="analysis-block-head"><div><strong>小分類</strong><small>占大分類比例</small></div></div>
+    <div class="analysis-ranked-bars">${rankedBarRows(focus.children, {
+      key: 'subcategory', attribute: 'data-insight-subcategory', selected: focus.subcategory,
+    })}</div>
+  </div>`;
+  return `<div class="analysis-focus">
+    <div class="analysis-focus-title"><button type="button" data-insight-category="" aria-label="返回全部大分類">‹</button><div><small>${escapeHtml(focus.category)}${focus.subcategory ? ' · 小分類' : ''}</small><strong>${escapeHtml(title)}</strong></div></div>
+    ${analysisMetricStrip([
+      { label: '金額', value: formatMoney(focus.amount) },
+      { label: focus.subcategory ? `占${focus.category}` : `占${type === 'expense' ? '總支出' : '總收入'}`, value: `${focus.percent}%` },
+      { label: '筆數', value: `${focus.count} 筆` },
+      { label: '平均每筆', value: formatMoney(focus.average), detail: changeLabel(focus.changePercent) },
+    ], `${title}數據`)}
+    <div class="analysis-focus-block"><div class="analysis-block-head"><div><strong>${escapeHtml(title)}趨勢</strong><small>${type === 'expense' ? '生活支出' : '收入'}</small></div></div>${analysisTimeBars(focus.timeSeries, `${title}期間趨勢`)}</div>
+    ${childRegion}
+    <div class="analysis-focus-block analysis-account-bars"><div class="analysis-block-head"><div><strong>${type === 'expense' ? '付款' : '入帳'}帳戶</strong></div></div>
+      <div class="analysis-ranked-bars">${rankedBarRows(focus.accounts, { key: 'account', accountNames })}</div>
+    </div>
+    ${focus.subcategory ? `<div class="analysis-focus-block"><div class="analysis-block-head"><div><strong>${escapeHtml(title)}明細</strong><small>${focus.count} 筆</small></div></div><div class="transaction-list compact">${rowsForState(state, type === 'expense' ? expenseDisplayTransactions(focus.transactions) : focus.transactions)}</div></div>` : ''}
+  </div>`;
+}
+
+function renderCategoryAnalysis(state, workspace, type, filters, accountNames, budgetProgress) {
+  const label = type === 'expense' ? '支出' : '收入';
+  const groups = type === 'expense' ? workspace.expenseGroups : workspace.incomeGroups;
+  const noFocus = filters.category && !workspace.focus
+    ? emptyState(`這個期間沒有「${escapeHtml(filters.category)}」資料`)
+    : '';
+  const budget = type === 'expense' && budgetProgress?.length
+    ? `<div class="analysis-focus-block analysis-budget-bars"><div class="analysis-block-head"><div><strong>本月預算</strong><small>僅計生活支出</small></div></div><div class="analysis-ranked-bars">${budgetProgress.map(item => `<div class="analysis-ranked-row"><span class="analysis-ranked-copy"><span><strong>${escapeHtml(item.category)}</strong><small>${Math.round(item.ratio * 100)}%</small></span><i><b class="${item.ratio > 1 ? 'over' : ''}" style="width:${Math.min(100, Math.round(item.ratio * 100))}%"></b></i></span><span class="analysis-ranked-value"><strong>${formatMoney(item.spent)}</strong><small>/ ${formatMoney(item.limit)}</small></span></div>`).join('')}</div></div>`
+    : '';
+  return `<section class="analysis-section-panel" aria-label="${label}大分類排行">
+    <div class="analysis-block-head"><div><strong>${label}大分類</strong><small>點選分類查看小分類</small></div><b>${formatMoney(workspace.totals[type])}</b></div>
+    <div class="analysis-ranked-bars">${groups.length ? rankedBarRows(groups, {
+      key: 'category', attribute: 'data-insight-category', selected: filters.category, showMark: true, showPrevious: true,
+    }) : emptyState(`本期沒有${label}`)}</div>
+    ${noFocus || renderFocusAnalysis(state, workspace, type, accountNames)}
+    ${budget}
+  </section>`;
+}
+
+function renderInvestmentAnalysis(state, workspace, investmentAsset) {
+  const maxFlow = Math.max(1, ...workspace.investmentGroups.flatMap(group => [group.contributed, group.withdrawn]));
+  const maxSeries = Math.max(1, ...workspace.investmentSeries.flatMap(row => [row.contributed, row.withdrawn]));
+  const costGroups = Object.values(workspace.investmentCostTransactions.reduce((result, row) => {
+    const name = row.type === 'transfer' ? '交易手續費' : row.subcategory || '其他投資支出';
+    const current = result[name] || { subcategory: name, amount: 0, count: 0, percent: 0 };
+    return { ...result, [name]: { ...current, amount: current.amount + expenseAmount(row), count: current.count + 1 } };
+  }, {})).map(group => ({ ...group, percent: workspace.investmentCost ? Math.round(group.amount / workspace.investmentCost * 100) : 0 }))
+    .toSorted((left, right) => right.amount - left.amount);
+  return `<section class="analysis-section-panel investment-analysis" aria-label="投資分析">
+    ${analysisMetricStrip([
+      { label: '目前投資資產', value: formatMoney(investmentAsset) },
+      { label: '本期投入', value: formatMoney(workspace.investmentFlows.contributed) },
+      { label: '本期領回', value: formatMoney(workspace.investmentFlows.withdrawn) },
+      { label: '淨投入', value: formatMoney(workspace.investmentFlows.net, { showPlus: true }) },
+    ], '投資摘要')}
+    <div class="analysis-focus-block"><div class="analysis-block-head"><div><strong>投資流向</strong><small>投入／領回</small></div></div>
+      <div class="analysis-investment-series">${workspace.investmentSeries.map(row => `<div title="${escapeHtml(row.label)} 投入 ${formatMoney(row.contributed)}，領回 ${formatMoney(row.withdrawn)}"><span><i class="in" style="height:${Math.round(row.contributed / maxSeries * 100)}%"></i><i class="out" style="height:${Math.round(row.withdrawn / maxSeries * 100)}%"></i></span><small>${escapeHtml(row.label)}</small></div>`).join('')}</div>
+    </div>
+    <div class="analysis-focus-block"><div class="analysis-block-head"><div><strong>資產細分類</strong><small>投入與領回分開顯示</small></div></div><div class="investment-flow-list">${workspace.investmentGroups.length ? workspace.investmentGroups.map(group => `<div class="investment-flow-row"><div><strong>${escapeHtml(group.subcategory)}</strong><small>${group.count} 筆</small></div><span>投入 ${formatMoney(group.contributed)}</span><span>領回 ${formatMoney(group.withdrawn)}</span><b>${formatMoney(group.net, { showPlus: true })}</b><div class="investment-split-bar"><i class="in" style="width:${Math.round(group.contributed / maxFlow * 100)}%"></i><i class="out" style="width:${Math.round(group.withdrawn / maxFlow * 100)}%"></i></div></div>`).join('') : emptyState('本期沒有投資流向')}</div></div>
+    <div class="analysis-focus-block"><div class="analysis-block-head"><div><strong>投資收入</strong><small>股息、配息與利息</small></div><b>${formatMoney(workspace.investmentIncome?.amount || 0)}</b></div><div class="analysis-ranked-bars">${workspace.investmentIncome?.children?.length ? rankedBarRows(workspace.investmentIncome.children, { key: 'subcategory' }) : emptyState('本期沒有投資收入')}</div></div>
+    <div class="analysis-focus-block"><div class="analysis-block-head"><div><strong>投資相關支出</strong><small>手續費、稅與工具課程</small></div><b>${formatMoney(workspace.investmentCost)}</b></div><div class="analysis-ranked-bars">${costGroups.length ? rankedBarRows(costGroups, { key: 'subcategory' }) : emptyState('本期沒有投資相關支出')}</div></div>
+    ${workspace.investmentCostTransactions.length ? `<div class="transaction-list compact">${rowsForState(state, expenseDisplayTransactions(workspace.investmentCostTransactions))}</div>` : ''}
+  </section>`;
+}
+
 export function renderInsights(state, month, options = {}) {
   const today = todayInTaipei();
-  const filters = options.insightFilters || { period: 'month', date: '', anchorDate: today };
+  const rawFilters = options.insightFilters || {};
+  const filters = {
+    period: rawFilters.period || 'month',
+    section: ['overview', 'expense', 'income', 'investment'].includes(rawFilters.section) ? rawFilters.section : 'overview',
+    category: rawFilters.category || '',
+    subcategory: rawFilters.subcategory || '',
+    selectedDate: rawFilters.selectedDate ?? rawFilters.date ?? '',
+    anchorDate: rawFilters.anchorDate || today,
+  };
   const period = ['week', 'month', 'year'].includes(filters.period) ? filters.period : 'month';
   const anchorDate = /^\d{4}-\d{2}-\d{2}$/.test(filters.anchorDate) ? filters.anchorDate : today;
   const workspace = buildAnalysisWorkspace(state.transactions, {
     period,
     selectedMonth: month,
     today: anchorDate,
+    currentDate: today,
+    selectedDate: filters.selectedDate,
+    section: filters.section,
+    category: filters.category,
+    subcategory: filters.subcategory,
   });
   const dailyTotalsByDate = dailyNetByDate(workspace.scoped);
   const maxDailyNet = Math.max(1, ...[...dailyTotalsByDate.values()].map(item => Math.abs(item.net)));
-  const selectedDate = filters.date >= workspace.range.from && filters.date <= workspace.range.to
-    ? filters.date
-    : '';
-  const selectedTransactions = selectedDate
-    ? workspace.scoped.filter(transaction => transaction.date === selectedDate)
-    : [];
+  const selectedDate = workspace.selectedDay?.date || '';
   const periodTabs = [['week', '本週'], ['month', '本月'], ['year', '本年']]
     .map(([value, label]) => `<button type="button" data-insight-period="${value}" aria-pressed="${period === value}">${label}</button>`)
     .join('');
@@ -431,39 +611,22 @@ export function renderInsights(state, month, options = {}) {
     : period === 'month'
       ? `<div class="analysis-cal-weekdays" aria-hidden="true"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div><div class="analysis-cal-grid" role="grid" aria-label="月曆，點選單日">${calendarCells}</div>`
       : `<div class="analysis-year-months" role="group" aria-label="各月支出">${yearMonths}</div>`;
-  const categoryChart = (groups, total, label) => {
-    let angle = 0;
-    const stops = groups.map((group, index) => {
-      const start = angle;
-      angle += group.amount / total * 100;
-      return `hsl(${(index * 137 + 150) % 360} 35% 45%) ${start}% ${angle}%`;
-    });
-    return groups.length ? `<div class="analysis-donut" aria-hidden="true" style="background:conic-gradient(${stops.join(', ')})"><div><span>${label}</span><strong>${formatCompactMoney(total)}</strong></div></div>` : '';
-  };
-  const breakdown = (groups, type, label) => `<section class="daily-analysis-breakdown" aria-label="分類${label}">
-    <div class="daily-analysis-section-head"><strong>分類${label}</strong><small>${formatMoney(workspace.totals[type])}</small></div>
-    ${categoryChart(groups, workspace.totals[type], label)}
-    <div class="analysis-category-tree">${groups.length ? groups.map((group, index) => `<details class="analysis-category-group">
-      <summary><i aria-hidden="true" style="background:hsl(${(index * 137 + 150) % 360} 35% 45%)"></i><strong>${escapeHtml(group.category)}</strong><span>${group.count} 筆 · ${group.percent}%</span><b>${formatMoney(group.amount)}</b></summary>
-      <div class="analysis-subcategories"><small>小分類占比為此大分類內占比</small>${group.children.map(child => `<details>
-        <summary><strong>${escapeHtml(child.subcategory)}</strong><span>${child.count} 筆 · ${child.percent}%</span><b>${formatMoney(child.amount)}</b></summary>
-        <div class="analysis-subcategory-bar" role="img" aria-label="${escapeHtml(child.subcategory)}占 ${child.percent}%"><i style="width:${Math.max(3, child.percent)}%"></i></div>
-        <div class="transaction-list compact">${rowsForState(state, child.transactions.map(row => row.type === 'transfer'
-          ? { ...row, type: 'expense', amount: expenseAmount(row), category: '帳單', subcategory: '轉帳手續費', name: `${row.name || '轉帳'}（手續費）` }
-          : row))}</div>
-      </details>`).join('')}</div>
-    </details>`).join('') : emptyState(`本期沒有${label}`)}</div>
-  </section>`;
-  const maxInvestmentFlow = Math.max(1, ...workspace.investmentGroups.map(group => Math.abs(group.net)));
-  const investmentGroups = workspace.investmentGroups.length
-    ? workspace.investmentGroups.map(group => `<div class="investment-flow-row">
-        <div><strong>${escapeHtml(group.subcategory)}</strong><small>${group.count} 筆</small></div>
-        <span>投入 ${formatMoney(group.contributed)}</span>
-        <span>領回 ${formatMoney(group.withdrawn)}</span>
-        <b class="${group.net < 0 ? 'negative' : ''}">${formatMoney(group.net, { showPlus: true })}</b>
-        <div class="investment-flow-bar" role="img" aria-label="${escapeHtml(group.subcategory)}淨流量 ${formatMoney(group.net, { showPlus: true })}"><i class="${group.net < 0 ? 'out' : 'in'}" style="width:${Math.max(3, Math.abs(group.net) / maxInvestmentFlow * 100)}%"></i></div>
-      </div>`).join('')
-    : emptyState('本期沒有投資流向');
+  const accountNames = Object.fromEntries((state.accounts || []).map(account => [account.id, account.name]));
+  const investmentAsset = calculateAccountBalances(state.accounts || [], state.transactions || [])
+    .find(account => account.id === 'investment')?.balance || 0;
+  const currentBudgetProgress = period === 'month' && month === today.slice(0, 7)
+    ? calculateBudgetProgress(state.budgets || [], state.transactions || [], month)
+    : [];
+  const sectionTabs = [
+    ['overview', '總覽'], ['expense', '支出'], ['income', '收入'], ['investment', '投資'],
+  ].map(([value, label]) => `<button type="button" data-insight-section="${value}" aria-label="${label}分析" aria-pressed="${filters.section === value}">${label}</button>`).join('');
+  const sectionContent = filters.section === 'expense'
+    ? renderCategoryAnalysis(state, workspace, 'expense', filters, accountNames, currentBudgetProgress)
+    : filters.section === 'income'
+      ? renderCategoryAnalysis(state, workspace, 'income', filters, accountNames, [])
+      : filters.section === 'investment'
+        ? renderInvestmentAnalysis(state, workspace, investmentAsset)
+        : renderOverviewAnalysis(workspace, periodLabel);
   return `<section class="view insights-view" aria-labelledby="insights-title">
     <h1 id="insights-title" class="visually-hidden">趨勢</h1>
     <section class="daily-analysis-shell">
@@ -474,30 +637,9 @@ export function renderInsights(state, month, options = {}) {
         <button type="button" data-insight-shift="1" aria-label="下一期">›</button>
         ${periodContent}
       </div>
-      <div class="daily-analysis-overview" aria-label="收支摘要">
-        <div class="daily-analysis-total"><span>支出</span><strong>${formatMoney(workspace.totals.expense)}</strong><small>${workspace.expenseTransactions.length} 筆</small></div>
-        <div class="daily-analysis-metrics"><div><span>收入</span><strong>${formatMoney(workspace.totals.income)}</strong></div><div><span>結餘</span><strong class="${workspace.totals.income - workspace.totals.expense < 0 ? 'negative' : workspace.totals.income - workspace.totals.expense > 0 ? 'positive' : ''}">${formatMoney(workspace.totals.income - workspace.totals.expense, { showPlus: true })}</strong></div></div>
-      </div>
-      <section class="daily-analysis-insights" aria-label="分析重點">
-        <div class="daily-analysis-section-head"><strong>分析重點</strong><small>${periodLabel}</small></div>
-        <div class="daily-analysis-insight-list">${workspace.insights.map(item => `<div><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></div>`).join('')}</div>
-      </section>
-      ${breakdown(workspace.expenseGroups, 'expense', '支出')}
-      <section class="daily-analysis-insights" aria-label="收入分析">
-        <div class="daily-analysis-section-head"><strong>收入分析</strong><small>${formatMoney(workspace.totals.income)}</small></div>
-        <div class="daily-analysis-insight-list">${workspace.incomeInsights.map(item => `<div><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></div>`).join('')}</div>
-      </section>
-      ${breakdown(workspace.incomeGroups, 'income', '收入')}
-      <section class="daily-analysis-breakdown investment-analysis" aria-label="投資流向分析">
-        <div class="daily-analysis-section-head"><strong>投資流向</strong></div>
-        <div class="investment-flow-totals">
-          <div><span>投入</span><strong>${formatMoney(workspace.investmentFlows.contributed)}</strong></div>
-          <div><span>領回</span><strong>${formatMoney(workspace.investmentFlows.withdrawn)}</strong></div>
-          <div><span>淨投入</span><strong class="${workspace.investmentFlows.net < 0 ? 'negative' : ''}">${formatMoney(workspace.investmentFlows.net, { showPlus: true })}</strong></div>
-        </div>
-        <div class="investment-flow-list">${investmentGroups}</div>
-      </section>
-      ${selectedDate ? `<section class="analysis-history-section"><div class="analysis-history-head"><div><strong>${escapeHtml(formatDate(selectedDate))}</strong><span>當日明細</span></div><button type="button" data-insight-date="">顯示整段</button></div><div class="transaction-list compact">${rowsForState(state, selectedTransactions)}</div></section>` : ''}
+      ${renderSelectedDay(state, workspace.selectedDay)}
+      <div class="analysis-section-tabs" role="tablist" aria-label="分析類型">${sectionTabs}</div>
+      ${sectionContent}
     </section>
   </section>`;
 }

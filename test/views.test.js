@@ -98,7 +98,7 @@ describe('趨勢每日淨額', () => {
         { id: 'gain', type: 'income', amount: 200, category: '薪資', account: 'cash', date: '2026-09-02', name: '薪水' },
       ],
       budgets: [],
-    }, '2026-09', { insightFilters: { period: 'month', date: '', anchorDate: '2026-09-01' } });
+    }, '2026-09', { insightFilters: { period: 'month', section: 'overview', selectedDate: '', anchorDate: '2026-09-01' } });
 
     expect(html).toContain('data-insight-date="2026-09-01"');
     expect(html).toContain('analysis-net-negative');
@@ -168,13 +168,13 @@ describe('趨勢每日淨額', () => {
         { id: 'sell', type: 'transfer', amount: 3000, category: '投資', subcategory: '股票', account: 'investment', toAccount: 'sinopac', date: '2026-09-02', name: '賣出股票' },
       ],
       budgets: [],
-    }, '2026-09', { insightFilters: { period: 'month', date: '', anchorDate: '2026-09-01' } });
+    }, '2026-09', { insightFilters: { period: 'month', section: 'investment', selectedDate: '', anchorDate: '2026-09-01' } });
 
     expect(html).toContain('投資流向');
     expect(html).toContain('淨投入');
     expect(html).toContain('NT$ 10,000');
     expect(html).toContain('NT$ 3,000');
-    expect(html).toContain('investment-flow-bar');
+    expect(html).toContain('investment-split-bar');
   });
 });
 

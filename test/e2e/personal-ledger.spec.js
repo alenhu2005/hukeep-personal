@@ -318,6 +318,7 @@ test('口語投資買入只移動資產，手續費才計入生活支出', async
   });
 
   await page.getByRole('button', { name: '趨勢', exact: true }).click();
+  await page.getByRole('button', { name: '投資分析', exact: true }).click();
   await expect(page.locator('.investment-analysis').getByText('投資流向', { exact: true })).toBeVisible();
   await expect(page.getByText('淨投入', { exact: true })).toBeVisible();
 });
@@ -482,7 +483,8 @@ test('可設定分類預算、查看趨勢並在手機使用', async ({ page }) 
   await expect(page.locator('#insights-title')).toHaveCount(1);
   await expect(page.locator('#trend-chart')).toBeVisible();
   await expect(page.getByRole('button', { name: '本週' })).toBeVisible();
-  await expect(page.getByText('分類支出', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '支出分析', exact: true }).click();
+  await expect(page.getByRole('region', { name: '支出大分類排行', exact: true })).toBeVisible();
   await expect(page.locator('body')).not.toHaveCSS('overflow-x', 'scroll');
 });
 
@@ -545,6 +547,28 @@ test('趨勢工作台可切換區間、翻閱上一週並點日期看明細', as
     return chart?.nextElementSibling === detail;
   });
   expect(detailFollowsChart).toBe(true);
+});
+
+test('年度趨勢點月份後進入月曆，且 360px 深色畫面不溢出', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 780 });
+  await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem('hukeep_personal_state_v1'));
+    state.preferences = { ...(state.preferences || {}), theme: 'dark' };
+    state.transactions = [
+      { id: 'year-meal', type: 'expense', name: '跨年月餐費', amount: 180, category: '飲食', subcategory: '台式料理', account: 'cash', date: '2026-09-08', note: '' },
+    ];
+    localStorage.setItem('hukeep_personal_state_v1', JSON.stringify(state));
+  });
+  await page.reload();
+  await page.getByRole('button', { name: '趨勢', exact: true }).click();
+  await page.getByRole('button', { name: '本年', exact: true }).click();
+  await page.getByRole('button', { name: /9 月收入/ }).click();
+  await expect(page.getByRole('button', { name: '本月', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.analysis-history-section')).toHaveCount(0);
+  await page.getByRole('button', { name: /9\/8 收入/ }).click();
+  await expect(page.locator('.analysis-history-section')).toContainText('跨年月餐費');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 });
 
 test('待確認會導向紀錄篩選，且紀錄可切換月份', async ({ page }) => {
