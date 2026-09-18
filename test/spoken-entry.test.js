@@ -210,17 +210,52 @@ describe('口語記帳解析', () => {
     });
   });
 
-  it('可分類投資支出與投資收入', () => {
+  it('把投資買入與賣出辨識為投資資產移轉', () => {
     expect(parseSpokenTransaction('今天買 0050 ETF 3000 元用永豐', { today })).toMatchObject({
-      type: 'expense',
+      type: 'transfer',
+      account: 'sinopac',
+      toAccount: 'investment',
       category: '投資',
       subcategory: 'ETF',
+    });
+    expect(parseSpokenTransaction('賣出 0050 ETF 3000 元領回台銀', { today })).toMatchObject({
+      type: 'transfer',
+      account: 'investment',
+      toAccount: 'bot',
+      category: '投資',
+      subcategory: 'ETF',
+    });
+    expect(parseSpokenTransaction('賣出 0050 ETF 3000 元', { today })).toMatchObject({
+      type: 'transfer', account: 'investment', toAccount: 'sinopac',
     });
     expect(parseSpokenTransaction('收到 0050 ETF 配息 1200 元入台銀', { today })).toMatchObject({
       type: 'income',
       category: '投資',
       subcategory: 'ETF配息',
     });
+  });
+
+  it('投資買入可同時辨識手續費', () => {
+    expect(parseSpokenTransaction('永豐買 0050 一萬元，手續費 20', { today })).toMatchObject({
+      type: 'transfer', amount: 10000, fee: 20, account: 'sinopac', toAccount: 'investment',
+      category: '投資', subcategory: 'ETF',
+    });
+  });
+
+  it('投資課程與工具仍是真正支出', () => {
+    expect(parseSpokenTransaction('買股票課程 1200 元用 LINE', { today })).toMatchObject({
+      type: 'expense', amount: 1200, account: 'line', category: '投資', subcategory: '投資課程',
+    });
+    expect(parseSpokenTransaction('買看盤工具 300 元用 LINE', { today })).toMatchObject({
+      type: 'expense', amount: 300, account: 'line', category: '投資', subcategory: '投資工具',
+    });
+  });
+
+  it('可把同一段內的多筆投資買入分開', () => {
+    expect(parseSpokenTransactions('用永豐買 0050 ETF 3000元、基金 2000元', { today })).toMatchObject([
+      { type: 'transfer', amount: 3000, account: 'sinopac', toAccount: 'investment', category: '投資', subcategory: 'ETF' },
+      { type: 'transfer', amount: 2000, account: 'sinopac', toAccount: 'investment', category: '投資', subcategory: '基金' },
+    ]);
   });
 
   it('資訊不足仍回傳可編輯草稿，不自行捏造金額', () => {

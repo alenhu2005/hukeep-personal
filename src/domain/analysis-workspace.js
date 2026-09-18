@@ -1,4 +1,5 @@
 import { expenseAmount, expenseCategory } from './insights.js';
+import { investmentDirection, summarizeInvestmentFlows } from './investment-accounting.js';
 
 function dateFromText(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value ?? ''))
@@ -115,8 +116,11 @@ export function buildAnalysisWorkspace(transactions, options) {
           amount: expenseTransactions
             .filter(transaction => transaction.date.slice(0, 7) === month)
             .reduce((sum, transaction) => sum + expenseAmount(transaction), 0),
+          income: scoped
+            .filter(transaction => transaction.type === 'income' && transaction.date.slice(0, 7) === month)
+            .reduce((sum, transaction) => sum + (Number(transaction.amount) || 0), 0),
         };
-      })
+      }).map(row => ({ ...row, net: row.income - row.amount }))
     : [];
   const largest = expenseTransactions
     .map(transaction => ({ name: transaction.name, amount: expenseAmount(transaction), date: transaction.date }))
@@ -138,10 +142,32 @@ export function buildAnalysisWorkspace(transactions, options) {
     { label: '較前期', value: incomeChange == null ? '尚無可比較資料' : `${incomeChange > 0 ? '+' : ''}${incomeChange}%` },
     { label: '最大單筆', value: incomeLargest ? `${incomeLargest.name || '未命名'} · ${incomeLargest.amount}` : '尚無資料' },
   ];
+  const investmentFlows = summarizeInvestmentFlows(scoped);
+  const investmentGroups = Object.entries(investmentFlows.bySubcategory)
+    .map(([subcategory]) => {
+      const members = scoped.filter(transaction =>
+        investmentDirection(transaction) && (transaction.subcategory || '其他投資') === subcategory);
+      const contributed = members
+        .filter(transaction => investmentDirection(transaction) === 'contributed')
+        .reduce((sum, transaction) => sum + transaction.amount, 0);
+      const withdrawn = members
+        .filter(transaction => investmentDirection(transaction) === 'withdrawn')
+        .reduce((sum, transaction) => sum + transaction.amount, 0);
+      return {
+        subcategory,
+        contributed,
+        withdrawn,
+        net: contributed - withdrawn,
+        count: members.length,
+      };
+    })
+    .toSorted((left, right) => Math.abs(right.net) - Math.abs(left.net) || left.subcategory.localeCompare(right.subcategory));
   return {
     incomeGroups,
     expenseGroups: categoryGroups(scoped, 'expense'),
     incomeInsights,
+    investmentFlows,
+    investmentGroups,
     range,
     scoped,
     expenseTransactions,

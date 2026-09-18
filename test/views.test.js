@@ -105,6 +105,26 @@ describe('趨勢每日淨額', () => {
     expect(html).toContain('-120');
     expect(html).toContain('analysis-net-positive');
     expect(html).toContain('+200');
+    expect(html).toContain('analysis-heat-3');
+    expect(html).toContain('analysis-heat-5');
+    expect(html).toContain('analysis-subcategory-bar');
+  });
+
+  it('獨立顯示投資投入、領回、淨投入與小分類圖表', () => {
+    const html = renderInsights({
+      accounts: [],
+      transactions: [
+        { id: 'buy', type: 'transfer', amount: 10000, category: '投資', subcategory: 'ETF', account: 'sinopac', toAccount: 'investment', date: '2026-09-01', name: '0050' },
+        { id: 'sell', type: 'transfer', amount: 3000, category: '投資', subcategory: '股票', account: 'investment', toAccount: 'sinopac', date: '2026-09-02', name: '賣出股票' },
+      ],
+      budgets: [],
+    }, '2026-09', { insightFilters: { period: 'month', date: '', anchorDate: '2026-09-01' } });
+
+    expect(html).toContain('投資流向');
+    expect(html).toContain('淨投入');
+    expect(html).toContain('NT$ 10,000');
+    expect(html).toContain('NT$ 3,000');
+    expect(html).toContain('investment-flow-bar');
   });
 });
 

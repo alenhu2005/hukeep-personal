@@ -10,6 +10,7 @@ import {
   getSubcategories,
 } from './domain/category-taxonomy.js';
 import { parseSpokenTransactions } from './domain/spoken-entry.js';
+import { isInvestmentTransfer } from './domain/investment-accounting.js';
 import {
   acknowledgePendingSheetChanges,
   hasPendingSheetChanges,
@@ -54,6 +55,7 @@ import { renderView } from './views.js';
 const LAST_SHEET_SYNC_KEY = 'hukeep_last_sheet_sync_at';
 const PENDING_SHEET_CHANGES_KEY = 'hukeep_pending_sheet_changes_v1';
 const BUDGET_SYNC_MIGRATION_KEY = 'hukeep_budget_sync_migrated_v2';
+const INVESTMENT_SYNC_MIGRATION_KEY = 'hukeep_investment_sync_migrated_v1';
 const AUTO_SYNC_DEBOUNCE_MS = 800;
 const SHEET_RETRY_BASE_DELAY_MS = 4_000;
 const SHEET_RETRY_MAX_DELAY_MS = 60_000;
@@ -310,6 +312,58 @@ export function createApp() {
     } catch {
       // The normal change journal remains available even if this one-time migration cannot persist.
     }
+  }
+
+  function queueInvestmentMigrationSync() {
+    try {
+      if (localStorage.getItem(INVESTMENT_SYNC_MIGRATION_KEY)) return;
+      const pending = readPendingSheetChanges();
+      const investmentIds = state.transactions
+        .filter(isInvestmentTransfer)
+        .map(transaction => transaction.id);
+      writePendingSheetChanges({
+        ...pending,
+        upserts: [...new Set([...pending.upserts, ...investmentIds])],
+        accountUpserts: [...new Set([...pending.accountUpserts, 'investment'])],
+      });
+      localStorage.setItem(INVESTMENT_SYNC_MIGRATION_KEY, '1');
+    } catch {
+      // The normalized local ledger remains usable and the migration can retry next launch.
+    }
+  }
+
+  function queueInvestmentSheetDifferences(remote) {
+    const remoteTransactions = new Map(
+      (remote?.transactions || []).map(transaction => [transaction.id, transaction]),
+    );
+    const transactionIds = state.transactions
+      .filter(isInvestmentTransfer)
+      .filter(transaction => {
+        const remoteTransaction = remoteTransactions.get(transaction.id);
+        return !remoteTransaction ||
+          remoteTransaction.type !== 'transfer' ||
+          remoteTransaction.category !== '投資' ||
+          remoteTransaction.account !== transaction.account ||
+          remoteTransaction.toAccount !== transaction.toAccount;
+      })
+      .map(transaction => transaction.id);
+    const remoteInvestment = (remote?.accounts || []).find(account => account.id === 'investment');
+    const localInvestment = state.accounts.find(account => account.id === 'investment');
+    const accountChanged = localInvestment && (
+      !remoteInvestment ||
+      remoteInvestment.name !== localInvestment.name ||
+      Number(remoteInvestment.openingBalance) !== Number(localInvestment.openingBalance)
+    );
+    if (!transactionIds.length && !accountChanged) return;
+    const pending = readPendingSheetChanges();
+    writePendingSheetChanges({
+      ...pending,
+      upserts: [...new Set([...pending.upserts, ...transactionIds])],
+      accountUpserts: accountChanged
+        ? [...new Set([...pending.accountUpserts, 'investment'])]
+        : pending.accountUpserts,
+    });
+    schedulePendingSheetSync();
   }
 
   function acknowledgePendingTransactionDelete(transactionId) {
@@ -1395,6 +1449,7 @@ export function createApp() {
       sheetWriteInFlight = true;
       const remote = await loadStableSheetState(credentials);
       if (!persist(reconcileLedgerFromSheet(state, remote, readPendingSheetChanges()), { sheetSourced: true })) return;
+      queueInvestmentSheetDifferences(remote);
       rememberProxySession(credentials.endpoint, credentials.proxyToken);
       rememberSuccessfulSync();
       render();
@@ -1453,10 +1508,11 @@ export function createApp() {
       }, { sheetSourced: true })) {
         return;
       }
+      queueInvestmentSheetDifferences(sheetState);
       rememberProxySession(credentials.endpoint, credentials.proxyToken);
       rememberSuccessfulSync();
       render();
-      status.textContent = `讀取完成：${sheetState.accounts.length} 個帳戶、${sheetState.transactions.length} 筆交易、${sheetState.budgets.length} 筆預算。`;
+      status.textContent = `讀取完成：${state.accounts.length} 個帳戶、${state.transactions.length} 筆交易、${state.budgets.length} 筆預算。`;
       showToast('Google Sheet 資料已更新到本機。');
     } catch (error) {
       setSyncStatus(lastSheetPullAt ? 'synced' : 'local', { lastAt: lastSheetPullAt });
@@ -1502,6 +1558,7 @@ export function createApp() {
       const remote = await loadStableSheetState(credentials);
       const reconciled = reconcileLedgerFromSheet(state, remote, readPendingSheetChanges());
       if (!persist(reconciled, { sheetSourced: true })) return;
+      queueInvestmentSheetDifferences(remote);
       rememberSuccessfulSync();
       render();
     } catch {
@@ -1654,6 +1711,7 @@ export function createApp() {
   document.querySelector('#tools-button').innerHTML = icon('settings', 19);
   lastSheetPullAt = storedLastSyncAt();
   migrateLegacyBudgetChanges();
+  queueInvestmentMigrationSync();
   applyDueRecurringTransactions();
   captureCompletedMonthSnapshot();
   setSyncStatus(lastSheetPullAt ? 'synced' : 'local', { lastAt: lastSheetPullAt });

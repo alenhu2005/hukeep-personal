@@ -65,10 +65,11 @@ function normalizeInput(input) {
       throw new ValidationError('請選擇不同的目的帳戶');
     }
     const fee = normalizeTransferFee(input?.fee);
+    const investmentTransfer = account === 'investment' || toAccount === 'investment';
     return {
       type,
       amount,
-      category: null,
+      category: investmentTransfer ? '投資' : null,
       account,
       toAccount,
       date,
@@ -113,7 +114,7 @@ function normalizeOptionalMetadata(input) {
   const receiptName = cleanBoundedText(input?.receiptName, 160);
   const ocrConfidence = Number(input?.ocrConfidence);
 
-  if (input?.type !== 'transfer' && subcategory) metadata.subcategory = subcategory;
+  if ((input?.type !== 'transfer' || input?.category === '投資') && subcategory) metadata.subcategory = subcategory;
   if (VALID_SOURCES.has(source)) metadata.source = source;
   if (sourceId) metadata.sourceId = sourceId;
   if (invoiceNumber) metadata.invoiceNumber = invoiceNumber;

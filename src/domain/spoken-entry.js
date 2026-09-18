@@ -116,8 +116,13 @@ function parseAmount(text) {
   const currency = text.match(new RegExp(`(?:NT\\s*)?[$＄]\\s*(${AMOUNT_TOKEN_PATTERN})`, 'i'));
   if (currency) return numberFromAmountToken(currency[1]);
 
-  const explicit = text.match(new RegExp(`(${AMOUNT_TOKEN_PATTERN})\\s*(?:元|圓|塊(?:錢)?)`));
-  if (explicit) return numberFromAmountToken(explicit[1]);
+  const explicitMatches = [
+    ...text.matchAll(new RegExp(`(${AMOUNT_TOKEN_PATTERN})\\s*(?:元|圓|塊(?:錢)?)`, 'g')),
+  ].toSorted((left, right) => right.index - left.index);
+  for (const explicit of explicitMatches) {
+    const amount = numberFromAmountToken(explicit[1]);
+    if (amount) return amount;
+  }
 
   const candidates = [
     ...text.matchAll(
@@ -201,6 +206,7 @@ function parseDate(text, today) {
 }
 
 function accountFromText(text, fallback = 'cash') {
+  if (/(?:投資資產|投資帳戶|證券帳戶)/.test(text)) return 'investment';
   if (/line\s*(?:bank|pay)?/i.test(text)) return 'line';
   if (/(?:永豐|sinopac)/i.test(text)) return 'sinopac';
   if (/(?:台銀|臺銀|台灣銀行|臺灣銀行)/.test(text)) return 'bot';
@@ -208,6 +214,15 @@ function accountFromText(text, fallback = 'cash') {
   if (/(?:現金|付現|錢包)/.test(text)) return 'cash';
   if (/(?:信用卡|刷卡|卡片)/.test(text)) return 'sinopac';
   return fallback;
+}
+
+function investmentAction(text) {
+  if (/(?:投資|理財|股票|證券)?(?:課程|講座|工具|軟體)/.test(text)) return '';
+  const investmentSubject = /(?:\bETF\b|00\d{2,3}|股票|個股|基金|債券|公債|公司債|比特幣|以太幣|加密(?:資產|貨幣)|定期定額|證券)/i.test(text);
+  if (!investmentSubject) return '';
+  if (/(?:賣出|賣掉|出售|贖回|領回|出金)/.test(text)) return 'sell';
+  if (/(?:買入|買進|買|申購|投入|加碼|定期定額|扣款)/.test(text)) return 'buy';
+  return '';
 }
 
 function transactionType(text) {
@@ -246,6 +261,7 @@ function transactionName(text, type, classification) {
 }
 
 function explicitAccountFromText(text) {
+  if (/(?:投資資產|投資帳戶|證券帳戶)/.test(text)) return 'investment';
   if (/line\s*(?:bank|pay)?/i.test(text)) return 'line';
   if (/(?:永豐|sinopac)/i.test(text)) return 'sinopac';
   if (/(?:台銀|臺銀|台灣銀行|臺灣銀行)/.test(text)) return 'bot';
@@ -266,6 +282,7 @@ function spokenItemFragments(transcript) {
 function multiItemCandidates(transcript) {
   return spokenItemFragments(transcript).flatMap(fragment => {
     if (/(?:總共|合計|共計|一共)/.test(fragment)) return [];
+    if (/(?:手續費|轉帳費|匯費|證交稅|交易稅)/.test(fragment)) return [];
     const amount = parseAmount(fragment);
     if (!amount) return [];
     const nameText = classificationText(fragment.replace(ITEM_AMOUNT_PATTERN, ' '))
@@ -302,27 +319,41 @@ function accountForMultiItem(transcript, item, index) {
 
 function multiItemDrafts(transcript, options) {
   const type = transactionType(transcript);
-  if (type === 'transfer') return [];
+  const action = investmentAction(transcript);
+  if (type === 'transfer' && !action) return [];
   const date = parseDate(transcript, options.today ?? new Date().toISOString().slice(0, 10));
   const candidates = multiItemCandidates(transcript);
   if (candidates.length < 2) return [];
 
   return candidates.map((item, index) => {
     const classification =
-      type === 'income'
+      action
+        ? classifyLocally({ merchant: item.nameText, items: [item.nameText] })
+        : type === 'income'
         ? classifyIncomeLocally(item.nameText)
         : classifyLocally({ merchant: item.nameText, items: [item.nameText] });
-    const name = transactionName(item.nameText, type, classification);
+    const resolvedType = action ? 'transfer' : type;
+    const sourceAccount = action === 'sell'
+      ? 'investment'
+      : accountForMultiItem(transcript, item, index);
+    const destinationAccount = action === 'buy'
+      ? 'investment'
+      : action === 'sell'
+        ? (explicitAccountFromText(transcript) || 'sinopac')
+        : null;
+    const name = action
+      ? item.nameText.replace(/^(?:買入|買進|買|申購|賣出|賣掉|贖回)\s*/g, '').trim()
+      : transactionName(item.nameText, type, classification);
     return {
       transcript,
-      type,
+      type: resolvedType,
       amount: item.amount,
       date,
-      account: accountForMultiItem(transcript, item, index),
-      toAccount: null,
-      category: classification.topCategory,
-      subcategory: classification.subcategory,
-      name,
+      account: sourceAccount,
+      toAccount: destinationAccount,
+      category: action ? '投資' : classification.topCategory,
+      subcategory: action && classification.topCategory !== '投資' ? '其他投資' : classification.subcategory,
+      name: name || classification.subcategory || '投資',
       note: conciseSpokenNote(transcript, name),
       classificationText: item.nameText,
       confidence: Math.min(1, 0.7 + classification.confidence * 0.3),
@@ -345,11 +376,45 @@ export function conciseSpokenNote(value, primaryName = '') {
 function parseSingleSpokenTransaction(value, options = {}) {
   const transcript = String(value ?? '').normalize('NFKC').trim().slice(0, 240);
   const today = options.today ?? new Date().toISOString().slice(0, 10);
-  const type = transactionType(transcript);
+  const action = investmentAction(transcript);
+  const type = action ? 'transfer' : transactionType(transcript);
   const amount = parseAmount(type === 'transfer' ? withoutTransferFee(transcript) : transcript);
   const date = parseDate(transcript, today);
   const hasDateCue = /(?:今天|昨日|昨天|前天|\d{1,2}\s*月\s*\d{1,2}\s*[日號])/.test(transcript);
   const hasAccountCue = /(?:line|永豐|sinopac|台銀|臺銀|台灣銀行|臺灣銀行|郵局|中華郵政|信用卡|刷卡|卡片|銀行|帳戶|存款|現金|付現|錢包)/i.test(transcript);
+
+  if (action) {
+    const classification = classifyLocally({ merchant: transcript, items: [transcript] });
+    const classificationResult = classification.topCategory === '投資'
+      ? classification
+      : { topCategory: '投資', subcategory: '其他投資', confidence: 0.55 };
+    const namedAccount = explicitAccountFromText(transcript);
+    const sourceAccount = action === 'buy'
+      ? (namedAccount && namedAccount !== 'investment' ? namedAccount : 'sinopac')
+      : 'investment';
+    const destinationAccount = action === 'buy'
+      ? 'investment'
+      : (namedAccount && namedAccount !== 'investment' ? namedAccount : 'sinopac');
+    const cleanedName = classificationText(withoutTransferFee(transcript))
+      .replace(/^(?:我)?(?:買入|買進|買|申購|投入|加碼|賣出|賣掉|出售|贖回|領回|出金)\s*/g, '')
+      .replace(/(?:手續費|轉帳費|匯費).*$/g, '')
+      .trim();
+    return {
+      transcript,
+      type: 'transfer',
+      amount,
+      fee: parseTransferFee(transcript),
+      date,
+      account: sourceAccount,
+      toAccount: destinationAccount,
+      category: '投資',
+      subcategory: classificationResult.subcategory,
+      name: cleanedName || classificationResult.subcategory,
+      note: conciseSpokenNote(transcript, cleanedName),
+      classificationText: classificationText(transcript),
+      confidence: amount ? Math.min(1, 0.75 + classificationResult.confidence * 0.2) : 0.35,
+    };
+  }
 
   if (type === 'transfer') {
     const sourceText = transcript.split(/(?:轉|匯)/)[0];
@@ -387,7 +452,7 @@ function parseSingleSpokenTransaction(value, options = {}) {
     type,
     amount,
     date,
-    account: accountFromText(transcript),
+    account: accountFromText(transcript, type === 'income' && classification.topCategory === '投資' ? 'sinopac' : 'cash'),
     toAccount: null,
     category: classification.topCategory,
     subcategory: classification.subcategory,

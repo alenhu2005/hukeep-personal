@@ -18,7 +18,10 @@ export function expenseAmount(transaction) {
 }
 
 export function expenseCategory(transaction) {
-  return transaction?.type === 'transfer' ? '帳單' : transaction?.category || '其他';
+  if (transaction?.type === 'transfer') {
+    return transaction.category === '投資' ? '投資' : '帳單';
+  }
+  return transaction?.category || '其他';
 }
 
 export function summarizeMonth(transactions, month) {

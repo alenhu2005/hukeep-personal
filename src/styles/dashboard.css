@@ -99,6 +99,10 @@
   z-index: 1;
 }
 
+.cashflow-metrics--investment {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .cashflow-main span,
 .cashflow-main strong,
 .cashflow-main small {
@@ -185,6 +189,14 @@
 .dot.expense,
 .chart-legend i.expense {
   background: var(--expense);
+}
+
+.dot.investment {
+  background: #8a7338;
+}
+
+.dot.withdrawal {
+  background: #71847a;
 }
 
 .cashflow-metrics small {

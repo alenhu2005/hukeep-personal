@@ -57,6 +57,16 @@
     grid-column: auto;
   }
 
+  .cashflow-metrics--investment {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    row-gap: 12px;
+  }
+
+  .cashflow-metrics--investment > div:nth-child(3) {
+    padding-left: 0;
+    border-left: 0;
+  }
+
   .cashflow-metrics > div + div {
     padding-left: 14px;
   }
@@ -172,6 +182,15 @@
     padding-left: 9px;
   }
 
+  .cashflow-metrics--investment {
+    row-gap: 12px;
+  }
+
+  .cashflow-metrics--investment > div:nth-child(3) {
+    padding-left: 0;
+    border-left: 0;
+  }
+
   .transaction-row {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 7px;
@@ -211,7 +230,7 @@
   }
 
   .account-choice-buttons {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 5px;
   }
 

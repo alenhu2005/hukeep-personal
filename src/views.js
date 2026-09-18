@@ -9,6 +9,11 @@ import {
 import { filterTransactions } from './domain/transactions.js';
 import { findTransactionSignals, reconciliationStatus } from './domain/ledger-enhancements.js';
 import { buildAnalysisWorkspace } from './domain/analysis-workspace.js';
+import {
+  investmentDirection,
+  isInvestmentTransfer,
+  summarizeInvestmentFlows,
+} from './domain/investment-accounting.js';
 import { escapeHtml, formatCompactMoney, formatDate, formatMoney, monthLabel, todayInTaipei } from './format.js';
 import { icon } from './icons.js';
 
@@ -18,7 +23,13 @@ function emptyState(title, body = '') {
 
 function categoryMark(category) {
   const tone = CATEGORY_TONES[category] || 'slate';
-  return `<span class="category-mark tone-${tone}" aria-hidden="true">${escapeHtml(category?.slice(0, 1) || '其')}</span>`;
+  const symbols = {
+    '飲食': '◒', '交通': '⇆', '居家': '⌂', '購物': '◇', '娛樂': '▷', '醫療': '+',
+    '學習': '▤', '帳單': '≡', '投資': '↗', '人情': '♡', '寵物': '●', '其他': '…',
+    '薪資': '$', '獎金': '★', '接案': '◈', '租賃': '⌂', '退款與理賠': '↩', '補助': '+',
+    '零用與贈與': '♡', '禮金': '♡', '銷售': '◇', '中獎': '★', '其他收入': '…', '轉': '⇆',
+  };
+  return `<span class="category-mark tone-${tone}" aria-hidden="true">${escapeHtml(symbols[category] || category?.slice(0, 1) || '其')}</span>`;
 }
 
 export function transactionRows(transactions, accounts, options = {}) {
@@ -32,7 +43,9 @@ export function transactionRows(transactions, accounts, options = {}) {
       const isExpense = transaction.type === 'expense';
       const isIncome = transaction.type === 'income';
       const label =
-        transaction.type === 'transfer'
+        isInvestmentTransfer(transaction)
+          ? ['投資', transaction.subcategory].filter(Boolean).join(' · ')
+          : transaction.type === 'transfer'
           ? `${accountNames[transaction.account] || transaction.account} → ${accountNames[transaction.toAccount] || transaction.toAccount}`
           : [transaction.category, transaction.subcategory].filter(Boolean).join(' · ');
       const transferFee =
@@ -45,6 +58,9 @@ export function transactionRows(transactions, accounts, options = {}) {
         groupCounts.get(transaction.groupId) > 1 ? `同段 ${groupCounts.get(transaction.groupId)} 筆` : '',
         transferFee,
         label,
+        isInvestmentTransfer(transaction)
+          ? `${accountNames[transaction.account] || transaction.account} → ${accountNames[transaction.toAccount] || transaction.toAccount}`
+          : '',
         formatDate(transaction.date),
       ]
         .filter(Boolean)
@@ -60,7 +76,7 @@ export function transactionRows(transactions, accounts, options = {}) {
             </span>
             <span class="transaction-amount ${transaction.type}">
               <strong>${sign}${formatMoney(transaction.amount).replace('NT$ ', '')}</strong>
-              <span>${escapeHtml(accountNames[transaction.account] || transaction.account)}</span>
+              <span>${isInvestmentTransfer(transaction) ? (investmentDirection(transaction) === 'contributed' ? '投入' : '領回') : escapeHtml(accountNames[transaction.account] || transaction.account)}</span>
             </span>
           </button>
           <div class="row-actions">
@@ -124,6 +140,7 @@ function categoryBreakdown(summary) {
 export function renderOverview(state, month) {
   const summary = summarizeMonth(state.transactions, month);
   const monthlyTransactions = filterTransactions(state.transactions, { month });
+  const investment = summarizeInvestmentFlows(monthlyTransactions);
   const accountBalances = calculateAccountBalances(state.accounts, state.transactions);
   const accountById = Object.fromEntries(accountBalances.map(item => [item.id, item.balance]));
   const totalAssets = calculateTotalAssets(accountBalances);
@@ -162,16 +179,18 @@ export function renderOverview(state, month) {
 
     <div class="cashflow-card">
       <div class="cashflow-main">
-        <span>本月結餘</span>
+        <span>生活結餘</span>
         <strong class="${summary.balance < 0 ? 'negative' : ''}">${formatMoney(summary.balance, { showPlus: true })}</strong>
       </div>
       <div class="cashflow-rail" aria-label="收入與支出對比">
         <div class="rail-income"><span style="width:${summary.income || summary.expense ? Math.max(6, (summary.income / Math.max(summary.income, summary.expense)) * 100) : 6}%"></span></div>
         <div class="rail-expense"><span style="width:${summary.income || summary.expense ? Math.max(6, (summary.expense / Math.max(summary.income, summary.expense)) * 100) : 6}%"></span></div>
       </div>
-      <div class="cashflow-metrics">
+      <div class="cashflow-metrics cashflow-metrics--investment">
         <div><span class="dot income"></span><small>收入</small><strong data-testid="summary-income">${formatMoney(summary.income)}</strong></div>
-        <div><span class="dot expense"></span><small>支出</small><strong data-testid="summary-expense">${formatMoney(summary.expense)}</strong></div>
+        <div><span class="dot expense"></span><small>生活支出</small><strong data-testid="summary-expense">${formatMoney(summary.expense)}</strong></div>
+        <div><span class="dot investment"></span><small>投資投入</small><strong data-testid="summary-investment-in">${formatMoney(investment.contributed)}</strong></div>
+        <div><span class="dot withdrawal"></span><small>投資領回</small><strong data-testid="summary-investment-out">${formatMoney(investment.withdrawn)}</strong></div>
       </div>
     </div>
 
@@ -345,6 +364,7 @@ export function renderInsights(state, month, options = {}) {
     today: anchorDate,
   });
   const dailyTotalsByDate = dailyNetByDate(workspace.scoped);
+  const maxDailyNet = Math.max(1, ...[...dailyTotalsByDate.values()].map(item => Math.abs(item.net)));
   const selectedDate = filters.date >= workspace.range.from && filters.date <= workspace.range.to
     ? filters.date
     : '';
@@ -364,9 +384,12 @@ export function renderInsights(state, month, options = {}) {
         : hasActivity
           ? ' analysis-net-neutral'
           : '';
+    const heatClass = hasActivity && daily.net !== 0
+      ? ` analysis-heat-${Math.max(1, Math.ceil(Math.abs(daily.net) / maxDailyNet * 5))}`
+      : '';
     const selected = selectedDate === date;
     const todayClass = date === today ? ' analysis-period-today' : '';
-    return `<button type="button" class="${className}${toneClass}${selected ? ' analysis-period-selected' : ''}${todayClass}" data-insight-date="${date}" aria-pressed="${selected}" aria-label="${formatDate(date)} 收入 ${formatMoney(daily.income)}，支出 ${formatMoney(daily.expense)}，淨額 ${formatMoney(daily.net, { showPlus: true })}">${label(daily, hasActivity)}</button>`;
+    return `<button type="button" class="${className}${toneClass}${heatClass}${selected ? ' analysis-period-selected' : ''}${todayClass}" data-insight-date="${date}" aria-pressed="${selected}" aria-label="${formatDate(date)} 收入 ${formatMoney(daily.income)}，支出 ${formatMoney(daily.expense)}，淨額 ${formatMoney(daily.net, { showPlus: true })}">${label(daily, hasActivity)}</button>`;
   };
   const weekDays = daysInRange(workspace.range.from, workspace.range.to)
     .map((date, index) => {
@@ -389,10 +412,13 @@ export function renderInsights(state, month, options = {}) {
       return dateButton(date, 'analysis-cal-cell', (daily, hasActivity) => `<strong>${Number(date.slice(8))}</strong><small>${hasActivity ? formatNetAmount(daily.net) : ''}</small>`);
     })
     .join('');
+  const maxYearNet = Math.max(1, ...workspace.monthRows.map(item => Math.abs(item.net)));
   const yearMonths = workspace.monthRows
     .map(item => {
       const monthNumber = Number(item.month.slice(5));
-      return `<button type="button" class="analysis-year-mo" data-insight-month="${item.month}" aria-label="${monthNumber} 月支出 ${formatMoney(item.amount)}"><span>${monthNumber} 月</span><strong>${item.amount ? formatCompactMoney(item.amount) : '—'}</strong></button>`;
+      const tone = item.net < 0 ? 'analysis-net-negative' : item.net > 0 ? 'analysis-net-positive' : '';
+      const heat = item.net ? `analysis-heat-${Math.max(1, Math.ceil(Math.abs(item.net) / maxYearNet * 5))}` : '';
+      return `<button type="button" class="analysis-year-mo ${tone} ${heat}" data-insight-month="${item.month}" aria-label="${monthNumber} 月收入 ${formatMoney(item.income)}，支出 ${formatMoney(item.amount)}，淨額 ${formatMoney(item.net, { showPlus: true })}"><span>${monthNumber} 月</span><strong>${item.net ? formatNetAmount(item.net) : '—'}</strong></button>`;
     })
     .join('');
   const periodLabel = period === 'week'
@@ -421,12 +447,23 @@ export function renderInsights(state, month, options = {}) {
       <summary><i aria-hidden="true" style="background:hsl(${(index * 137 + 150) % 360} 35% 45%)"></i><strong>${escapeHtml(group.category)}</strong><span>${group.count} 筆 · ${group.percent}%</span><b>${formatMoney(group.amount)}</b></summary>
       <div class="analysis-subcategories"><small>小分類占比為此大分類內占比</small>${group.children.map(child => `<details>
         <summary><strong>${escapeHtml(child.subcategory)}</strong><span>${child.count} 筆 · ${child.percent}%</span><b>${formatMoney(child.amount)}</b></summary>
+        <div class="analysis-subcategory-bar" role="img" aria-label="${escapeHtml(child.subcategory)}占 ${child.percent}%"><i style="width:${Math.max(3, child.percent)}%"></i></div>
         <div class="transaction-list compact">${rowsForState(state, child.transactions.map(row => row.type === 'transfer'
           ? { ...row, type: 'expense', amount: expenseAmount(row), category: '帳單', subcategory: '轉帳手續費', name: `${row.name || '轉帳'}（手續費）` }
           : row))}</div>
       </details>`).join('')}</div>
     </details>`).join('') : emptyState(`本期沒有${label}`)}</div>
   </section>`;
+  const maxInvestmentFlow = Math.max(1, ...workspace.investmentGroups.map(group => Math.abs(group.net)));
+  const investmentGroups = workspace.investmentGroups.length
+    ? workspace.investmentGroups.map(group => `<div class="investment-flow-row">
+        <div><strong>${escapeHtml(group.subcategory)}</strong><small>${group.count} 筆</small></div>
+        <span>投入 ${formatMoney(group.contributed)}</span>
+        <span>領回 ${formatMoney(group.withdrawn)}</span>
+        <b class="${group.net < 0 ? 'negative' : ''}">${formatMoney(group.net, { showPlus: true })}</b>
+        <div class="investment-flow-bar" role="img" aria-label="${escapeHtml(group.subcategory)}淨流量 ${formatMoney(group.net, { showPlus: true })}"><i class="${group.net < 0 ? 'out' : 'in'}" style="width:${Math.max(3, Math.abs(group.net) / maxInvestmentFlow * 100)}%"></i></div>
+      </div>`).join('')
+    : emptyState('本期沒有投資流向');
   return `<section class="view insights-view" aria-labelledby="insights-title">
     <h1 id="insights-title" class="visually-hidden">趨勢</h1>
     <section class="daily-analysis-shell">
@@ -451,6 +488,15 @@ export function renderInsights(state, month, options = {}) {
         <div class="daily-analysis-insight-list">${workspace.incomeInsights.map(item => `<div><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></div>`).join('')}</div>
       </section>
       ${breakdown(workspace.incomeGroups, 'income', '收入')}
+      <section class="daily-analysis-breakdown investment-analysis" aria-label="投資流向分析">
+        <div class="daily-analysis-section-head"><strong>投資流向</strong></div>
+        <div class="investment-flow-totals">
+          <div><span>投入</span><strong>${formatMoney(workspace.investmentFlows.contributed)}</strong></div>
+          <div><span>領回</span><strong>${formatMoney(workspace.investmentFlows.withdrawn)}</strong></div>
+          <div><span>淨投入</span><strong class="${workspace.investmentFlows.net < 0 ? 'negative' : ''}">${formatMoney(workspace.investmentFlows.net, { showPlus: true })}</strong></div>
+        </div>
+        <div class="investment-flow-list">${investmentGroups}</div>
+      </section>
       ${selectedDate ? `<section class="analysis-history-section"><div class="analysis-history-head"><div><strong>${escapeHtml(formatDate(selectedDate))}</strong><span>當日明細</span></div><button type="button" data-insight-date="">顯示整段</button></div><div class="transaction-list compact">${rowsForState(state, selectedTransactions)}</div></section>` : ''}
     </section>
   </section>`;

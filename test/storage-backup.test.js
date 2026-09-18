@@ -28,6 +28,7 @@ describe('ledger repository', () => {
       'sinopac',
       'bot',
       'post',
+      'investment',
     ]);
   });
 
@@ -109,6 +110,7 @@ describe('ledger repository', () => {
       'sinopac',
       'bot',
       'post',
+      'investment',
     ]);
     expect(state.accounts.find(account => account.id === 'bot').openingBalance).toBe(200);
     expect(state.accounts.find(account => account.id === 'sinopac').openingBalance).toBe(-300);
@@ -205,6 +207,7 @@ describe('ledger repository', () => {
       schemaVersion: 1,
       accounts: [
         { id: 'cash', name: '現金', icon: '錢', openingBalance: 100 },
+        { id: 'investment', name: '投資資產', icon: '投', openingBalance: 12891 },
       ],
       transactions: [
         {
@@ -309,6 +312,7 @@ describe('備份', () => {
       schemaVersion: 1,
       accounts: [
         { id: 'cash', name: '現金', icon: '錢', openingBalance: 50 },
+        { id: 'investment', name: '投資資產', icon: '投', openingBalance: 12891 },
       ],
       transactions: [
         {

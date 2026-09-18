@@ -18,6 +18,20 @@ describe('分析工作台', () => {
     expect(model.expenseGroups[1].children[0].subcategory).toBe('轉帳手續費');
     expect(model.incomeInsights[1].value).toBe('+100%');
   });
+
+  it('將投資本金獨立為投入、領回與細分類', () => {
+    const model = buildAnalysisWorkspace([
+      { id: 'buy', type: 'transfer', amount: 10000, fee: 20, account: 'sinopac', toAccount: 'investment', category: '投資', subcategory: 'ETF', date: '2026-09-01' },
+      { id: 'sell', type: 'transfer', amount: 3000, account: 'investment', toAccount: 'bot', category: '投資', subcategory: '股票', date: '2026-09-02' },
+    ], { period: 'month', selectedMonth: '2026-09', today: '2026-09-02' });
+
+    expect(model.totals).toEqual({ income: 0, expense: 20 });
+    expect(model.investmentFlows).toMatchObject({ contributed: 10000, withdrawn: 3000, net: 7000, count: 2 });
+    expect(model.investmentGroups).toEqual([
+      { subcategory: 'ETF', contributed: 10000, withdrawn: 0, net: 10000, count: 1 },
+      { subcategory: '股票', contributed: 0, withdrawn: 3000, net: -3000, count: 1 },
+    ]);
+  });
   it('可建立週、月、年範圍', () => {
     expect(analysisRange('week', '2026-08', '2026-08-31')).toEqual({ from: '2026-08-30', to: '2026-09-05', label: '08/30～09/05' });
     expect(analysisRange('month', '2026-02', '2026-08-31')).toEqual({ from: '2026-02-01', to: '2026-02-28', label: '2026-02' });
@@ -56,7 +70,7 @@ describe('分析工作台', () => {
       { category: '飲食', amount: 100, percent: 40 },
     ]);
     expect(model.dailyRows).toEqual([{ date: '2026-08-31', amount: 250 }]);
-    expect(model.monthRows[7]).toEqual({ month: '2026-08', amount: 250 });
+    expect(model.monthRows[7]).toEqual({ month: '2026-08', amount: 250, income: 0, net: -250 });
     expect(model.monthRows.reduce((sum, row) => sum + row.amount, 0)).toBe(model.totals.expense);
     expect(model.largest).toEqual({ name: '跨行轉帳', amount: 150, date: '2026-08-31' });
     expect(model.insights[1].value).toBe('+400%');
@@ -121,9 +135,9 @@ describe('分析工作台', () => {
       { type: 'expense', amount: 80, category: '交通', name: '捷運', date: '2026-08-31' },
     ], { period: 'year', selectedMonth: '2026-08', today: '2026-08-31' });
     expect(model.monthRows).toHaveLength(12);
-    expect(model.monthRows[0]).toEqual({ month: '2026-01', amount: 300 });
-    expect(model.monthRows[7]).toEqual({ month: '2026-08', amount: 80 });
-    expect(model.monthRows[11]).toEqual({ month: '2026-12', amount: 0 });
+    expect(model.monthRows[0]).toEqual({ month: '2026-01', amount: 300, income: 0, net: -300 });
+    expect(model.monthRows[7]).toEqual({ month: '2026-08', amount: 80, income: 0, net: -80 });
+    expect(model.monthRows[11]).toEqual({ month: '2026-12', amount: 0, income: 0, net: 0 });
   });
 
   it('不完整的交易仍會保留在安全的預設分類與年度彙總中', () => {
@@ -133,7 +147,7 @@ describe('分析工作台', () => {
     ], { period: 'year', selectedMonth: '2026-08', today: '2026-08-31' });
 
     expect(model.categoryRows).toEqual([{ category: '其他', amount: 40, percent: 100 }]);
-    expect(model.monthRows[1]).toEqual({ month: '2026-02', amount: 40 });
+    expect(model.monthRows[1]).toEqual({ month: '2026-02', amount: 40, income: 0, net: -40 });
     expect(model.insights[2].value).toBe('未命名 · 40');
   });
 });

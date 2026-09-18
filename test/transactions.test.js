@@ -95,6 +95,15 @@ describe('createTransaction', () => {
       fixedOptions,
     )).toThrow('手續費');
   });
+
+  it('投資資產轉帳會保留投資大分類與小分類', () => {
+    const transaction = createTransaction({
+      type: 'transfer', amount: 10000, account: 'sinopac', toAccount: 'investment',
+      category: '投資', subcategory: 'ETF', date: '2026-09-01', name: '0050', note: '',
+    }, { id: 'investment-buy', now: '2026-09-01T00:00:00.000Z' });
+
+    expect(transaction).toMatchObject({ category: '投資', subcategory: 'ETF' });
+  });
 });
 
 describe('交易集合操作', () => {

@@ -39,6 +39,18 @@ describe('GAS 同步合約', () => {
   it('Gemini 結構化輸出的帳戶 enum 不包含無效空字串', () => {
     expect(source).not.toContain("enum: [''].concat(ACCOUNT_IDS)");
     expect(source).toContain("toAccount: { type: 'STRING', enum: ACCOUNT_IDS }");
+    expect(source).toContain("'post', 'investment'");
+  });
+
+  it('投資資產轉帳保留投資大小分類，普通轉帳仍無分類', () => {
+    const normalize = new Function(`${source}\nreturn normalizeSpokenClassification_;`)();
+
+    expect(normalize('transfer', '投資', 'ETF', 'sinopac', 'investment')).toEqual({
+      category: '投資', subcategory: 'ETF',
+    });
+    expect(normalize('transfer', '', '', 'cash', 'line')).toEqual({ category: '', subcategory: '' });
+    expect(source).toContain('投資本金不是支出');
+    expect(source).toContain('沒指定時回 sinopac');
   });
 
   it('轉帳手續費會儲存到 Sheet，並納入口語 AI 審查 schema', () => {

@@ -1,5 +1,6 @@
 import { normalizeStoredTransaction } from '../domain/transactions.js';
 import { normalizeFeatureSettings } from '../domain/ledger-enhancements.js';
+import { INVESTMENT_ACCOUNT, migrateInvestmentAccounting } from '../domain/investment-accounting.js';
 
 export const STORAGE_KEY = 'hukeep_personal_state_v1';
 const VALID_THEMES = new Set(['system', 'light', 'dark']);
@@ -11,6 +12,7 @@ const DEFAULT_ACCOUNTS = [
   { id: 'sinopac', name: '永豐', icon: '永', openingBalance: 0 },
   { id: 'bot', name: '台銀', icon: '台', openingBalance: 0 },
   { id: 'post', name: '郵局', icon: '郵', openingBalance: 0 },
+  { ...INVESTMENT_ACCOUNT },
 ];
 const LEGACY_ACCOUNT_IDS = new Set(['cash', 'bank', 'card']);
 
@@ -133,10 +135,11 @@ export function normalizeLedgerState(value) {
       })
     : [];
   const migrated = migrateLegacyAccounts(accounts, transactions);
+  const investmentMigrated = migrateInvestmentAccounting(migrated);
   return {
     schemaVersion: 1,
-    accounts: migrated.accounts,
-    transactions: migrated.transactions,
+    accounts: investmentMigrated.state.accounts,
+    transactions: investmentMigrated.state.transactions,
     budgets: normalizeBudgets(value.budgets),
     preferences: normalizePreferences(value.preferences),
     featureSettings: normalizeFeatureSettings(value.featureSettings),

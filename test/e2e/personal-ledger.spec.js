@@ -21,7 +21,7 @@ test('可新增收支、重新整理仍保留並透過歷史搜尋', async ({ pa
   await expect(page.locator('#subcategory-field')).toBeHidden();
   await expect(
     page.locator('[data-account-for="transaction-account"] button'),
-  ).toHaveCount(5);
+  ).toHaveCount(6);
   await page
     .locator('[data-account-for="transaction-account"]')
     .getByRole('button', { name: '永豐' })
@@ -32,7 +32,7 @@ test('可新增收支、重新整理仍保留並透過歷史搜尋', async ({ pa
   await page.getByRole('button', { name: '儲存這筆' }).click();
 
   await expect(page.getByTestId('summary-expense')).toContainText('120');
-  await expect(page.getByTestId('total-assets')).toContainText('-NT$ 120');
+  await expect(page.getByTestId('total-assets')).toContainText('NT$ 12,771');
   await expect(page.getByText('鼎王麻辣鍋午餐')).toBeVisible();
   await page.getByRole('button', { name: '查看 鼎王麻辣鍋午餐 詳情' }).click();
   const detail = page.locator('#transaction-detail-dialog');
@@ -90,20 +90,20 @@ test('手機記帳移除多餘分類提示，且長對話框仍固定保留關�
   await expect(page.locator('#classification-status')).toHaveCount(0);
   await expect(page.locator('#manual-entry')).not.toHaveAttribute('open', '');
   await expect(page.getByText('手動記帳', { exact: true })).toBeVisible();
-  await expect(page.locator('[data-account-for="transaction-account"] button')).toHaveCount(5);
+  await expect(page.locator('[data-account-for="transaction-account"] button')).toHaveCount(6);
   await expect
     .poll(() =>
       page.locator('div[data-account-for="transaction-account"]').evaluate(element =>
         getComputedStyle(element).gridTemplateColumns.split(' ').length,
       ),
     )
-    .toBe(5);
+    .toBe(3);
   await page.locator('#transaction-dialog .dialog-close').click();
 
   await page.getByRole('button', { name: '紀錄', exact: true }).click();
   await expect(page.locator('#history-type, #history-account')).toHaveCount(0);
   await expect(page.locator('[data-history-filter="type"]')).toHaveCount(4);
-  await expect(page.locator('[data-history-filter="account"]')).toHaveCount(6);
+  await expect(page.locator('[data-history-filter="account"]')).toHaveCount(7);
   await page.locator('[data-history-filter="type"][data-history-value="expense"]').click();
   await expect(
     page.locator('[data-history-filter="type"][data-history-value="expense"]'),
@@ -178,7 +178,7 @@ test('手動轉帳可加入手續費，總資產只扣除手續費', async ({ pa
     .click();
   await page.getByRole('button', { name: '儲存這筆' }).click();
 
-  await expect(page.getByTestId('total-assets')).toContainText('-NT$ 15');
+  await expect(page.getByTestId('total-assets')).toContainText('NT$ 12,876');
   const saved = await page.evaluate(() =>
     JSON.parse(localStorage.getItem('hukeep_personal_state_v1')).transactions[0],
   );
@@ -298,6 +298,27 @@ test('未連線時口語記帳先儲存在本機，不顯示上傳失敗', async
   expect(await page.evaluate(() => JSON.parse(
     localStorage.getItem('hukeep_pending_sheet_changes_v1'),
   ).upserts)).toContain(saved.id);
+});
+
+test('口語投資買入只移動資產，手續費才計入生活支出', async ({ page }) => {
+  await page.getByRole('button', { name: '快速記一筆' }).click();
+  await page.getByLabel('口語記帳內容').fill('永豐買 0050 一萬元，手續費 20');
+  await page.getByRole('button', { name: '直接記帳', exact: true }).click();
+
+  await expect(page.getByTestId('summary-expense')).toContainText('20');
+  await expect(page.getByTestId('summary-investment-in')).toContainText('10,000');
+  await expect(page.getByTestId('total-assets')).toContainText('NT$ 12,871');
+  const saved = await page.evaluate(() => JSON.parse(
+    localStorage.getItem('hukeep_personal_state_v1'),
+  ).transactions[0]);
+  expect(saved).toMatchObject({
+    type: 'transfer', amount: 10000, fee: 20, account: 'sinopac', toAccount: 'investment',
+    category: '投資', subcategory: 'ETF',
+  });
+
+  await page.getByRole('button', { name: '趨勢', exact: true }).click();
+  await expect(page.locator('.investment-analysis').getByText('投資流向', { exact: true })).toBeVisible();
+  await expect(page.getByText('淨投入', { exact: true })).toBeVisible();
 });
 
 test('多品項背景上傳失敗仍保留本機交易，之後自動續傳', async ({ page }) => {
@@ -696,7 +717,7 @@ test('可設定帳戶初始金額並安全同步到 Google Sheet', async ({ page
 
   await page.getByRole('button', { name: '同步到 Google Sheet' }).click();
 
-  await expect(page.getByText('同步完成：5 個帳戶、0 筆交易、0 筆預算。')).toBeVisible();
+  await expect(page.getByText('同步完成：6 個帳戶、0 筆交易、0 筆預算。')).toBeVisible();
   await expect(page.locator('#sync-indicator')).toContainText('已同步');
   expect(receivedBody).toMatchObject({
     action: 'syncLedgerChanges',
@@ -794,7 +815,7 @@ test('Sheet 刪除既有交易後，從 Sheet 讀取會同步移除網頁資料'
   page.once('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: '從 Sheet 讀取' }).click();
 
-  await expect(page.getByText('讀取完成：5 個帳戶、1 筆交易、0 筆預算。')).toBeVisible();
+  await expect(page.getByText('讀取完成：6 個帳戶、1 筆交易、0 筆預算。')).toBeVisible();
   const ids = await page.evaluate(() =>
     JSON.parse(localStorage.getItem('hukeep_personal_state_v1')).transactions.map(item => item.id),
   );

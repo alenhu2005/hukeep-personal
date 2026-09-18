@@ -154,6 +154,25 @@ describe('calculateAccountBalances', () => {
     ]);
     expect(calculateTotalAssets(balances)).toBe(985);
   });
+
+  it('投資本金只在現金與投資資產間移動，只有手續費降低總資產', () => {
+    const accounts = [
+      { id: 'sinopac', openingBalance: 20000 },
+      { id: 'investment', openingBalance: 0 },
+    ];
+    const entries = [
+      { type: 'transfer', amount: 10000, fee: 20, account: 'sinopac', toAccount: 'investment', category: '投資', subcategory: 'ETF', date: '2026-08-01' },
+    ];
+    const balances = calculateAccountBalances(accounts, entries);
+
+    expect(balances).toEqual([
+      { id: 'sinopac', balance: 9980 },
+      { id: 'investment', balance: 10000 },
+    ]);
+    expect(calculateTotalAssets(balances)).toBe(19980);
+    expect(summarizeMonth(entries, '2026-08')).toMatchObject({ expense: 20, balance: -20 });
+    expect(calculateBudgetProgress([{ category: '投資', limit: 5000 }], entries, '2026-08')[0].spent).toBe(20);
+  });
 });
 
 describe('calculateTotalAssets', () => {
