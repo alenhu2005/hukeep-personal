@@ -143,7 +143,7 @@ export function createApp() {
   let state = repository.load();
   let view = safeViewFromHash();
   let selectedMonth = todayInTaipei().slice(0, 7);
-  let historyFilters = { query: '', type: '', account: '', preset: 'all' };
+  let historyFilters = { query: '', type: '', category: '', subcategory: '', account: '', preset: 'all' };
   let insightFilters = {
     period: 'month', section: 'overview', category: '', subcategory: '', selectedDate: '',
     anchorDate: todayInTaipei(),
@@ -1117,7 +1117,12 @@ export function createApp() {
     if (target.dataset.historyFilter) {
       const key = target.dataset.historyFilter;
       const value = target.dataset.historyValue || '';
-      historyFilters = { ...historyFilters, [key]: value };
+      historyFilters = {
+        ...historyFilters,
+        [key]: value,
+        ...(key === 'category' ? { subcategory: '' } : {}),
+        ...(key === 'type' ? { category: '', subcategory: '' } : {}),
+      };
       render();
       requestAnimationFrame(() =>
         main
@@ -1153,6 +1158,8 @@ export function createApp() {
     historyFilters = {
       query: document.querySelector('#history-search')?.value || '',
       type: historyFilters.type,
+      category: historyFilters.category,
+      subcategory: historyFilters.subcategory,
       account: historyFilters.account,
       preset: historyFilters.preset,
     };

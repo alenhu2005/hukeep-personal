@@ -107,6 +107,19 @@ function groupedTransactions(transactions) {
   return counts;
 }
 
+function rankedHistoryOptions(transactions, key) {
+  const totals = transactions.reduce((result, transaction) => {
+    const value = String(transaction[key] || '').trim();
+    const amount = Number(transaction.amount) || 0;
+    if (value && amount > 0) result.set(value, (result.get(value) || 0) + amount);
+    return result;
+  }, new Map());
+  const total = [...totals.values()].reduce((sum, amount) => sum + amount, 0);
+  return [...totals]
+    .map(([value, amount]) => ({ value, amount, percent: total ? Math.round(amount / total * 100) : 0 }))
+    .toSorted((left, right) => right.amount - left.amount || left.value.localeCompare(right.value, 'zh-Hant'));
+}
+
 function dailyNetByDate(transactions) {
   const result = new Map();
   (transactions || []).forEach(transaction => {
@@ -168,6 +181,7 @@ export function renderOverview(state, month) {
   const accountBalances = calculateAccountBalances(state.accounts, state.transactions);
   const accountById = Object.fromEntries(accountBalances.map(item => [item.id, item.balance]));
   const totalAssets = calculateTotalAssets(accountBalances);
+  const liquidAssets = calculateTotalAssets(accountBalances.filter(item => item.id !== 'investment'));
   const budgetProgress = calculateBudgetProgress(state.budgets, state.transactions, month);
   const totalBudget = budgetProgress.reduce((sum, item) => sum + item.limit, 0);
   const budgetSpent = budgetProgress.reduce((sum, item) => sum + item.spent, 0);
@@ -222,7 +236,10 @@ export function renderOverview(state, month) {
       <section class="panel accounts-panel">
         <div class="section-heading"><h2>帳戶</h2><span>估算餘額</span></div>
         <div class="asset-total">
-          <div><small>所有帳戶目前餘額</small><strong class="${totalAssets < 0 ? 'negative' : ''}" data-testid="total-assets">${formatMoney(totalAssets)}</strong></div>
+          <div class="asset-total-metrics">
+            <div><small>含投資資產</small><strong class="${totalAssets < 0 ? 'negative' : ''}" data-testid="total-assets">${formatMoney(totalAssets)}</strong></div>
+            <div><small>不含投資資產</small><strong class="${liquidAssets < 0 ? 'negative' : ''}" data-testid="liquid-assets">${formatMoney(liquidAssets)}</strong></div>
+          </div>
           <span>總資產</span>
         </div>
         <div class="account-list">
@@ -312,6 +329,37 @@ export function renderHistory(state, month, filters) {
         `<button type="button" data-history-filter="account" data-history-value="${escapeHtml(value)}" aria-pressed="${filters.account === value}">${escapeHtml(label)}</button>`,
     )
     .join('');
+  const monthTypeTransactions = filterTransactions(state.transactions, {
+    month,
+    type: filters.type,
+  });
+  const rankedCategories = rankedHistoryOptions(monthTypeTransactions, 'category');
+  const categoryButtons = [
+    { value: '', label: '全部', percent: null },
+    ...rankedCategories.map(category => ({ ...category, label: category.value })),
+  ]
+    .map(
+      ({ value, label, percent }) =>
+        `<button type="button" data-history-filter="category" data-history-value="${escapeHtml(value)}" aria-pressed="${filters.category === value}">${escapeHtml(label)}${percent == null ? '' : `<small>${percent}%</small>`}</button>`,
+    )
+    .join('');
+  const rankedSubcategories = filters.category
+    ? rankedHistoryOptions(
+        monthTypeTransactions.filter(transaction => transaction.category === filters.category),
+        'subcategory',
+      )
+    : [];
+  const subcategoryButtons = filters.category
+    ? [
+        { value: '', label: '全部', percent: null },
+        ...rankedSubcategories.map(subcategory => ({ ...subcategory, label: subcategory.value })),
+      ]
+        .map(
+          ({ value, label, percent }) =>
+            `<button type="button" data-history-filter="subcategory" data-history-value="${escapeHtml(value)}" aria-pressed="${filters.subcategory === value}">${escapeHtml(label)}${percent == null ? '' : `<small>${percent}%</small>`}</button>`,
+        )
+        .join('')
+    : '';
   const filterStatus = {
     attention: '查看原因後確認無誤',
     review: 'AI 正在背景審查',
@@ -325,7 +373,9 @@ export function renderHistory(state, month, filters) {
         <label class="search-field"><span class="visually-hidden">搜尋紀錄</span><span aria-hidden="true">⌕</span><input id="history-search" aria-label="搜尋紀錄" type="search" value="${escapeHtml(filters.query)}" placeholder="搜尋備註、分類、帳戶" /></label>
         <div class="history-filter-group history-preset-group" role="group" aria-label="快速篩選"><span>快速篩選</span><div class="filter-chip-scroll">${presetButtons}</div></div>
         <div class="history-filter-group" role="group" aria-label="篩選類型"><span>類型</span><div class="filter-chip-scroll">${typeButtons}</div></div>
+        <div class="history-filter-group" role="group" aria-label="篩選分類"><span>分類</span><div class="filter-chip-scroll">${categoryButtons}</div></div>
         <div class="history-filter-group" role="group" aria-label="篩選帳戶"><span>帳戶</span><div class="filter-chip-scroll">${accountButtons}</div></div>
+        ${subcategoryButtons ? `<div class="history-filter-group history-subcategory-group" role="group" aria-label="篩選小分類"><span>小分類</span><div class="filter-chip-scroll">${subcategoryButtons}</div></div>` : ''}
       </div>
       <div class="history-result-meta"><strong>${results.length} 筆紀錄</strong><span id="history-filter-status">${filterStatus}</span></div>
       <div id="history-list" class="transaction-list">${rowsForState(state, results)}</div>

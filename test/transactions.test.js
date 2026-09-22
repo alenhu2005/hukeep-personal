@@ -108,7 +108,7 @@ describe('createTransaction', () => {
 
 describe('交易集合操作', () => {
   const original = [
-    createTransaction(expense(), fixedOptions),
+    createTransaction(expense({ subcategory: '便當' }), fixedOptions),
     createTransaction(
       expense({ type: 'income', amount: 50000, category: '薪資', account: 'bank', note: '8 月薪資' }),
       { id: 'income-1', now: '2026-08-27T08:00:00.000Z' },
@@ -207,6 +207,13 @@ describe('交易集合操作', () => {
       'income-1',
     ]);
     expect(filterTransactions(original, { account: 'bank' })).toHaveLength(1);
+    expect(filterTransactions(original, { category: '飲食' }).map(item => item.id)).toEqual([
+      'tx-fixed',
+      'old-1',
+    ]);
+    expect(filterTransactions(original, { subcategory: '便當' }).map(item => item.id)).toEqual([
+      'tx-fixed',
+    ]);
     expect(filterTransactions(original, { query: '薪資' })).toHaveLength(1);
     expect(filterTransactions(original, { query: '不存在' })).toEqual([]);
   });

@@ -214,6 +214,14 @@
     grid-column: auto;
   }
 
+  .history-preset-group {
+    grid-column: auto;
+  }
+
+  .history-subcategory-group {
+    grid-column: auto;
+  }
+
   .trend-chart {
     gap: 8px;
     height: 240px;

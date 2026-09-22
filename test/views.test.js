@@ -45,11 +45,12 @@ describe('交易列表', () => {
 });
 
 describe('總覽', () => {
-  it('顯示所有帳戶餘額加總的總資產', () => {
+  it('同時顯示含投資與不含投資的帳戶餘額', () => {
     const html = renderOverview({
       accounts: [
         { id: 'cash', name: '現金', icon: '現', openingBalance: 3000 },
         { id: 'line', name: 'LINE', icon: 'L', openingBalance: -500 },
+        { id: 'investment', name: '投資資產', icon: '投', openingBalance: 10000 },
       ],
       transactions: [
         { id: 'income', type: 'income', amount: 1000, account: 'cash', date: '2026-08-01' },
@@ -59,7 +60,10 @@ describe('總覽', () => {
     }, '2026-08');
 
     expect(html).toContain('總資產');
-    expect(html).toContain('data-testid="total-assets">NT$ 3,300</strong>');
+    expect(html).toContain('data-testid="total-assets">NT$ 13,300</strong>');
+    expect(html).toContain('data-testid="liquid-assets">NT$ 3,300</strong>');
+    expect(html).toContain('含投資資產');
+    expect(html).toContain('不含投資資產');
     expect(html).toContain('<h1 id="overview-title">總覽</h1>');
     expect(html).not.toContain('先看流向');
     expect(html).not.toContain('收入還有空間');
@@ -74,11 +78,14 @@ describe('紀錄篩選與月份', () => {
   const transactions = [{
     id: 'attention-1', type: 'expense', amount: 800, category: '飲食', subcategory: '便當',
     account: 'cash', date: '2026-09-01', name: '午餐', note: '',
+  }, {
+    id: 'transport-1', type: 'expense', amount: 200, category: '交通', subcategory: '大眾運輸',
+    account: 'cash', date: '2026-09-02', name: '捷運', note: '',
   }];
 
   it('紀錄頁能切換月份，且需確認篩選會說明下一步', () => {
     const html = renderHistory({ accounts, transactions }, '2026-09', {
-      query: '', type: '', account: '', preset: 'attention',
+      query: '', type: '', category: '飲食', subcategory: '便當', account: '', preset: 'attention',
     });
 
     expect(html).toContain('aria-label="切換月份"');
@@ -86,6 +93,30 @@ describe('紀錄篩選與月份', () => {
     expect(html).toContain('data-month-shift="1"');
     expect(html).toContain('查看原因後確認無誤');
     expect(html).toContain('data-history-preset="attention" aria-pressed="true"');
+    expect(html).toContain('aria-label="篩選分類"');
+    expect(html).toContain('data-history-filter="category" data-history-value="飲食" aria-pressed="true"');
+    expect(html).toContain('aria-label="篩選小分類"');
+    expect(html).toContain('data-history-filter="subcategory" data-history-value="便當" aria-pressed="true"');
+    expect(html).toContain('便當<small>100%</small>');
+  });
+
+  it('只顯示當月已出現的分類，並依金額占比排序', () => {
+    const html = renderHistory({ accounts, transactions }, '2026-09', {
+      query: '', type: 'expense', category: '', subcategory: '', account: '', preset: 'all',
+    });
+
+    expect(html.indexOf('data-history-value="飲食"')).toBeLessThan(html.indexOf('data-history-value="交通"'));
+    expect(html).toContain('飲食<small>80%</small>');
+    expect(html).toContain('交通<small>20%</small>');
+  });
+
+  it('沒有當月交易時只保留全部選項', () => {
+    const html = renderHistory({ accounts, transactions: [] }, '2026-09', {
+      query: '', type: 'expense', category: '', subcategory: '', account: '', preset: 'all',
+    });
+
+    expect(html).toContain('data-history-filter="category" data-history-value=""');
+    expect(html).not.toContain('data-history-filter="category" data-history-value="飲食"');
   });
 });
 

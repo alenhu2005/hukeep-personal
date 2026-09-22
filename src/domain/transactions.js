@@ -217,6 +217,7 @@ export function filterTransactions(transactions, filters = {}) {
   const month = cleanText(filters.month);
   const type = cleanText(filters.type);
   const category = cleanText(filters.category);
+  const subcategory = cleanText(filters.subcategory);
   const account = cleanText(filters.account);
   const query = cleanText(filters.query).toLocaleLowerCase('zh-Hant');
 
@@ -224,6 +225,7 @@ export function filterTransactions(transactions, filters = {}) {
     .filter(transaction => !month || transaction.date?.startsWith(month))
     .filter(transaction => !type || transaction.type === type)
     .filter(transaction => !category || transaction.category === category)
+    .filter(transaction => !subcategory || transaction.subcategory === subcategory)
     .filter(
       transaction =>
         !account || transaction.account === account || transaction.toAccount === account,

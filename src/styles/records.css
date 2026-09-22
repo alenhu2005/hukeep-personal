@@ -205,8 +205,8 @@
 
 .filter-bar {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) minmax(210px, 0.72fr) minmax(240px, 0.86fr);
-  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
 }
 
 .search-field {
@@ -234,6 +234,7 @@
 }
 
 .search-field input {
+  min-height: 38px;
   border: 0;
   outline: 0;
   background: transparent;
@@ -248,11 +249,17 @@
 
 .history-filter-group {
   display: grid;
-  gap: 5px;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
   min-width: 0;
 }
 
 .history-preset-group {
+  grid-column: span 2;
+}
+
+.history-subcategory-group {
   grid-column: 1 / -1;
 }
 
@@ -264,10 +271,10 @@
 
 .filter-chip-scroll {
   display: flex;
-  min-height: 44px;
-  gap: 5px;
+  min-height: 36px;
+  gap: 3px;
   overflow-x: auto;
-  padding: 3px;
+  padding: 2px;
   border: 1px solid var(--line);
   border-radius: 11px;
   background: var(--surface-strong);
@@ -280,8 +287,8 @@
 
 .filter-chip-scroll button {
   min-width: max-content;
-  min-height: 36px;
-  padding: 0 10px;
+  min-height: 30px;
+  padding: 0 8px;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -295,11 +302,18 @@
   color: var(--primary);
 }
 
+.filter-chip-scroll button small {
+  margin-left: 4px;
+  color: inherit;
+  font-size: 9px;
+  opacity: 0.72;
+}
+
 .history-result-meta {
   display: flex;
   justify-content: space-between;
-  margin: 24px 0 10px;
-  padding-bottom: 12px;
+  margin: 14px 0 8px;
+  padding-bottom: 9px;
   border-bottom: 1px solid var(--line);
   color: var(--muted);
   font-size: 11px;

@@ -56,6 +56,9 @@ test('可新增收支、重新整理仍保留並透過歷史搜尋', async ({ pa
   await expect(page.getByTestId('summary-expense')).toContainText('120');
 
   await page.getByRole('button', { name: '紀錄', exact: true }).click();
+  await expect(page.locator('[data-history-filter="category"][data-history-value="飲食"]')).toContainText('100%');
+  await page.locator('[data-history-filter="category"][data-history-value="飲食"]').click();
+  await expect(page.locator('[data-history-filter="subcategory"][data-history-value="火鍋"]')).toContainText('100%');
   await page.getByLabel('搜尋紀錄').fill('鼎王');
   await expect(page.locator('[data-transaction-row]')).toHaveCount(1);
   await expect(page.getByText('鼎王麻辣鍋午餐')).toBeVisible();
@@ -104,10 +107,13 @@ test('手機記帳移除多餘分類提示，且長對話框仍固定保留關�
   await expect(page.locator('#history-type, #history-account')).toHaveCount(0);
   await expect(page.locator('[data-history-filter="type"]')).toHaveCount(4);
   await expect(page.locator('[data-history-filter="account"]')).toHaveCount(7);
+  await expect(page.locator('[data-history-filter="category"]')).toHaveCount(1);
   await page.locator('[data-history-filter="type"][data-history-value="expense"]').click();
   await expect(
     page.locator('[data-history-filter="type"][data-history-value="expense"]'),
   ).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('[data-history-filter="subcategory"]')).toHaveCount(0);
+  await expect(page.locator('meta[name="viewport"]')).toHaveAttribute('content', /user-scalable=no/);
 
   await page.getByRole('button', { name: '備份與設定' }).click();
   const dialog = page.locator('#tools-dialog');
