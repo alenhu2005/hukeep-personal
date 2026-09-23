@@ -592,6 +592,59 @@
   color: var(--expense);
 }
 
+.einvoice-preview-results {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.einvoice-preview-period h4 {
+  margin: 0 0 5px;
+  font-size: 12px;
+}
+
+.einvoice-preview-period > p,
+.einvoice-preview-items {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.einvoice-preview-row {
+  border-top: 1px solid var(--line);
+}
+
+.einvoice-preview-row summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.einvoice-preview-row summary span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.einvoice-preview-row summary strong {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.einvoice-preview-items {
+  padding: 0 0 9px 14px;
+}
+
+.einvoice-preview-items p {
+  margin: 3px 0;
+}
+
 .privacy-note {
   display: flex;
   gap: 11px;

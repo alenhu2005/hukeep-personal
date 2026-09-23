@@ -21,6 +21,31 @@ describe('GAS 同步合約', () => {
     expect(source).not.toContain('1nlUSUpk5F4fnhDRTPWS4KlIIfqAYWkT6xn3965Xl8N-eRKiFyVjqNO4w');
   });
 
+  it('發票預覽只轉送固定唯讀端點，不觸碰 Sheet 或保存憑證', () => {
+    const fetch = (...args) => {
+      fetch.calls.push(args);
+      return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ result: 0, payload: { data: [] } }) };
+    };
+    fetch.calls = [];
+    const cache = { get: () => null, put: () => {} };
+    const relay = new Function('UrlFetchApp', 'CacheService', 'LockService',
+      `${source}\nreturn relayEInvoicePreview_;`)(
+      { fetch },
+      { getScriptCache: () => cache },
+      { getScriptLock: () => ({ waitLock: () => {}, releaseLock: () => {} }) },
+    );
+    expect(() => relay('list', 'aaa.bbb.ccc')).not.toThrow();
+    expect(fetch.calls[0][0]).toBe('https://upi.einvoice.nat.gov.tw/einvoice/carriers/query-invoices-header');
+    expect(fetch.calls[0][1].payload).toBe('einvoiceJwt=aaa.bbb.ccc');
+    expect(() => relay('https://example.com', 'aaa.bbb.ccc')).toThrow('操作不正確');
+    expect(() => relay('login', 'plain-password')).toThrow('格式不正確');
+    expect(fetch.calls).toHaveLength(1);
+    const relayBody = source.match(/function relayEInvoicePreview_\([\s\S]*?\n}\n/)?.[0] || '';
+    expect(relayBody).not.toContain('SpreadsheetApp');
+    expect(relayBody).not.toContain('PropertiesService');
+    expect(source).not.toContain("setProperty('EINVOICE");
+  });
+
   it('提供受授權的精準 Sheet 刪除操作，而非只從本機移除', () => {
     expect(source).toContain("body.action === 'deleteLedgerTransaction'");
     expect(source).toContain("body.action === 'deleteLedgerBudget'");

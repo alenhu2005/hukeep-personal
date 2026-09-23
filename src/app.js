@@ -45,6 +45,7 @@ import {
   loadLedgerStateFromSheet,
   syncLedgerChangesToSheet,
 } from './services/import-proxy.js';
+import { previewEInvoices } from './services/einvoice-preview.js';
 import {
   createDeviceBindingPayload,
   createDeviceBindingStore,
@@ -164,6 +165,8 @@ export function createApp() {
   let backgroundPullRetryCount = 0;
   let deviceBindingLink = '';
   let activeReceiptUrl = '';
+  let invoicePreview = null;
+  let invoicePreviewAbort = null;
 
   const main = document.querySelector('#app-main');
   const transactionDialog = document.querySelector('#transaction-dialog');
@@ -186,6 +189,128 @@ export function createApp() {
       return rememberProxySession(endpoint, stored.proxyToken);
     }
     return { endpoint: endpoint.trim(), proxyToken: stored.proxyToken, bound: Boolean(endpoint && stored.proxyToken) };
+  }
+
+  function clearInvoicePreview() {
+    invoicePreviewAbort?.abort();
+    invoicePreviewAbort = null;
+    invoicePreview?.dispose();
+    invoicePreview = null;
+    const form = document.querySelector('#einvoice-preview-form');
+    form.reset();
+    form.querySelector('button[type="submit"]').disabled = false;
+    document.querySelector('#einvoice-preview-results').replaceChildren();
+    document.querySelector('#einvoice-preview-status').textContent = '憑證只用於這次預覽，不會存入帳本或 Sheet。';
+  }
+
+  function invoicePreviewError(error) {
+    const message = String(error?.message || '');
+    if (message.includes('不支援的操作')) return '請先更新並重新部署 GAS，才能使用發票預覽。';
+    if (message.includes('手機條碼')) return '登入成功，但未取得手機條碼，暫時無法預覽發票。';
+    if (message.includes('過於頻繁')) return '登入嘗試過於頻繁，請稍後再試。';
+    if (message.includes('逾時') || message.includes('無法連線')) return '暫時無法連上電子發票服務，請稍後再試。';
+    return '電子發票登入或讀取未成功，請確認 App 帳密並稍後再試。';
+  }
+
+  function renderInvoicePreview(preview) {
+    const container = document.querySelector('#einvoice-preview-results');
+    container.replaceChildren();
+    for (const period of preview.periods) {
+      const section = document.createElement('section');
+      section.className = 'einvoice-preview-period';
+      const heading = document.createElement('h4');
+      heading.textContent = `${period.label} · 已讀取 ${period.invoices.length} 張`;
+      section.append(heading);
+      if (!period.invoices.length) {
+        const empty = document.createElement('p');
+        empty.textContent = '這個期別沒有讀到發票。';
+        section.append(empty);
+      }
+      for (const invoice of period.invoices) {
+        const row = document.createElement('details');
+        row.className = 'einvoice-preview-row';
+        const summary = document.createElement('summary');
+        const description = document.createElement('span');
+        description.textContent = `${invoice.merchant} · ${invoice.date || '日期未提供'} · ${invoice.number || '號碼未提供'}`;
+        const amount = document.createElement('strong');
+        amount.textContent = formatMoney(invoice.amount);
+        summary.append(description, amount);
+        const items = document.createElement('div');
+        items.className = 'einvoice-preview-items';
+        row.append(summary, items);
+        let loaded = false;
+        let loading = false;
+        row.addEventListener('toggle', async () => {
+          if (!row.open || loaded || loading || invoicePreview !== preview) return;
+          if (!invoice.number || !invoice.detailDate) {
+            items.textContent = '這張發票缺少號碼或日期，無法讀取品項。';
+            return;
+          }
+          loading = true;
+          items.textContent = '正在讀取品項…';
+          try {
+            const values = await preview.loadItems(invoice);
+            if (invoicePreview !== preview) return;
+            items.replaceChildren();
+            if (!values.length) items.textContent = '這張發票沒有提供品項明細。';
+            for (const item of values) {
+              const line = document.createElement('p');
+              line.textContent = [item.name, item.quantity && `× ${item.quantity}`, item.amount && `NT$ ${item.amount}`].filter(Boolean).join(' · ');
+              items.append(line);
+            }
+            loaded = true;
+          } catch (error) {
+            if (invoicePreview === preview) items.textContent = invoicePreviewError(error);
+          } finally {
+            loading = false;
+          }
+        });
+        section.append(row);
+      }
+      container.append(section);
+    }
+  }
+
+  async function submitInvoicePreview(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const button = form.querySelector('button[type="submit"]');
+    const status = document.querySelector('#einvoice-preview-status');
+    const credentials = proxySession();
+    if (!credentials.bound) {
+      status.textContent = '請先將這台裝置綁定 GAS 與 Google Sheet。';
+      form.reset();
+      return;
+    }
+    invoicePreviewAbort?.abort();
+    invoicePreview?.dispose();
+    invoicePreview = null;
+    document.querySelector('#einvoice-preview-results').replaceChildren();
+    const mobile = form.elements.mobile.value;
+    const password = form.elements.password.value;
+    form.reset();
+    const controller = new AbortController();
+    invoicePreviewAbort = controller;
+    button.disabled = true;
+    status.textContent = '正在讀取最近兩個發票期別…';
+    try {
+      const preview = await previewEInvoices(credentials, { mobile, password }, { signal: controller.signal });
+      if (controller.signal.aborted) {
+        preview.dispose();
+        return;
+      }
+      invoicePreview = preview;
+      renderInvoicePreview(preview);
+      const count = preview.periods.reduce((total, period) => total + period.invoices.length, 0);
+      status.textContent = `已讀取 ${count} 張發票。預覽，尚未記帳；關閉設定後會清除。`;
+    } catch (error) {
+      if (!controller.signal.aborted) status.textContent = invoicePreviewError(error);
+    } finally {
+      if (invoicePreviewAbort === controller) {
+        invoicePreviewAbort = null;
+        button.disabled = false;
+      }
+    }
   }
 
   function updateDeviceBindingStatus() {
@@ -1655,6 +1780,8 @@ export function createApp() {
     if (button) removeRecurringRule(button.dataset.removeRecurring);
   });
   document.querySelector('#sheet-sync-form').addEventListener('submit', syncSheet);
+  document.querySelector('#einvoice-preview-form').addEventListener('submit', submitInvoicePreview);
+  toolsDialog.addEventListener('close', clearInvoicePreview);
   document.querySelector('#sheet-load-button').addEventListener('click', loadSheet);
   document.querySelector('#sync-indicator').addEventListener('click', () => {
     configureToolsForms();

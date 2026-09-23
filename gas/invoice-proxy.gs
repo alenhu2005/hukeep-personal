@@ -62,6 +62,9 @@ function doPost(event) {
       return jsonOutput_({ ok: true, data: claimDeviceBinding_(body.code) });
     }
     authorize_(body.proxyToken);
+    if (body.action === 'relayEInvoicePreview') {
+      return jsonOutput_({ ok: true, data: relayEInvoicePreview_(body.stage, body.payload) });
+    }
     if (body.action === 'createDevicePairingCode') {
       return jsonOutput_({ ok: true, data: createDevicePairingCode_() });
     }
@@ -101,6 +104,75 @@ function doPost(event) {
 function authorize_(providedToken) {
   var expectedToken = requiredProperty_('PROXY_TOKEN');
   if (!providedToken || String(providedToken) !== expectedToken) throw new Error('代理通行碼不正確');
+}
+
+// Only these three read-only invoice calls are reachable through the proxy.
+// Credentials arrive inside the encrypted login packet; nothing is persisted.
+function relayEInvoicePreview_(stage, payload) {
+  var routes = {
+    login: 'https://uia.einvoice.nat.gov.tw/mid/v1/login',
+    list: 'https://upi.einvoice.nat.gov.tw/einvoice/carriers/query-invoices-header',
+    detail: 'https://upi.einvoice.nat.gov.tw/einvoice/carriers/query-invoices-details'
+  };
+  if (!Object.prototype.hasOwnProperty.call(routes, stage)) throw new Error('發票預覽操作不正確');
+  payload = String(payload == null ? '' : payload);
+  var valid = stage === 'login'
+    ? /^[A-Za-z0-9]{16}\|[A-Za-z0-9+/=]{20,8000}\|[A-Za-z0-9]{16}$/.test(payload)
+    : /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(payload) && payload.length <= 12000;
+  if (!valid) throw new Error('發票預覽請求格式不正確');
+  enforceInvoicePreviewRateLimit_(stage);
+  var headers = {
+    Accept: 'application/json',
+    'User-Agent': 'okhttp/5.3.0',
+    appver: '6.800.2',
+    appbn: '66',
+    platform: 'android',
+    version: '6.800.2'
+  };
+  var isLogin = stage === 'login';
+  var options = {
+    method: 'post',
+    contentType: isLogin ? 'application/json; charset=utf-8' : 'application/x-www-form-urlencoded; charset=utf-8',
+    headers: headers,
+    payload: isLogin ? JSON.stringify({ ldata: payload }) : 'einvoiceJwt=' + encodeURIComponent(payload),
+    followRedirects: false,
+    muteHttpExceptions: true
+  };
+  var response;
+  try {
+    response = UrlFetchApp.fetch(routes[stage], options);
+  } catch (error) {
+    throw new Error('電子發票服務暫時無法連線');
+  }
+  var status = response.getResponseCode();
+  var raw = response.getContentText();
+  if (raw.length > 1048576) throw new Error('電子發票回應過大');
+  var parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw new Error('電子發票服務回傳無法解讀');
+  }
+  if (status < 200 || status > 599 || status >= 300 && status < 400) {
+    throw new Error('電子發票服務回傳狀態不正確');
+  }
+  return { status: status, body: parsed };
+}
+
+function enforceInvoicePreviewRateLimit_(stage) {
+  var bucket = Math.floor(Date.now() / 600000);
+  var key = 'invoice-preview:' + stage + ':' + bucket;
+  var limit = stage === 'login' ? 6 : 120;
+  var lock = LockService.getScriptLock();
+  lock.waitLock(5000);
+  try {
+    var cache = CacheService.getScriptCache();
+    var count = Number(cache.get(key) || 0);
+    if (count >= limit) throw new Error('發票預覽請求過於頻繁，請稍後再試');
+    cache.put(key, String(count + 1), 660);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function pairingCodeHash_(code) {

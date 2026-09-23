@@ -45,7 +45,7 @@ async function postProxy(endpoint, payload, options = {}) {
   const controller = new AbortController();
   const cancel = () => controller.abort(options.signal.reason);
   options.signal?.addEventListener('abort', cancel, { once: true });
-  const timer = setTimeout(() => controller.abort(new Error('連線逾時')), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(new Error('連線逾時')), options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS);
   try {
     let response;
     let envelope;
@@ -129,6 +129,23 @@ export async function classifyExpenseWithAi(input, options = {}) {
     return validateClassification(fallback, { fallback, type });
   }
   return validateClassification(data, { fallback, type });
+}
+
+export async function relayEInvoicePreview(input, options = {}) {
+  if (!['login', 'list', 'detail'].includes(input?.stage)) throw new Error('發票預覽操作不正確');
+  const payload = String(input?.payload ?? '');
+  if (!payload || payload.length > 12000) throw new Error('發票預覽請求格式不正確');
+  const data = await postProxy(input.endpoint, {
+    action: 'relayEInvoicePreview',
+    proxyToken: cleanText(input.proxyToken, 300),
+    stage: input.stage,
+    payload,
+  }, { ...options, requestTimeoutMs: 35_000 });
+  if (!Number.isInteger(data?.status) || data.status < 200 || data.status > 599 ||
+      !data.body || typeof data.body !== 'object') {
+    throw new Error('發票服務回傳格式不正確');
+  }
+  return data;
 }
 
 function assertSheetInteger(value, label, options = {}) {

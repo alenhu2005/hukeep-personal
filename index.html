@@ -261,6 +261,19 @@
           <p id="sync-health-status" class="settings-status" role="status"></p>
         </form>
       </section>
+      <section class="settings-section" aria-labelledby="einvoice-preview-title">
+        <div class="settings-section-heading">
+          <h3 id="einvoice-preview-title">預覽電子發票資料</h3>
+          <p>只讀取最近兩個期別；預覽，尚未記帳。關閉設定後會清除本次預覽。</p>
+        </div>
+        <form id="einvoice-preview-form" class="compact-settings-form" autocomplete="off">
+          <label><span>電子發票 App 手機號碼</span><input name="mobile" type="tel" inputmode="tel" pattern="09[0-9]{8}" maxlength="10" autocomplete="off" required /></label>
+          <label><span>電子發票 App 密碼</span><input name="password" type="password" maxlength="128" autocomplete="off" required /></label>
+          <button class="primary-button wide" type="submit">登入並預覽</button>
+        </form>
+        <p id="einvoice-preview-status" class="settings-status" role="status" aria-live="polite">憑證只用於這次預覽，不會存入帳本或 Sheet。</p>
+        <div id="einvoice-preview-results" class="einvoice-preview-results"></div>
+      </section>
       <div class="privacy-note">
         <span aria-hidden="true">●</span>
         <p><strong>離線優先</strong><br />帳本先存在裝置；只有同步與後台 AI 審查時才會連到你的私人 GAS 與 Sheet。</p>
