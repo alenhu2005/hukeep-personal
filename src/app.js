@@ -210,6 +210,7 @@ export function createApp() {
     if (message.includes('GAS 無法連到電子發票服務')) return 'GAS 無法連到電子發票服務；這不是密碼錯誤，可能是服務端拒絕 GAS 連線。';
     if (message.includes('電子發票服務暫時無法連線')) return 'GAS 到電子發票服務的連線失敗；這不是密碼錯誤。請更新 GAS 以取得更明確的原因。';
     if (message.includes('代理通行碼不正確')) return '這台裝置的 GAS 綁定已失效，請重新綁定。';
+    if (message.includes('新版電子發票請求逾時')) return `電子發票在${error?.stage === 'login' ? '登入' : '讀取'}階段逾時；無法判定帳密是否正確。請檢查 GAS 執行紀錄中的發票轉送是否逾時。`;
     if (message.includes('無法連線') || message.includes('連線逾時')) return '手機無法連上 GAS，請檢查網路與 GAS 部署網址。';
     if (message.includes('回傳無法解讀')) return '電子發票服務回傳非預期內容，可能是 App 協定改版或連線被阻擋。';
     const serviceCode = message.match(/回應錯誤（代碼\s*(\d+)）/);
