@@ -206,10 +206,21 @@ export function createApp() {
   function invoicePreviewError(error) {
     const message = String(error?.message || '');
     if (message.includes('不支援的操作')) return '請先更新並重新部署 GAS，才能使用發票預覽。';
+    if (message.includes('GAS 尚未授權對外連線')) return 'GAS 尚未授權對外連線。請在 Apps Script 編輯器執行 authorizeEInvoicePreview，授權後再試。';
+    if (message.includes('GAS 無法連到電子發票服務')) return 'GAS 無法連到電子發票服務；這不是密碼錯誤，可能是服務端拒絕 GAS 連線。';
+    if (message.includes('電子發票服務暫時無法連線')) return 'GAS 到電子發票服務的連線失敗；這不是密碼錯誤。請更新 GAS 以取得更明確的原因。';
+    if (message.includes('代理通行碼不正確')) return '這台裝置的 GAS 綁定已失效，請重新綁定。';
+    if (message.includes('無法連線') || message.includes('連線逾時')) return '手機無法連上 GAS，請檢查網路與 GAS 部署網址。';
+    if (message.includes('回傳無法解讀')) return '電子發票服務回傳非預期內容，可能是 App 協定改版或連線被阻擋。';
+    const serviceCode = message.match(/回應錯誤（代碼\s*(\d+)）/);
+    if (serviceCode) return `電子發票服務在${error?.stage === 'login' ? '登入' : '讀取'}階段拒絕請求（代碼 ${serviceCode[1]}）；不能單憑此判定密碼錯。`;
+    const httpStatus = message.match(/HTTP\s+(\d{3})/);
+    if (httpStatus) return `電子發票服務在${error?.stage === 'login' ? '登入' : '讀取'}階段回傳 HTTP ${httpStatus[1]}；請稍後再試。`;
     if (message.includes('手機條碼')) return '登入成功，但未取得手機條碼，暫時無法預覽發票。';
     if (message.includes('過於頻繁')) return '登入嘗試過於頻繁，請稍後再試。';
-    if (message.includes('逾時') || message.includes('無法連線')) return '暫時無法連上電子發票服務，請稍後再試。';
-    return '電子發票登入或讀取未成功，請確認 App 帳密並稍後再試。';
+    if (error?.stage === 'list') return '已登入，但讀取發票清單失敗；這不是密碼錯誤。';
+    if (error?.stage === 'detail') return '已登入，但這張發票的品項讀取失敗。';
+    return '電子發票登入未完成；可能是帳密、App 協定或服務端限制，請勿連續重試。';
   }
 
   function renderInvoicePreview(preview) {

@@ -133,7 +133,13 @@ export async function previewEInvoices(connection, credentials, options = {}) {
     signal: options.signal,
     fetchImpl: (input, init) => previewFetch(input, init, connection, relayImpl),
   });
-  let session = await client.login({ mobile, password });
+  let session;
+  try {
+    session = await client.login({ mobile, password });
+  } catch (error) {
+    error.stage = 'login';
+    throw error;
+  }
   if (!session.carrierCode) throw new Error('登入成功，但未取得手機條碼');
   const now = options.now ?? new Date();
   const today = taipeiParts(now);
@@ -141,7 +147,13 @@ export async function previewEInvoices(connection, credentials, options = {}) {
   const periods = [];
   for (let offset = 0; offset < 2; offset += 1) {
     const period = periodAt(currentIndex - offset, now);
-    const payload = await client.queryCarrierInvoices(session, period.start, period.end);
+    let payload;
+    try {
+      payload = await client.queryCarrierInvoices(session, period.start, period.end);
+    } catch (error) {
+      error.stage = 'list';
+      throw error;
+    }
     periods.push({
       label: period.label,
       invoices: invoiceHeaders(payload).sort((a, b) => b.date.localeCompare(a.date)),
@@ -152,7 +164,12 @@ export async function previewEInvoices(connection, credentials, options = {}) {
     async loadItems(invoice) {
       if (!session) throw new Error('發票預覽已結束');
       if (!invoice?.number || !invoice?.detailDate) throw new Error('這張發票缺少號碼或日期，無法讀取品項');
-      return invoiceItems(await client.queryCarrierInvoiceDetail(session, invoice.number, invoice.detailDate));
+      try {
+        return invoiceItems(await client.queryCarrierInvoiceDetail(session, invoice.number, invoice.detailDate));
+      } catch (error) {
+        error.stage = 'detail';
+        throw error;
+      }
     },
     dispose() { session = null; },
   };

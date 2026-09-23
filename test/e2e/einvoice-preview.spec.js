@@ -65,3 +65,23 @@ test('手機可唯讀預覽發票，關閉設定即清除憑證與結果', async
   await expect(form.getByLabel('電子發票 App 手機號碼')).toHaveValue('');
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('hukeep_personal_state_v1')).transactions)).toEqual([]);
 });
+
+test('GAS 對外連線未授權時不誤報成密碼錯誤', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('hukeep_device_binding_endpoint_v1', 'https://example.com/exec');
+    localStorage.setItem('hukeep_device_binding_token_v1', 'test-proxy-token');
+  });
+  await page.route('https://example.com/exec', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: false, error: 'GAS 尚未授權對外連線；請在編輯器執行 authorizeEInvoicePreview' }),
+  }));
+  await page.goto('./');
+  await page.getByRole('button', { name: '備份與設定' }).click();
+  const form = page.locator('#einvoice-preview-form');
+  await form.getByLabel('電子發票 App 手機號碼').fill('0912345678');
+  await form.getByLabel('電子發票 App 密碼').fill('test-password');
+  await form.getByRole('button', { name: '登入並預覽' }).click();
+  await expect(page.locator('#einvoice-preview-status')).toContainText('GAS 尚未授權對外連線');
+  await expect(form.getByLabel('電子發票 App 密碼')).toHaveValue('');
+});

@@ -46,6 +46,17 @@ function authorizeSpreadsheetAccess() {
   return spreadsheet.getId();
 }
 
+// Run once in the Apps Script editor after adding invoice preview. This
+// requests the external-fetch permission without sending login credentials.
+function authorizeEInvoicePreview() {
+  var response = UrlFetchApp.fetch('https://uia.einvoice.nat.gov.tw/', {
+    method: 'get',
+    followRedirects: false,
+    muteHttpExceptions: true
+  });
+  return response.getResponseCode();
+}
+
 function installBackgroundProcessing() {
   ensureSpokenQueueTrigger_();
   return true;
@@ -142,7 +153,11 @@ function relayEInvoicePreview_(stage, payload) {
   try {
     response = UrlFetchApp.fetch(routes[stage], options);
   } catch (error) {
-    throw new Error('電子發票服務暫時無法連線');
+    var reason = String(error && error.message || '');
+    if (/permission|authorization|script\.external_request|權限|授權/i.test(reason)) {
+      throw new Error('GAS 尚未授權對外連線；請在編輯器執行 authorizeEInvoicePreview');
+    }
+    throw new Error('GAS 無法連到電子發票服務；可能是網路或服務端限制');
   }
   var status = response.getResponseCode();
   var raw = response.getContentText();

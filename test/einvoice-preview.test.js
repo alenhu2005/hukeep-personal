@@ -27,6 +27,7 @@ function fakeRelay(options = {}) {
     }
     const claim = JSON.parse(Buffer.from(payload.split('.')[1], 'base64url').toString());
     if (stage === 'list') {
+      if (options.listError) return { status: 503, body: { message: 'upstream unavailable' } };
       expect(claim.reqdata.action).toBe('carrierInvChk');
       if (options.empty || claim.reqdata.startDate === '2026/07/01') {
         return { status: 200, body: { result: 0, payload: { data: [] } } };
@@ -74,14 +75,22 @@ describe('電子發票唯讀預覽', () => {
     expect(preview.periods.every(period => !period.invoices.length)).toBe(true);
   });
 
+  it('登入後清單失敗要明確標成讀取階段', async () => {
+    const failed = fakeRelay({ listError: true });
+    await expect(previewEInvoices(connection, credentials, { relayImpl: failed.relayImpl, now }))
+      .rejects.toMatchObject({ stage: 'list' });
+    expect(failed.calls.map(call => call.stage)).toEqual(['login', 'list']);
+  });
+
   it('密碼錯誤與工作階段失效不會自行重試', async () => {
     const badLogin = fakeRelay({ loginError: true });
-    await expect(previewEInvoices(connection, credentials, { relayImpl: badLogin.relayImpl, now })).rejects.toThrow();
+    await expect(previewEInvoices(connection, credentials, { relayImpl: badLogin.relayImpl, now }))
+      .rejects.toMatchObject({ stage: 'login' });
     expect(badLogin.calls.map(call => call.stage)).toEqual(['login']);
 
     const expired = fakeRelay({ expired: true });
     const preview = await previewEInvoices(connection, credentials, { relayImpl: expired.relayImpl, now });
-    await expect(preview.loadItems(preview.periods[0].invoices[0])).rejects.toThrow();
+    await expect(preview.loadItems(preview.periods[0].invoices[0])).rejects.toMatchObject({ stage: 'detail' });
     expect(expired.calls.map(call => call.stage)).toEqual(['login', 'list', 'list', 'detail']);
   });
 

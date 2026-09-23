@@ -23,6 +23,7 @@ describe('GAS 同步合約', () => {
 
   it('發票預覽只轉送固定唯讀端點，不觸碰 Sheet 或保存憑證', () => {
     const fetch = (...args) => {
+      if (fetch.error) throw fetch.error;
       fetch.calls.push(args);
       return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ result: 0, payload: { data: [] } }) };
     };
@@ -40,6 +41,10 @@ describe('GAS 同步合約', () => {
     expect(() => relay('https://example.com', 'aaa.bbb.ccc')).toThrow('操作不正確');
     expect(() => relay('login', 'plain-password')).toThrow('格式不正確');
     expect(fetch.calls).toHaveLength(1);
+    fetch.error = new Error('You do not have permission to call UrlFetchApp.fetch');
+    expect(() => relay('list', 'aaa.bbb.ccc')).toThrow('GAS 尚未授權對外連線');
+    fetch.error = new Error('Connection failed');
+    expect(() => relay('list', 'aaa.bbb.ccc')).toThrow('GAS 無法連到電子發票服務');
     const relayBody = source.match(/function relayEInvoicePreview_\([\s\S]*?\n}\n/)?.[0] || '';
     expect(relayBody).not.toContain('SpreadsheetApp');
     expect(relayBody).not.toContain('PropertiesService');
