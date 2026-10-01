@@ -10,8 +10,8 @@
     <link rel="manifest" href="./manifest.json" />
     <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
     <title>小帳｜個人記帳</title>
-    <script type="module" crossorigin src="/hukeep-personal/assets/index-DERhaaim.js"></script>
-    <link rel="stylesheet" crossorigin href="/hukeep-personal/assets/index-NqJvUmRX.css">
+    <script type="module" crossorigin src="/hukeep-personal/assets/index-C_yhcO68.js"></script>
+    <link rel="stylesheet" crossorigin href="/hukeep-personal/assets/index-_8eUpKiT.css">
   </head>
   <body>
     <a class="skip-link" href="#app-main">跳到主要內容</a>
@@ -105,13 +105,11 @@
               </span>
             </label>
 
-            <label id="transfer-fee-field" class="amount-field" for="transaction-fee" hidden>
-              <span>轉帳手續費</span>
-              <span class="amount-input-wrap">
-                <small>NT$</small>
-                <input id="transaction-fee" name="fee" type="number" min="0" step="1" inputmode="numeric" placeholder="0" />
-              </span>
-            </label>
+            <div id="transfer-fee-field" class="form-grid transfer-fee-fields" hidden>
+              <label for="transaction-fee"><span>轉帳手續費</span><input id="transaction-fee" name="fee" type="number" min="0" step="1" inputmode="numeric" placeholder="0" /></label>
+              <label for="transaction-fee-mode"><span>手續費方式</span><select id="transaction-fee-mode" name="feeMode" aria-label="手續費方式"><option value="included">內扣（從轉帳內扣）</option><option value="additional">外加（另外扣款）</option></select></label>
+              <output id="transfer-preview" class="transfer-preview form-grid-wide" aria-live="polite"></output>
+            </div>
 
             <div class="form-grid">
               <label id="category-field">
@@ -207,6 +205,8 @@
           <label class="recurring-to-account" hidden><span>目的帳戶</span><select name="toAccount"></select></label>
           <label class="recurring-category"><span>分類</span><select name="category"></select></label>
           <label class="recurring-fee" hidden><span>手續費</span><input name="fee" type="number" min="0" step="1" inputmode="numeric" value="0" /></label>
+          <label class="recurring-fee-mode" hidden><span>手續費方式</span><select name="feeMode" aria-label="手續費方式"><option value="included">內扣（從轉帳內扣）</option><option value="additional">外加（另外扣款）</option></select></label>
+          <output id="recurring-transfer-preview" class="transfer-preview wide" aria-live="polite" hidden></output>
           <label class="wide"><span>備註</span><input name="note" maxlength="240" /></label>
           <button class="primary-button wide" type="submit">新增固定流水</button>
           <button id="recurring-edit-cancel" class="secondary-button wide" type="button" hidden>取消編輯</button>
