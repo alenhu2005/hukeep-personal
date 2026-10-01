@@ -28,9 +28,23 @@ describe('GAS 同步合約', () => {
     expect(source).toContain('changes.featureSettingsDelta');
   });
 
+  it('固定流水保留明確的手續費模式', () => {
+    const merge = new Function(`${source}\nreturn mergeFeatureSettings_;`)();
+    const rule = {
+      id: 'recurring-transfer', name: '轉帳', type: 'transfer', amount: 10000, fee: 12,
+      feeMode: 'included', account: 'sinopac', toAccount: 'post', cadence: 'monthly',
+      day: 1, startDate: '2026-01-01',
+    };
+    expect(merge({}, { recurringRules: [rule] }, {}, true).recurringRules[0]).toMatchObject({
+      feeMode: 'included', fee: 12,
+    });
+  });
+
   it('保留帳本 Sheet 同步，但不再暴露載具 API、排程或財政部 AppID 設定', () => {
     expect(source).toContain("body.action === 'syncLedgerState'");
     expect(source).toContain("body.action === 'syncLedgerChanges'");
+    expect(source).toContain("body.action === 'getLedgerCapabilities'");
+    expect(source).toContain('transferFeeModeVersion: 1');
     expect(source).toContain("body.action === 'loadLedgerState'");
     expect(source).toContain("requiredProperty_('SPREADSHEET_ID')");
     expect(source).toContain('小帳_帳戶');
@@ -40,6 +54,11 @@ describe('GAS 同步合約', () => {
     expect(source).not.toContain('EINVOICE_UUID');
     expect(source).not.toContain('callEinvoice_');
     expect(source).not.toContain('1nlUSUpk5F4fnhDRTPWS4KlIIfqAYWkT6xn3965Xl8N-eRKiFyVjqNO4w');
+  });
+
+  it('提供不寫入 Sheet 的已授權模式能力檢查', () => {
+    const capabilities = new Function(`${source}\nreturn getLedgerCapabilities_;`)();
+    expect(capabilities()).toEqual({ transferFeeModeVersion: 1 });
   });
 
   it('不再提供發票或銀行連線操作與轉送端點', () => {
@@ -83,6 +102,7 @@ describe('GAS 同步合約', () => {
 
   it('GAS 以完整交易固定校準投資快照，阻止舊裝置覆寫錯誤金額', () => {
     const canonicalOpening = new Function(`${source}\nreturn canonicalInvestmentOpeningBalance_;`)();
+    const effect = new Function(`${source}\nreturn investmentBalanceEffect_;`)();
     const oldTransactions = [
       { type: 'transfer', amount: 11538, fee: 0, account: 'sinopac', toAccount: 'investment', date: '2026-09-01' },
     ];
@@ -93,13 +113,57 @@ describe('GAS 同步合約', () => {
 
     expect(canonicalOpening(oldTransactions)).toBe(1353);
     expect(canonicalOpening(withNewBuy)).toBe(1353);
+    expect(effect({ type: 'transfer', amount: 10000, fee: 12, feeMode: 'included', account: 'sinopac', toAccount: 'investment' })).toBe(9988);
+    expect(effect({ type: 'transfer', amount: 10000, fee: 12, feeMode: 'additional', account: 'investment', toAccount: 'sinopac' })).toBe(-10012);
     expect(source).toContain('repairInvestmentAccountSheet_(accountSheet, transactionSheet)');
+  });
+
+  it('轉帳列在原有欄位後附加模式，舊空白模式讀回外加', () => {
+    const { row, fromRow, headers } = new Function('Utilities', `${source}\nreturn {
+      row: ledgerTransactionRow_, fromRow: ledgerTransactionFromRow_, headers: LEDGER_TRANSACTION_HEADERS,
+    };`)({ formatDate: () => '2026-09-01' });
+    const transaction = {
+      id: 'transfer-mode', type: 'transfer', name: '轉帳', amount: 10000, fee: 12,
+      feeMode: 'included', account: 'sinopac', toAccount: 'post', date: '2026-09-01',
+    };
+    const values = row(transaction);
+
+    expect(headers.at(-1)).toBe('手續費方式');
+    expect(values).toHaveLength(28);
+    expect(values[22]).toBe(12);
+    expect(values[27]).toBe('included');
+    expect(fromRow(values)).toMatchObject({ fee: 12, feeMode: 'included' });
+    expect(fromRow(values.slice(0, 27))).toMatchObject({ fee: 12, feeMode: 'additional' });
+    expect(() => row({ ...transaction, feeMode: 'included', fee: 10000 })).toThrow('必須小於金額');
+  });
+
+  it('口語審查保留草稿的明確模式，並可接收 AI 辨識的內扣模式', () => {
+    const review = new Function(`${source}\nreturn validateSpokenReview_;`)();
+    const fallback = {
+      id: 'voice-transfer', type: 'transfer', amount: 10000, fee: 12, feeMode: 'included',
+      account: 'sinopac', toAccount: 'post', date: '2026-09-01', name: '轉帳',
+      createdAt: '2026-09-01T00:00:00.000Z',
+    };
+    const ai = {
+      type: 'transfer', amount: 10000, fee: 12, feeMode: 'additional', date: '2026-09-01',
+      account: 'cash', toAccount: 'line', name: '轉帳', note: '', category: '', subcategory: '',
+    };
+    const trusted = review(ai, fallback, '含手續費轉帳一萬元，手續費十二元');
+    expect(trusted).toMatchObject({ feeMode: 'included' });
+    expect(trusted.aiChanges).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: '手續費方式' }),
+    ]));
+
+    const inferred = review({ ...ai, feeMode: 'included' }, { ...fallback, feeMode: undefined }, '內扣轉帳');
+    expect(inferred.feeMode).toBe('included');
+    expect(source).toContain('含手續費');
+    expect(source).toContain('額外收');
   });
 
   it('轉帳手續費會儲存到 Sheet，並納入口語 AI 審查 schema', () => {
     expect(source).toContain("'手續費'");
     expect(source).toContain("fee: { type: 'NUMBER'");
-    expect(source).toContain('手續費只會在轉帳時套用');
+    expect(source).toContain('轉帳手續費只會用在轉帳');
   });
 
   it('提供只用來完成試算表 OAuth 的公開授權函式', () => {
@@ -174,6 +238,7 @@ describe('GAS 同步合約', () => {
     expect(normalizeRow(legacyRow)).toEqual([
       'voice:test', 'income', '家教', 2500, '接案', '家教', 'bot', '', '2026-08-27', '口語原文',
       'voice', 'test', '', '', '[]', 'created', 'updated', '', '', 'pending', '', '口語原文', '', '', '', '', '',
+      '',
     ]);
   });
 

@@ -81,7 +81,7 @@ describe('GAS spoken upload batching', () => {
     const { context, sheets } = harness();
     const existing = sheet();
     existing.rows.push(Array.from(context.LEDGER_TRANSACTION_HEADERS));
-    const original = Array(27).fill('');
+    const original = Array(28).fill('');
     original[0] = 'manual:existing';
     original[1] = 'income';
     original[2] = '家教';
@@ -93,13 +93,14 @@ describe('GAS spoken upload batching', () => {
     context.enqueueSpokenEntry_({ transcript: '午餐100飲料20', drafts: [{ amount: 100 }, { amount: 20 }] });
     expect(existing.rows[1]).toEqual(original);
     expect(existing.insertRowsAfter).toHaveBeenCalledWith(2, 2);
-    expect(existing.writes).toEqual([{ start: 3, count: 2, width: 27 }]);
+    expect(existing.writes).toEqual([{ start: 3, count: 2, width: 28 }]);
   });
 
   it('retains queue-only items while batching only positive drafts into transactions', () => {
     const { context, sheets } = harness();
     const result = context.enqueueSpokenEntry_({ transcript: '午餐100飲料忘記金額',
       drafts: [{ amount: 100 }, { amount: 0 }] });
+    expect(result.transferFeeModeVersion).toBe(1);
     expect(result.queueIds).toHaveLength(2);
     expect(result.transactions).toHaveLength(1);
     expect(sheets.get('小帳_語音佇列').rows).toHaveLength(3);
@@ -147,7 +148,8 @@ describe('GAS spoken upload batching', () => {
       }],
       transactionDeletes: [], budgets: [], budgetDeletes: [],
     };
-    context.syncLedgerChanges_(changes);
+    const result = context.syncLedgerChanges_(changes);
+    expect(result.transferFeeModeVersion).toBe(1);
     context.syncLedgerChanges_(changes);
     expect(sheets.get('小帳_交易').rows).toHaveLength(2);
     expect(sheets.get('小帳_語音佇列').rows).toHaveLength(2);

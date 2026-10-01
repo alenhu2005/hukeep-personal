@@ -114,6 +114,26 @@ describe('分析工作台', () => {
     });
     expect(model.selectedDay.transactions.map(row => row.id)).toEqual(['salary', 'meal', 'buy']);
   });
+
+  it('投資分組、期間流量與手續費支出採用一致的實際入帳金額', () => {
+    const model = buildAnalysisWorkspace([
+      { id: 'included', type: 'transfer', amount: 10000, fee: 12, feeMode: 'included', account: 'cash', toAccount: 'investment', category: '投資', subcategory: 'ETF', date: '2026-09-02' },
+      { id: 'legacy', type: 'transfer', amount: 5000, fee: 20, account: 'cash', toAccount: 'investment', category: '投資', subcategory: '股票', date: '2026-09-02' },
+      { id: 'included-out', type: 'transfer', amount: 10000, fee: 12, feeMode: 'included', account: 'investment', toAccount: 'cash', category: '投資', subcategory: 'ETF', date: '2026-09-02' },
+      { id: 'additional-out', type: 'transfer', amount: 10000, fee: 12, feeMode: 'additional', account: 'investment', toAccount: 'cash', category: '投資', subcategory: '股票', date: '2026-09-02' },
+    ], {
+      period: 'month', selectedMonth: '2026-09', today: '2026-09-02', selectedDate: '2026-09-02',
+    });
+
+    expect(model.totals.expense).toBe(56);
+    expect(model.investmentFlows).toMatchObject({ contributed: 14988, withdrawn: 19988, net: -5000, count: 4 });
+    expect(model.investmentGroups).toEqual([
+      { subcategory: '股票', contributed: 5000, withdrawn: 10000, net: -5000, count: 2 },
+      { subcategory: 'ETF', contributed: 9988, withdrawn: 9988, net: 0, count: 2 },
+    ]);
+    expect(model.investmentSeries.find(row => row.key === '2026-09-02')).toMatchObject({ contributed: 14988, withdrawn: 19988, net: -5000 });
+    expect(model.selectedDay.investmentFlows).toMatchObject({ contributed: 14988, withdrawn: 19988, net: -5000 });
+  });
   it('可建立週、月、年範圍', () => {
     expect(analysisRange('week', '2026-08', '2026-08-31')).toEqual({ from: '2026-08-30', to: '2026-09-05', label: '08/30～09/05' });
     expect(analysisRange('month', '2026-02', '2026-08-31')).toEqual({ from: '2026-02-01', to: '2026-02-28', label: '2026-02' });

@@ -166,14 +166,23 @@ test('收入也在背景分類，事後編輯才顯示分類', async ({ page }) 
   await expect(form.getByLabel('小分類')).toHaveValue('家教');
 });
 
-test('手動轉帳可加入手續費，總資產只扣除手續費', async ({ page }) => {
+for (const [feeMode, debit, credit] of [['included', 10000, 9988], ['additional', 10012, 10000]]) {
+test(`手動轉帳 ${feeMode} 預覽、離線儲存及餘額一致`, async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 784 });
   await page.getByRole('button', { name: '快速記一筆' }).click();
   await page.getByText('手動記帳', { exact: true }).click();
   await page.getByRole('button', { name: '轉帳', exact: true }).click();
   const form = page.locator('#transaction-form');
   await form.getByLabel('名稱').fill('轉入 LINE');
-  await form.getByLabel('金額').fill('300');
-  await form.getByLabel('轉帳手續費').fill('15');
+  await form.getByLabel('金額').fill('10000');
+  await form.getByLabel('轉帳手續費', { exact: true }).fill('12');
+  await expect(form.getByLabel('手續費方式')).toHaveValue('included');
+  await form.getByLabel('手續費方式').selectOption(feeMode);
+  await expect(page.locator('#transfer-preview')).toContainText(`總扣款NT$ ${debit.toLocaleString('en-US')}`);
+  await expect(page.locator('#transfer-preview')).toContainText(`實收NT$ ${credit.toLocaleString('en-US')}`);
+  await page.locator('#transfer-preview').scrollIntoViewIfNeeded();
+  expect(await page.locator('#transfer-preview').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.screenshot({ path: test.info().outputPath('transfer-preview.png') });
   await form
     .locator('[data-account-for="transaction-account"]')
     .getByRole('button', { name: '現金' })
@@ -184,11 +193,118 @@ test('手動轉帳可加入手續費，總資產只扣除手續費', async ({ pa
     .click();
   await page.getByRole('button', { name: '儲存這筆' }).click();
 
-  await expect(page.getByTestId('total-assets')).toContainText('NT$ 12,876');
+  await expect(page.getByTestId('total-assets')).toContainText('NT$ 12,879');
+  await expect(page.locator('.account-item').filter({ hasText: '現金' })).toContainText(`-NT$ ${debit.toLocaleString('en-US')}`);
+  await expect(page.locator('.account-item').filter({ hasText: 'LINE' })).toContainText(`NT$ ${credit.toLocaleString('en-US')}`);
   const saved = await page.evaluate(() =>
     JSON.parse(localStorage.getItem('hukeep_personal_state_v1')).transactions[0],
   );
-  expect(saved).toMatchObject({ type: 'transfer', amount: 300, fee: 15, account: 'cash', toAccount: 'line' });
+  expect(saved).toMatchObject({ type: 'transfer', amount: 10000, fee: 12, feeMode, account: 'cash', toAccount: 'line' });
+  if (feeMode === 'additional') {
+    // Old backups/Sheet rows lack the mode; reopening must not switch their balances.
+    await page.evaluate(() => {
+      const state = JSON.parse(localStorage.getItem('hukeep_personal_state_v1'));
+      delete state.transactions[0].feeMode;
+      localStorage.setItem('hukeep_personal_state_v1', JSON.stringify(state));
+    });
+  }
+  await page.reload();
+  await expect(page.locator('.account-item').filter({ hasText: 'LINE' })).toContainText(`NT$ ${credit.toLocaleString('en-US')}`);
+  await page.getByRole('button', { name: '查看 轉入 LINE 詳情' }).click();
+  const detail = page.locator('#transaction-detail-dialog');
+  await expect(detail).toContainText(`總扣款NT$ ${debit.toLocaleString('en-US')}`);
+  await expect(detail).toContainText(`實收NT$ ${credit.toLocaleString('en-US')}`);
+  await detail.getByRole('button', { name: '關閉' }).click();
+  await page.getByRole('button', { name: '編輯 轉入 LINE' }).click();
+  await expect(form.getByLabel('手續費方式')).toHaveValue(feeMode);
+});
+}
+
+test('內扣手續費不可等於金額，改成外加後可儲存', async ({ page }) => {
+  await page.getByRole('button', { name: '快速記一筆' }).click();
+  await page.getByText('手動記帳', { exact: true }).click();
+  await page.getByRole('button', { name: '轉帳', exact: true }).click();
+  const form = page.locator('#transaction-form');
+  await form.getByLabel('名稱').fill('測試轉帳');
+  await form.getByLabel('金額').fill('12');
+  await form.getByLabel('轉帳手續費', { exact: true }).fill('12');
+  await expect(page.locator('#transfer-preview')).toContainText('手續費必須小於轉帳金額');
+  await page.getByRole('button', { name: '儲存這筆' }).click();
+  await expect(page.locator('#transaction-dialog')).toBeVisible();
+  await form.getByLabel('手續費方式').selectOption('additional');
+  await expect(page.locator('#transfer-preview')).toContainText('總扣款NT$ 24');
+  await page.getByRole('button', { name: '儲存這筆' }).click();
+  await expect(page.locator('#transaction-dialog')).not.toBeVisible();
+});
+
+test('新固定轉帳預設內扣並保留生成交易的模式', async ({ page }) => {
+  await page.getByRole('button', { name: '備份與設定' }).click();
+  const form = page.locator('#recurring-rule-form');
+  await form.getByLabel('名稱', { exact: true }).fill('固定轉入 LINE');
+  await form.getByLabel('類型').selectOption('transfer');
+  await form.getByLabel('金額', { exact: true }).fill('10000');
+  await form.getByLabel('手續費', { exact: true }).fill('12');
+  await form.getByLabel('目的帳戶').selectOption('line');
+  await expect(form.getByLabel('手續費方式')).toHaveValue('included');
+  await expect(page.locator('#recurring-transfer-preview')).toContainText('實收NT$ 9,988');
+  await form.getByRole('button', { name: '新增固定流水' }).click();
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('hukeep_personal_state_v1')));
+  expect(saved.featureSettings.recurringRules[0]).toMatchObject({ feeMode: 'included', fee: 12 });
+  expect(saved.transactions[0]).toMatchObject({ source: 'recurring', feeMode: 'included', amount: 10000, fee: 12 });
+});
+
+test('舊 GAS 不會收到內扣轉帳，更新後同一筆待同步交易只寫入一次', async ({ page }) => {
+  let supportsMode = false;
+  const capabilityChecks = [];
+  const transferWrites = [];
+  const remoteTransactions = new Map();
+  await page.route('https://proxy.example/fee-mode', async route => {
+    const body = route.request().postDataJSON();
+    if (body.action === 'getLedgerCapabilities') {
+      capabilityChecks.push(body);
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(supportsMode
+        ? { ok: true, data: { transferFeeModeVersion: 1 } }
+        : { ok: false, error: '不支援此 action' }) });
+      return;
+    }
+    if (body.action === 'syncLedgerChanges') {
+      for (const transaction of body.changes.transactions || []) {
+        if (transaction.feeMode === 'included' && transaction.fee > 0) transferWrites.push(transaction);
+        remoteTransactions.set(transaction.id, transaction);
+      }
+    }
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, data: body.action === 'loadLedgerState'
+      ? { schemaVersion: 1, accounts: [], transactions: [...remoteTransactions.values()], budgets: [] }
+      : { accountCount: 6, transactionCount: remoteTransactions.size, budgetCount: 0, featureSettingsVersion: 1, transferFeeModeVersion: 1 } }) });
+  });
+  await page.evaluate(() => {
+    localStorage.setItem('hukeep_device_binding_endpoint_v1', 'https://proxy.example/fee-mode');
+    localStorage.setItem('hukeep_device_binding_token_v1', 'fixture-token');
+  });
+  await page.reload();
+  await page.getByRole('button', { name: '快速記一筆' }).click();
+  await page.getByText('手動記帳', { exact: true }).click();
+  await page.getByRole('button', { name: '轉帳', exact: true }).click();
+  const form = page.locator('#transaction-form');
+  await form.getByLabel('名稱').fill('待同步內扣');
+  await form.getByLabel('金額').fill('10000');
+  await form.getByLabel('轉帳手續費', { exact: true }).fill('12');
+  await form.locator('[data-account-for="transaction-to-account"]').getByRole('button', { name: 'LINE' }).click();
+  await page.getByRole('button', { name: '儲存這筆' }).click();
+  await expect.poll(() => capabilityChecks.length).toBeGreaterThan(0);
+  const local = await page.evaluate(() => JSON.parse(localStorage.getItem('hukeep_personal_state_v1')).transactions[0]);
+  expect(local).toMatchObject({ feeMode: 'included', amount: 10000, fee: 12 });
+  expect(transferWrites).toHaveLength(0);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('hukeep_pending_sheet_changes_v1')).upserts)).toContain(local.id);
+  supportsMode = true;
+  await page.getByRole('button', { name: '備份與設定' }).click();
+  await page.getByRole('button', { name: '同步到 Google Sheet' }).click();
+  await expect.poll(() => transferWrites.length).toBe(1);
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('hukeep_pending_sheet_changes_v1')).upserts)).toEqual([]);
+  expect(transferWrites[0]).toMatchObject({ id: local.id, amount: 10000, fee: 12, feeMode: 'included' });
+  await page.reload();
+  await expect(page.locator('.account-item').filter({ hasText: 'LINE' })).toContainText('NT$ 9,988');
+  expect(remoteTransactions.size).toBe(1);
 });
 
 test('口語內容直接上傳 Sheet，不等待 AI 審查', async ({ page }) => {
@@ -316,13 +432,13 @@ test('口語投資買入只移動資產，手續費才計入生活支出', async
   await page.getByRole('button', { name: '直接記帳', exact: true }).click();
 
   await expect(page.getByTestId('summary-expense')).toContainText('20');
-  await expect(page.getByTestId('summary-investment-in')).toContainText('10,000');
+  await expect(page.getByTestId('summary-investment-in')).toContainText('9,980');
   await expect(page.getByTestId('total-assets')).toContainText('NT$ 12,871');
   const saved = await page.evaluate(() => JSON.parse(
     localStorage.getItem('hukeep_personal_state_v1'),
   ).transactions[0]);
   expect(saved).toMatchObject({
-    type: 'transfer', amount: 10000, fee: 20, account: 'sinopac', toAccount: 'investment',
+    type: 'transfer', amount: 10000, fee: 20, feeMode: 'included', account: 'sinopac', toAccount: 'investment',
     category: '投資', subcategory: 'ETF',
   });
 

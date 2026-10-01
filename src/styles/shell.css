@@ -189,6 +189,37 @@
   grid-column: 1 / -1;
 }
 
+.transfer-fee-fields {
+  margin-bottom: 15px;
+}
+
+.transfer-preview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  font-size: 12px;
+}
+
+.transfer-preview:empty {
+  display: none;
+}
+
+.transfer-preview span {
+  display: grid;
+  gap: 4px;
+}
+
+.transfer-preview small {
+  color: var(--muted);
+}
+
+.transfer-preview strong {
+  white-space: nowrap;
+}
+
 .account-choice-field {
   min-width: 0;
   margin: 0;

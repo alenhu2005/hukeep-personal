@@ -3,6 +3,7 @@ import {
   ValidationError,
   createTransaction,
   filterTransactions,
+  normalizeStoredTransaction,
   removeTransaction,
   updateTransaction,
 } from '../src/domain/transactions.js';
@@ -94,6 +95,31 @@ describe('createTransaction', () => {
       expense({ type: 'transfer', account: 'cash', toAccount: 'bank', fee: -1 }),
       fixedOptions,
     )).toThrow('手續費');
+  });
+
+  it('保存手續費模式、保留舊轉帳預設且拒絕無效內扣資料', () => {
+    const base = { type: 'transfer', amount: 10000, account: 'cash', toAccount: 'bank', date: '2026-08-28' };
+    const included = createTransaction({ ...base, fee: 12, feeMode: 'included' }, fixedOptions);
+    const legacy = normalizeStoredTransaction({ id: 'legacy', ...base, fee: 12 });
+
+    expect(included).toMatchObject({ amount: 10000, fee: 12, feeMode: 'included' });
+    expect(legacy).not.toHaveProperty('feeMode');
+    expect(() => createTransaction({ ...base, fee: 10000, feeMode: 'included' }, fixedOptions)).toThrow('小於金額');
+    expect(() => createTransaction({ ...base, feeMode: 'sometimes' }, fixedOptions)).toThrow('模式');
+    expect(normalizeStoredTransaction({ id: 'bad-fee', ...base, fee: 10000, feeMode: 'included' })).toBeNull();
+  });
+
+  it('把轉帳改成支出時移除手續費與模式', () => {
+    const transfer = createTransaction({
+      type: 'transfer', amount: 1000, fee: 12, feeMode: 'included', account: 'cash', toAccount: 'bank', date: '2026-08-28',
+    }, fixedOptions);
+    const [expenseResult] = updateTransaction([transfer], transfer.id, {
+      type: 'expense', category: '帳單',
+    });
+
+    expect(expenseResult).toMatchObject({ type: 'expense', category: '帳單', amount: 1000 });
+    expect(expenseResult).not.toHaveProperty('fee');
+    expect(expenseResult).not.toHaveProperty('feeMode');
   });
 
   it('投資資產轉帳會保留投資大分類與小分類', () => {

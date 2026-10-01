@@ -168,6 +168,23 @@ describe('calculateAccountBalances', () => {
     expect(calculateTotalAssets(balances)).toBe(985);
   });
 
+  it('內含手續費由轉入帳戶實收，舊記錄仍用額外扣款', () => {
+    const accounts = [
+      { id: 'cash', openingBalance: 20000 },
+      { id: 'bank', openingBalance: 0 },
+    ];
+    const included = [{ type: 'transfer', amount: 10000, fee: 12, feeMode: 'included', account: 'cash', toAccount: 'bank', date: '2026-08-03' }];
+    const legacy = [{ type: 'transfer', amount: 10000, fee: 12, account: 'cash', toAccount: 'bank', date: '2026-08-03' }];
+
+    expect(calculateAccountBalances(accounts, included)).toEqual([
+      { id: 'cash', balance: 10000 }, { id: 'bank', balance: 9988 },
+    ]);
+    expect(calculateAccountBalances(accounts, legacy)).toEqual([
+      { id: 'cash', balance: 9988 }, { id: 'bank', balance: 10000 },
+    ]);
+    expect(summarizeMonth(included, '2026-08')).toMatchObject({ expense: 12, balance: -12 });
+  });
+
   it('投資本金只在現金與投資資產間移動，只有手續費降低總資產', () => {
     const accounts = [
       { id: 'sinopac', openingBalance: 20000 },

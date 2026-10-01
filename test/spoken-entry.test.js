@@ -210,6 +210,27 @@ describe('口語記帳解析', () => {
     });
   });
 
+  it.each([
+    ['從永豐轉 10000 元到郵局，手續費12另扣', 'additional'],
+    ['從永豐轉 10000 元到郵局，手續費12外加', 'additional'],
+    ['從永豐轉 10000 元到郵局，手續費12另外收', 'additional'],
+    ['從永豐轉 10000 元到郵局，手續費12額外扣', 'additional'],
+    ['從永豐轉 10000 元到郵局，手續費另扣12', 'additional'],
+    ['從永豐轉 10000 元到郵局，手續費另外扣12', 'additional'],
+    ['從永豐轉 10000 元到郵局，手續費另收12', 'additional'],
+    ['從永豐轉 10000 元到郵局，手續費另外收12', 'additional'],
+    ['從永豐轉 10000 元到郵局，手續費額外收12', 'additional'],
+    ['從永豐轉 10000 元到郵局，手續費內扣12', 'included'],
+    ['從永豐轉 10000 元到郵局，手續費12內扣', 'included'],
+    ['從永豐轉 10000 元到郵局，手續費12含手續費', 'included'],
+    ['從永豐轉 10000 元到郵局，手續費12從金額扣', 'included'],
+    ['從永豐轉 10000 元到郵局，手續費12', 'included'],
+  ])('辨識轉帳手續費模式與無單位費用 %#', (text, feeMode) => {
+    expect(parseSpokenTransaction(text, { today })).toMatchObject({
+      type: 'transfer', amount: 10000, fee: 12, feeMode,
+    });
+  });
+
   it('把投資買入與賣出辨識為投資資產移轉', () => {
     expect(parseSpokenTransaction('今天買 0050 ETF 3000 元用永豐', { today })).toMatchObject({
       type: 'transfer',

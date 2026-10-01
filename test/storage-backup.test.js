@@ -346,6 +346,13 @@ describe('備份', () => {
     expect(csv).toContain("\"'=SUM(1,2) 「午餐」\"");
   });
 
+  it('CSV 保留內扣／外加模式，未指定的舊轉帳為外加', () => {
+    const transfer = { type: 'transfer', name: '轉帳', amount: 10000, fee: 12, account: 'cash', toAccount: 'line', date: '2026-10-01' };
+    const csv = transactionsToCsv([{ ...transfer, feeMode: 'included' }, transfer]);
+    expect(csv).toContain('手續費方式');
+    expect(csv.split('\r\n').slice(1).map(row => row.split(',').at(-1))).toEqual(['內扣', '外加']);
+  });
+
   it('還原預覽在狀態相同時回報零變更', () => {
     expect(previewBackupRestore(state, parseBackup(serializeBackup(state)))).toEqual({
       transactions: { added: 0, changed: 0, removed: 0 },

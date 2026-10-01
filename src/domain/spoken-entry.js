@@ -138,13 +138,20 @@ function parseAmount(text) {
   return null;
 }
 
-function parseTransferFee(text) {
+const TRANSFER_FEE_QUALIFIER_PATTERN = '(?:另扣|另外扣|另收|另外收|外加|額外扣|額外收|內扣|含手續費|從金額扣)';
+
+function transferFeePatterns(flags = '') {
   const feeTerms = '(?:手續費|轉帳費|匯費)';
   const unit = '(?:元|圓|塊(?:錢)?)?';
-  const patterns = [
-    new RegExp(`${feeTerms}\\s*(?:為|是|共)?\\s*(${AMOUNT_TOKEN_PATTERN})\\s*${unit}`),
-    new RegExp(`(${AMOUNT_TOKEN_PATTERN})\\s*${unit}\\s*${feeTerms}`),
+  const qualifier = `(?:${TRANSFER_FEE_QUALIFIER_PATTERN}\\s*)?`;
+  return [
+    new RegExp(`${feeTerms}\\s*(?:為|是|共)?\\s*${qualifier}(${AMOUNT_TOKEN_PATTERN})\\s*${unit}\\s*${qualifier}`, flags),
+    new RegExp(`(${AMOUNT_TOKEN_PATTERN})\\s*${unit}\\s*${qualifier}${feeTerms}\\s*${qualifier}`, flags),
   ];
+}
+
+function parseTransferFee(text) {
+  const patterns = transferFeePatterns();
   for (const pattern of patterns) {
     const match = text.match(pattern);
     const fee = numberFromAmountToken(match?.[1] || '');
@@ -153,12 +160,12 @@ function parseTransferFee(text) {
   return 0;
 }
 
+function spokenTransferFeeMode(text) {
+  return /(?:另扣|另外扣|另收|另外收|外加|額外扣|額外收)/.test(text) ? 'additional' : 'included';
+}
+
 function withoutTransferFee(text) {
-  const feeTerms = '(?:手續費|轉帳費|匯費)';
-  const unit = '(?:元|圓|塊(?:錢)?)?';
-  return text
-    .replace(new RegExp(`${feeTerms}\\s*(?:為|是|共)?\\s*${AMOUNT_TOKEN_PATTERN}\\s*${unit}`, 'g'), ' ')
-    .replace(new RegExp(`${AMOUNT_TOKEN_PATTERN}\\s*${unit}\\s*${feeTerms}`, 'g'), ' ');
+  return transferFeePatterns('g').reduce((result, pattern) => result.replace(pattern, ' '), text);
 }
 
 function shiftDate(dateText, days) {
@@ -348,6 +355,7 @@ function multiItemDrafts(transcript, options) {
       transcript,
       type: resolvedType,
       amount: item.amount,
+      ...(resolvedType === 'transfer' ? { feeMode: spokenTransferFeeMode(transcript) } : {}),
       date,
       account: sourceAccount,
       toAccount: destinationAccount,
@@ -404,6 +412,7 @@ function parseSingleSpokenTransaction(value, options = {}) {
       type: 'transfer',
       amount,
       fee: parseTransferFee(transcript),
+      feeMode: spokenTransferFeeMode(transcript),
       date,
       account: sourceAccount,
       toAccount: destinationAccount,
@@ -424,6 +433,7 @@ function parseSingleSpokenTransaction(value, options = {}) {
       type,
       amount,
       fee: parseTransferFee(transcript),
+      feeMode: spokenTransferFeeMode(transcript),
       date,
       account: accountFromText(sourceText, 'sinopac'),
       toAccount: accountFromText(destinationText, 'cash'),

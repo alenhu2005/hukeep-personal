@@ -30,7 +30,7 @@ var INCOME_TAXONOMY = {
 var LEDGER_TRANSACTION_HEADERS = [
   'ID', '類型', '名稱', '金額', '大分類', '小分類', '帳戶', '目的帳戶', '日期', '備註', '來源',
   '來源ID', '發票號碼', '商家', '發票品項', '建立時間', '更新時間', '使用者修改時間', '匯入時間',
-  'AI審查狀態', 'AI審查時間', '口語原文', '手續費', '群組ID', 'AI修正紀錄', '收據ID', '收據名稱'
+  'AI審查狀態', 'AI審查時間', '口語原文', '手續費', '群組ID', 'AI修正紀錄', '收據ID', '收據名稱', '手續費方式'
 ];
 var SPOKEN_QUEUE_HEADERS = ['佇列ID', '口語原文', '送出時間', '狀態', '交易ID', '錯誤', '更新時間', '重試次數'];
 var ACCOUNT_IDS = ['cash', 'line', 'sinopac', 'bot', 'post', 'investment'];
@@ -63,6 +63,9 @@ function doPost(event) {
       return jsonOutput_({ ok: true, data: claimDeviceBinding_(body.code) });
     }
     authorize_(body.proxyToken);
+    if (body.action === 'getLedgerCapabilities') {
+      return jsonOutput_({ ok: true, data: getLedgerCapabilities_() });
+    }
     if (body.action === 'createDevicePairingCode') {
       return jsonOutput_({ ok: true, data: createDevicePairingCode_() });
     }
@@ -102,6 +105,10 @@ function doPost(event) {
 function authorize_(providedToken) {
   var expectedToken = requiredProperty_('PROXY_TOKEN');
   if (!providedToken || String(providedToken) !== expectedToken) throw new Error('代理通行碼不正確');
+}
+
+function getLedgerCapabilities_() {
+  return { transferFeeModeVersion: 1 };
 }
 
 
@@ -232,6 +239,7 @@ function syncLedgerState_(state) {
     transactionCount: transactions.length,
     budgetCount: budgets.length,
     syncedAt: syncedAt,
+    transferFeeModeVersion: 1,
   };
 }
 
@@ -293,6 +301,7 @@ function syncLedgerChanges_(changes) {
       budgetCount: countBudgetRows_(settingsSheet),
       syncedAt: syncedAt,
       featureSettingsVersion: 1,
+      transferFeeModeVersion: 1,
     };
   } finally {
     lock.releaseLock();
@@ -439,10 +448,19 @@ function investmentBalanceEffect_(transaction) {
   if (transaction.type === 'income' && transaction.account === 'investment') return amount;
   if (transaction.type === 'expense' && transaction.account === 'investment') return -amount;
   if (transaction.type !== 'transfer') return 0;
-  if (transaction.toAccount === 'investment') return amount;
-  if (transaction.account !== 'investment') return 0;
-  var fee = Number(transaction.fee);
-  return -(amount + (Number.isSafeInteger(fee) && fee > 0 ? fee : 0));
+  var amounts = transferAmounts_(transaction);
+  if (transaction.toAccount === 'investment') return amounts.credit;
+  if (transaction.account === 'investment') return -amounts.debit;
+  return 0;
+}
+
+function transferAmounts_(transaction) {
+  var amount = Number(transaction && transaction.amount) || 0;
+  var fee = Number(transaction && transaction.fee);
+  fee = Number.isSafeInteger(fee) && fee > 0 ? fee : 0;
+  return transaction && transaction.feeMode === 'included'
+    ? { debit: amount, credit: amount - fee }
+    : { debit: amount + fee, credit: amount };
 }
 
 function canonicalInvestmentOpeningBalance_(transactions) {
@@ -493,11 +511,17 @@ function ledgerTransactionRows_(transactions) {
 }
 
 function ledgerTransactionRow_(transaction) {
+  var amount = sheetInteger_(transaction.amount, '交易金額', false);
+  var fee = sheetInteger_(transaction.fee || 0, '轉帳手續費', false);
+  var feeMode = transaction.type === 'transfer'
+    ? normalizedTransferFeeMode_(transaction.feeMode, 'additional')
+    : '';
+  if (feeMode === 'included' && fee >= amount) throw new Error('含手續費時，手續費必須小於金額');
   return [
     safeSheetText_(transaction.id, 80),
     safeSheetText_(transaction.type, 16),
     safeSheetText_(transaction.name, 120),
-    sheetInteger_(transaction.amount, '交易金額', false),
+    amount,
     safeSheetText_(transaction.category, 60),
     safeSheetText_(transaction.subcategory, 60),
     safeSheetText_(transaction.account, 40),
@@ -516,11 +540,12 @@ function ledgerTransactionRow_(transaction) {
     safeSheetText_(transaction.aiStatus, 24),
     safeSheetText_(transaction.aiReviewedAt, 40),
     safeSheetText_(transaction.rawTranscript, 240),
-    sheetInteger_(transaction.fee || 0, '轉帳手續費', false),
+    fee,
     safeSheetText_(transaction.groupId, 80),
     safeSheetText_(JSON.stringify(transaction.aiChanges || []), 5000),
     safeSheetText_(transaction.receiptId, 160),
     safeSheetText_(transaction.receiptName, 160),
+    safeSheetText_(feeMode, 16),
   ];
 }
 
@@ -800,6 +825,7 @@ function enqueueSpokenEntry_(body) {
     status: 'pending',
     transaction: transactions[0] && transactions[0].amount > 0 ? transactions[0] : null,
     transactions: transactions.filter(function (transaction) { return transaction.amount > 0; }),
+    transferFeeModeVersion: 1,
   };
 }
 
@@ -884,6 +910,10 @@ function normalizeSpokenDraft_(draft, transcript, queueId, now, groupId) {
     : '';
   if (type !== 'transfer' || toAccount === account) toAccount = '';
   var fee = type === 'transfer' ? normalizedTransferFee_(value.fee, 0) : 0;
+  var feeMode = type === 'transfer' ? normalizedTransferFeeMode_(value.feeMode, 'additional') : '';
+  if (feeMode === 'included' && amount > 0 && fee >= amount) {
+    throw new Error('含手續費時，手續費必須小於金額');
+  }
   var classification = normalizeSpokenClassification_(
     type,
     value.category,
@@ -914,7 +944,10 @@ function normalizeSpokenDraft_(draft, transcript, queueId, now, groupId) {
     rawTranscript: transcript,
   };
   if (groupId) transaction.groupId = groupId;
-  if (fee > 0) transaction.fee = fee;
+  if (type === 'transfer') {
+    transaction.feeMode = feeMode;
+    if (fee > 0) transaction.fee = fee;
+  }
   return transaction;
 }
 
@@ -1154,7 +1187,10 @@ function ledgerTransactionFromRow_(row) {
     receiptName: boundedText_(row[26], 160),
   };
   var fee = normalizedTransferFee_(row[22], 0);
-  if (transaction.type === 'transfer' && fee > 0) transaction.fee = fee;
+  if (transaction.type === 'transfer') {
+    transaction.feeMode = normalizedTransferFeeMode_(row[27], 'additional');
+    if (fee > 0) transaction.fee = fee;
+  }
   if (aiChanges.length) transaction.aiChanges = aiChanges;
   return transaction;
 }
@@ -1176,7 +1212,7 @@ function reviewSpokenEntry_(transcript, fallback) {
     '股息、配息、利息是投資收入；證券手續費、交易稅、投資課程、看盤工具仍是支出。',
     '今天（Asia/Taipei）：' + Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd'),
     '帳戶只能用 cash、line、sinopac、bot、post、investment。轉帳必須有不同的 account 與 toAccount；非轉帳的 toAccount 請填與 account 相同。',
-    '手續費只會在轉帳時套用；未提及時 fee 請填 0。',
+    '轉帳手續費只會用在轉帳；未提及時 fee 請填 0。若提到「內扣」或「含手續費」，feeMode 填 included；若提到「外加」、「另扣」或「額外收」，feeMode 填 additional。草稿已有明確 feeMode 時必須保留。',
     taxonomyText,
     '本機草稿（僅供交叉檢查）：' + JSON.stringify(fallback || {}),
     '口語原文：' + transcript,
@@ -1187,6 +1223,7 @@ function reviewSpokenEntry_(transcript, fallback) {
       type: { type: 'STRING', enum: ['expense', 'income', 'transfer'] },
       amount: { type: 'NUMBER', minimum: 0, maximum: 1000000000000 },
       fee: { type: 'NUMBER', minimum: 0, maximum: 1000000000000 },
+      feeMode: { type: 'STRING', enum: ['included', 'additional'] },
       date: { type: 'STRING' },
       account: { type: 'STRING', enum: ACCOUNT_IDS },
       toAccount: { type: 'STRING', enum: ACCOUNT_IDS },
@@ -1196,7 +1233,7 @@ function reviewSpokenEntry_(transcript, fallback) {
       subcategory: { type: 'STRING' },
       confidence: { type: 'NUMBER', minimum: 0, maximum: 1 },
     },
-    required: ['type', 'amount', 'fee', 'date', 'account', 'toAccount', 'name', 'note', 'category', 'subcategory', 'confidence'],
+    required: ['type', 'amount', 'fee', 'feeMode', 'date', 'account', 'toAccount', 'name', 'note', 'category', 'subcategory', 'confidence'],
   };
   var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + encodeURIComponent(apiKey);
   var response = UrlFetchApp.fetch(url, {
@@ -1282,6 +1319,13 @@ function validateSpokenReview_(review, fallback, transcript) {
   var fee = type === 'transfer'
     ? normalizedTransferFee_(review && review.fee, fallback && fallback.fee)
     : 0;
+  var fallbackFeeMode = fallback && fallback.feeMode;
+  var feeMode = type === 'transfer'
+    ? (fallbackFeeMode === 'included' || fallbackFeeMode === 'additional'
+      ? fallbackFeeMode
+      : normalizedTransferFeeMode_(review && review.feeMode, 'additional'))
+    : '';
+  if (feeMode === 'included' && fee >= amount) throw new Error('含手續費時，手續費必須小於金額');
   var classification = normalizeSpokenClassification_(
     type,
     preserveInvestmentTransfer ? fallback && fallback.category : review && review.category,
@@ -1317,7 +1361,10 @@ function validateSpokenReview_(review, fallback, transcript) {
     aiReviewedAt: now,
     rawTranscript: transcript,
   };
-  if (fee > 0) transaction.fee = fee;
+  if (type === 'transfer') {
+    transaction.feeMode = feeMode;
+    if (fee > 0) transaction.fee = fee;
+  }
   var groupId = boundedText_(fallback && fallback.groupId, 80);
   if (groupId) transaction.groupId = groupId;
   var aiChanges = aiChangeLog_(fallback, transaction);
@@ -1337,6 +1384,7 @@ function aiChangeLog_(fallback, reviewed) {
     ['小分類', 'subcategory'],
     ['備註', 'note'],
     ['手續費', 'fee'],
+    ['手續費方式', 'feeMode'],
   ];
   return fields.reduce(function (result, field) {
     var before = boundedText_(fallback && fallback[field[1]], 120);
@@ -1352,6 +1400,12 @@ function normalizedTransferFee_(value, fallback) {
     fee = Number(fallback);
   }
   return Number.isSafeInteger(fee) && fee >= 0 && fee <= 1000000000000 ? fee : 0;
+}
+
+function normalizedTransferFeeMode_(value, fallback) {
+  if (value === 'included' || value === 'additional') return value;
+  if (value == null || value === '') return fallback || 'additional';
+  throw new Error('手續費模式格式不正確');
 }
 
 function finishSpokenEntry_(job, reviewed) {

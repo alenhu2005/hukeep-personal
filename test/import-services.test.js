@@ -223,7 +223,77 @@ describe('智慧匯入代理', () => {
       id: 'transfer-1',
       amount: 300,
       fee: 15,
+      feeMode: 'additional',
     });
+  });
+
+  it('同步內扣手續費前先確認 GAS 支援，且保存版本回應', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, data: { transferFeeModeVersion: 1 } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, data: {
+        accountCount: 2, transactionCount: 1, budgetCount: 0, transferFeeModeVersion: 1,
+      } }) });
+    await syncLedgerStateToSheet({
+      endpoint: 'https://included-sync.example.com/proxy',
+      proxyToken: 'included-sync-token',
+      state: { accounts: [], budgets: [], transactions: [{
+        id: 'included-transfer', type: 'transfer', amount: 10000, fee: 12, feeMode: 'included',
+        account: 'sinopac', toAccount: 'post', date: '2026-08-29', name: '轉帳',
+      }] },
+    }, { fetchImpl });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).action).toBe('getLedgerCapabilities');
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body).state.transactions[0]).toMatchObject({
+      amount: 10000, fee: 12, feeMode: 'included',
+    });
+  });
+
+  it('同步拒絕無效內扣費用，且不送出請求', async () => {
+    const fetchImpl = vi.fn();
+    await expect(syncLedgerStateToSheet({
+      endpoint: 'https://invalid-included.example.com/proxy',
+      proxyToken: 'invalid-included-token',
+      state: { accounts: [], budgets: [], transactions: [{
+        id: 'invalid-included', type: 'transfer', amount: 12, fee: 12, feeMode: 'included',
+        account: 'sinopac', toAccount: 'post', date: '2026-08-29', name: '轉帳',
+      }] },
+    }, { fetchImpl })).rejects.toThrow('必須小於金額');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('舊 GAS 不支援內扣模式時不送出同步寫入，並保留可採取的錯誤', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: false, error: '不支援的操作' }),
+    });
+    await expect(syncLedgerStateToSheet({
+      endpoint: 'https://old-gas-sync.example.com/proxy',
+      proxyToken: 'old-gas-sync-token',
+      state: { accounts: [], budgets: [], transactions: [{
+        id: 'included-transfer-old-gas', type: 'transfer', amount: 10000, fee: 12, feeMode: 'included',
+        account: 'sinopac', toAccount: 'post', date: '2026-08-29', name: '轉帳',
+      }] },
+    }, { fetchImpl })).rejects.toThrow('請先更新 GAS 程式');
+
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).action).toBe('getLedgerCapabilities');
+  });
+
+  it('內扣語音轉帳先做能力檢查，並拒絕未確認的新版本回應', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, data: { transferFeeModeVersion: 1 } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, data: { queueId: 'queue-included', status: 'pending' } }) });
+    await expect(enqueueSpokenEntry({
+      endpoint: 'https://included-enqueue.example.com/proxy',
+      proxyToken: 'included-enqueue-token',
+      transcript: '含手續費轉帳一萬元，手續費十二元',
+      draft: { type: 'transfer', amount: 10000, fee: 12, feeMode: 'included', account: 'sinopac', toAccount: 'post' },
+    }, { fetchImpl })).rejects.toThrow('本機紀錄仍待同步');
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetchImpl.mock.calls[0][1].body).action).toBe('getLedgerCapabilities');
+    expect(JSON.parse(fetchImpl.mock.calls[1][1].body).draft).toMatchObject({ feeMode: 'included', fee: 12 });
   });
 
   it('自動同步只送出異動的預算、帳戶與交易，避免覆蓋其他裝置資料', async () => {

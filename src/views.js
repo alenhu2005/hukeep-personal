@@ -63,7 +63,7 @@ export function transactionRows(transactions, accounts, options = {}) {
           : [transaction.category, transaction.subcategory].filter(Boolean).join(' · ');
       const transferFee =
         transaction.type === 'transfer' && Number.isInteger(transaction.fee) && transaction.fee > 0
-          ? `手續費 ${formatMoney(transaction.fee)}`
+          ? `${transaction.feeMode === 'included' ? '內扣' : '外加'}手續費 ${formatMoney(transaction.fee)}`
           : '';
       const primaryName =
         transaction.name || transaction.note || label || TYPE_LABELS[transaction.type];

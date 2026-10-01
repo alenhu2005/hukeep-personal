@@ -1,5 +1,6 @@
 import { expenseAmount, expenseCategory, isAccountingAdjustment } from './insights.js';
 import { investmentDirection, isInvestmentTransfer, summarizeInvestmentFlows } from './investment-accounting.js';
+import { transferAmounts } from './transfer-fees.js';
 
 function dateFromText(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value ?? ''))
@@ -271,10 +272,10 @@ export function buildAnalysisWorkspace(transactions, options = {}) {
         investmentDirection(transaction) && (transaction.subcategory || '其他投資') === subcategory);
       const contributed = members
         .filter(transaction => investmentDirection(transaction) === 'contributed')
-        .reduce((sum, transaction) => sum + transaction.amount, 0);
+        .reduce((sum, transaction) => sum + transferAmounts(transaction).credit, 0);
       const withdrawn = members
         .filter(transaction => investmentDirection(transaction) === 'withdrawn')
-        .reduce((sum, transaction) => sum + transaction.amount, 0);
+        .reduce((sum, transaction) => sum + transferAmounts(transaction).credit, 0);
       return { subcategory, contributed, withdrawn, net: contributed - withdrawn, count: members.length };
     })
     .toSorted((left, right) => Math.abs(right.net) - Math.abs(left.net) || left.subcategory.localeCompare(right.subcategory));

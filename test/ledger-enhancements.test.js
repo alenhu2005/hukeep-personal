@@ -165,6 +165,24 @@ describe('帳本補強功能', () => {
     expect(created[0]).toMatchObject({ type: 'transfer', toAccount: 'line', fee: 15, source: 'recurring' });
   });
 
+  it('正規化固定轉帳手續費模式，保留明確模式且舊規則維持額外扣款', () => {
+    const base = {
+      id: 'move', name: '轉存', type: 'transfer', amount: 1000, fee: 12,
+      account: 'cash', toAccount: 'line', cadence: 'weekly', day: 1, startDate: '2026-08-25',
+    };
+    const rules = normalizeFeatureSettings({ recurringRules: [
+      { ...base, feeMode: 'included' },
+      { ...base, id: 'legacy' },
+      { ...base, id: 'bad-mode', feeMode: 'sometimes' },
+      { ...base, id: 'bad-fee', amount: 12, feeMode: 'included' },
+    ] }).recurringRules;
+    const created = applyRecurringRules(rules, [], '2026-08-25').created;
+
+    expect(rules.map(rule => rule.id)).toEqual(['move', 'legacy']);
+    expect(created[0]).toMatchObject({ id: 'recurring:move:2026-08-25', feeMode: 'included' });
+    expect(created[1]).not.toHaveProperty('feeMode');
+  });
+
   it('不對沒有重複或剛好在門檻上的資料發出警示', () => {
     const signals = findTransactionSignals([
       { id: 'a', type: 'expense', name: '午餐!', amount: 100, category: '飲食', account: 'cash', date: '2026-08-01' },

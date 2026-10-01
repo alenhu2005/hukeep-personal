@@ -1,3 +1,5 @@
+import { transferAmounts } from './transfer-fees.js';
+
 export const INVESTMENT_ACCOUNT_ID = 'investment';
 export const INVESTMENT_OPENING_ASSET = 12_891;
 export const INVESTMENT_SNAPSHOT_DATE = '2026-09-18';
@@ -44,10 +46,10 @@ function investmentBalanceEffect(transaction) {
   if (transaction.type === 'income' && transaction.account === INVESTMENT_ACCOUNT_ID) return amount;
   if (transaction.type === 'expense' && transaction.account === INVESTMENT_ACCOUNT_ID) return -amount;
   if (transaction.type !== 'transfer') return 0;
-  if (transaction.toAccount === INVESTMENT_ACCOUNT_ID) return amount;
+  const { debit, credit } = transferAmounts(transaction);
+  if (transaction.toAccount === INVESTMENT_ACCOUNT_ID) return credit;
   if (transaction.account !== INVESTMENT_ACCOUNT_ID) return 0;
-  const fee = Number(transaction.fee);
-  return -(amount + (Number.isSafeInteger(fee) && fee > 0 ? fee : 0));
+  return -debit;
 }
 
 function snapshotInvestmentFlow(transactions) {
@@ -101,11 +103,12 @@ export function summarizeInvestmentFlows(transactions) {
     const direction = investmentDirection(transaction);
     const amount = Number(transaction?.amount);
     if (!direction || !Number.isInteger(amount) || amount <= 0) return summary;
+    const flowAmount = transferAmounts(transaction).credit;
     const subcategory = transaction.subcategory || '其他投資';
-    const signedAmount = direction === 'contributed' ? amount : -amount;
+    const signedAmount = direction === 'contributed' ? flowAmount : -flowAmount;
     return {
-      contributed: summary.contributed + (direction === 'contributed' ? amount : 0),
-      withdrawn: summary.withdrawn + (direction === 'withdrawn' ? amount : 0),
+      contributed: summary.contributed + (direction === 'contributed' ? flowAmount : 0),
+      withdrawn: summary.withdrawn + (direction === 'withdrawn' ? flowAmount : 0),
       net: summary.net + signedAmount,
       count: summary.count + 1,
       bySubcategory: {

@@ -13,7 +13,7 @@ function csvCell(value) {
 }
 
 export function transactionsToCsv(transactions) {
-  const header = ['類型', '名稱', '金額', '手續費', '分類', '帳戶', '目的帳戶', '日期', '備註', '小分類', '來源', '發票號碼'];
+  const header = ['類型', '名稱', '金額', '手續費', '分類', '帳戶', '目的帳戶', '日期', '備註', '小分類', '來源', '發票號碼', '手續費方式'];
   const rows = transactions.map(transaction =>
     [
       transaction.type,
@@ -28,6 +28,7 @@ export function transactionsToCsv(transactions) {
       transaction.subcategory ?? '',
       transaction.source ?? 'manual',
       transaction.invoiceNumber ?? '',
+      transaction.type === 'transfer' ? transaction.feeMode === 'included' ? '內扣' : '外加' : '',
     ]
       .map(csvCell)
       .join(','),

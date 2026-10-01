@@ -1,3 +1,5 @@
+import { transferAmounts } from './transfer-fees.js';
+
 function inMonth(transaction, month) {
   return transaction?.date?.startsWith(month);
 }
@@ -10,15 +12,10 @@ export function isAccountingAdjustment(transaction) {
   return transaction?.category === '帳務調整' && transaction?.source === 'manual';
 }
 
-function transferFee(transaction) {
-  const fee = Number(transaction?.fee);
-  return Number.isInteger(fee) && fee > 0 ? fee : 0;
-}
-
 export function expenseAmount(transaction) {
   if (!validAmount(transaction) || isAccountingAdjustment(transaction)) return 0;
   if (transaction.type === 'expense') return transaction.amount;
-  return transaction.type === 'transfer' ? transferFee(transaction) : 0;
+  return transaction.type === 'transfer' ? transferAmounts(transaction).fee : 0;
 }
 
 export function expenseCategory(transaction) {
@@ -104,8 +101,9 @@ export function calculateAccountBalances(accounts, transactions) {
     } else if (transaction.type === 'expense' && transaction.account in balances) {
       balances[transaction.account] -= transaction.amount;
     } else if (transaction.type === 'transfer') {
-      if (transaction.account in balances) balances[transaction.account] -= transaction.amount + transferFee(transaction);
-      if (transaction.toAccount in balances) balances[transaction.toAccount] += transaction.amount;
+      const { debit, credit } = transferAmounts(transaction);
+      if (transaction.account in balances) balances[transaction.account] -= debit;
+      if (transaction.toAccount in balances) balances[transaction.toAccount] += credit;
     }
   }
 

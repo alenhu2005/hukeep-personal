@@ -5,6 +5,7 @@ import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from './config.js';
 import { updateOpeningBalances } from './domain/accounts.js';
 import { removeBudget, upsertBudget } from './domain/budgets.js';
 import { calculateAccountBalances } from './domain/insights.js';
+import { transferAmounts } from './domain/transfer-fees.js';
 import {
   classifyIncomeLocally,
   classifyLocally,
@@ -603,6 +604,23 @@ export function createApp() {
     if (!transfer) setSubcategoryOptions(type, selectedSubcategory);
     setClassificationVisibility(type, Boolean(options.classificationReady));
     updateDestinationAccounts();
+    updateTransferPreview(transactionForm, document.querySelector('#transfer-preview'));
+  }
+
+  function updateTransferPreview(form, output) {
+    const amount = Number(form.elements.amount.value);
+    const fee = Number(form.elements.fee.value || 0);
+    const transfer = form.elements.type.value === 'transfer';
+    const invalidIncludedFee = transfer && amount > 0 && form.elements.feeMode.value === 'included' && fee >= amount;
+    form.elements.fee.setCustomValidity(invalidIncludedFee ? '內扣手續費必須小於轉帳金額' : '');
+    if (!transfer) return;
+    if (!Number.isSafeInteger(amount) || amount <= 0 || !Number.isSafeInteger(fee) || fee < 0 || invalidIncludedFee) {
+      output.textContent = invalidIncludedFee ? '內扣手續費必須小於轉帳金額' : '';
+      return;
+    }
+    const amounts = transferAmounts({ amount, fee, feeMode: form.elements.feeMode.value });
+    output.innerHTML = [['總扣款', amounts.debit], ['實收', amounts.credit], ['手續費', amounts.fee]]
+      .map(([label, value]) => `<span><small>${label}</small><strong>${escapeHtml(formatMoney(value))}</strong></span>`).join('');
   }
 
   function updateDestinationAccounts(selected = '') {
@@ -619,6 +637,7 @@ export function createApp() {
     transactionForm.elements.name.value = transaction?.name || transaction?.note || '';
     transactionForm.elements.amount.value = transaction?.amount || '';
     transactionForm.elements.fee.value = transaction?.fee || '';
+    transactionForm.elements.feeMode.value = transaction?.type === 'transfer' ? transaction.feeMode || 'additional' : 'included';
     transactionForm.elements.date.value = transaction?.date || todayInTaipei();
     transactionForm.elements.note.value = transaction?.note || '';
     setAccountOptions(transactionForm.elements.account, transaction?.account || 'cash');
@@ -994,6 +1013,7 @@ export function createApp() {
     if (!transaction) return;
     const accounts = Object.fromEntries(state.accounts.map(account => [account.id, account.name]));
     const isTransfer = transaction.type === 'transfer';
+    const transfer = isTransfer ? transferAmounts(transaction) : null;
     const category = isTransfer
       ? '轉帳'
       : [transaction.category, transaction.subcategory].filter(Boolean).join(' · ') || '未分類';
@@ -1021,7 +1041,8 @@ export function createApp() {
         <div><dt>交易日期</dt><dd>${escapeHtml(transaction.date)}</dd></div>
         <div><dt>備註</dt><dd>${escapeHtml(transaction.note || '—')}</dd></div>
         ${attentionReasons.length ? `<div><dt>需確認原因</dt><dd>${escapeHtml(attentionReasons.join('、'))}</dd></div>` : ''}
-        ${transaction.fee ? `<div><dt>轉帳手續費</dt><dd>${escapeHtml(formatMoney(transaction.fee))}</dd></div>` : ''}
+        ${transfer ? `<div><dt>總扣款</dt><dd>${escapeHtml(formatMoney(transfer.debit))}</dd></div><div><dt>實收</dt><dd>${escapeHtml(formatMoney(transfer.credit))}</dd></div>` : ''}
+        ${transaction.fee ? `<div><dt>轉帳手續費</dt><dd>${transaction.feeMode === 'included' ? '內扣' : '外加'} ${escapeHtml(formatMoney(transaction.fee))}</dd></div>` : ''}
         ${groupCount > 1 ? `<div><dt>同段記帳</dt><dd>${groupCount} 筆</dd></div>` : ''}
         <div><dt>AI 審查</dt><dd>${escapeHtml(transaction.aiStatus === 'confirmed' ? '已人工確認' : transaction.aiStatus === 'reviewed' ? '已審查' : transaction.aiStatus === 'pending' ? '待審查' : '—')}</dd></div>
         ${aiChanges.length ? `<div><dt>AI 修正</dt><dd>${aiChanges.map(change => `${escapeHtml(change.field)}：${escapeHtml(change.before)} → ${escapeHtml(change.after)}`).join('<br />')}</dd></div>` : ''}
@@ -1315,6 +1336,10 @@ export function createApp() {
     form.querySelector('.recurring-category').hidden = transfer;
     form.querySelector('.recurring-to-account').hidden = !transfer;
     form.querySelector('.recurring-fee').hidden = !transfer;
+    form.querySelector('.recurring-fee-mode').hidden = !transfer;
+    const preview = document.querySelector('#recurring-transfer-preview');
+    preview.hidden = !transfer;
+    updateTransferPreview(form, preview);
     form.elements.category.required = !transfer;
     form.elements.toAccount.required = transfer;
     form.elements.category.innerHTML = transfer
@@ -1418,6 +1443,7 @@ export function createApp() {
     for (const key of ['id', 'name', 'amount', 'type', 'cadence', 'day', 'startDate', 'account', 'toAccount', 'fee', 'note']) {
       if (form.elements[key]) form.elements[key].value = rule[key] ?? '';
     }
+    form.elements.feeMode.value = rule.type === 'transfer' ? rule.feeMode || 'additional' : 'included';
     configureRecurringFields();
     form.elements.category.value = rule.category || '';
     form.querySelector('button[type="submit"]').textContent = '儲存修改';
@@ -1817,6 +1843,13 @@ export function createApp() {
     if (button) confirmTransactionAttention(button.dataset.confirmAttentionId);
   });
   transactionForm.addEventListener('submit', saveTransaction);
+  transactionForm.addEventListener('input', event => {
+    if (['amount', 'fee', 'feeMode'].includes(event.target.name)) updateTransferPreview(transactionForm, document.querySelector('#transfer-preview'));
+  });
+  const recurringForm = document.querySelector('#recurring-rule-form');
+  recurringForm.addEventListener('input', event => {
+    if (['amount', 'fee', 'feeMode'].includes(event.target.name)) updateTransferPreview(recurringForm, document.querySelector('#recurring-transfer-preview'));
+  });
   transactionForm.addEventListener('click', event => {
     const button = event.target.closest('[data-transaction-type]');
     if (button) {

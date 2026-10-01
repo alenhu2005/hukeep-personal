@@ -7,6 +7,7 @@ export class ValidationError extends Error {
 
 const VALID_TYPES = new Set(['expense', 'income', 'transfer']);
 const VALID_SOURCES = new Set(['manual', 'ocr', 'carrier', 'voice', 'recurring']);
+const VALID_TRANSFER_FEE_MODES = new Set(['included', 'additional']);
 const MAX_ID_LENGTH = 80;
 const MAX_TIMESTAMP_LENGTH = 40;
 
@@ -65,6 +66,13 @@ function normalizeInput(input) {
       throw new ValidationError('請選擇不同的目的帳戶');
     }
     const fee = normalizeTransferFee(input?.fee);
+    const feeMode = input?.feeMode;
+    if (feeMode != null && feeMode !== '' && !VALID_TRANSFER_FEE_MODES.has(feeMode)) {
+      throw new ValidationError('手續費模式不正確');
+    }
+    if (feeMode === 'included' && fee >= amount) {
+      throw new ValidationError('含手續費時，手續費必須小於金額');
+    }
     const investmentTransfer = account === 'investment' || toAccount === 'investment';
     return {
       type,
@@ -75,6 +83,7 @@ function normalizeInput(input) {
       date,
       ...identity,
       note,
+      ...(VALID_TRANSFER_FEE_MODES.has(feeMode) ? { feeMode } : {}),
       ...(fee ? { fee } : {}),
     };
   }
@@ -194,7 +203,7 @@ export function updateTransaction(transactions, id, changes, options = {}) {
   const normalized = normalizeInput({ ...current, ...changes });
   const updatedAt = options.now ?? new Date().toISOString();
   const currentWithoutFee = Object.fromEntries(
-    Object.entries(current).filter(([key]) => key !== 'fee'),
+    Object.entries(current).filter(([key]) => key !== 'fee' && key !== 'feeMode'),
   );
   const next = {
     ...currentWithoutFee,

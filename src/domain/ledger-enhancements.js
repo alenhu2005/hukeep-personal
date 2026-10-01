@@ -11,6 +11,7 @@ const MAX_MONTHLY_SNAPSHOTS = 120;
 const MAX_RECONCILIATIONS = 200;
 const VALID_TYPES = new Set(['expense', 'income', 'transfer']);
 const VALID_CADENCES = new Set(['monthly', 'weekly']);
+const VALID_TRANSFER_FEE_MODES = new Set(['included', 'additional']);
 
 function cleanText(value, maxLength) {
   return String(value ?? '').trim().slice(0, maxLength);
@@ -43,6 +44,10 @@ function normalizeRule(value) {
   if (type === 'transfer' && (!toAccount || toAccount === account)) return null;
   const category = cleanText(value?.category, 60);
   if (type !== 'transfer' && !category) return null;
+  const feeMode = value?.feeMode;
+  if (type === 'transfer' && feeMode != null && feeMode !== '' && !VALID_TRANSFER_FEE_MODES.has(feeMode)) return null;
+  const fee = type === 'transfer' ? safeInteger(value?.fee, 0) || 0 : 0;
+  if (type === 'transfer' && feeMode === 'included' && fee >= amount) return null;
   return {
     id,
     name,
@@ -52,7 +57,8 @@ function normalizeRule(value) {
     subcategory: type === 'transfer' ? null : cleanText(value?.subcategory, 60),
     account,
     toAccount: type === 'transfer' ? toAccount : null,
-    fee: type === 'transfer' ? safeInteger(value?.fee, 0) || 0 : 0,
+    fee,
+    ...(type === 'transfer' && VALID_TRANSFER_FEE_MODES.has(feeMode) ? { feeMode } : {}),
     note: cleanText(value?.note, 240),
     cadence,
     day,
@@ -183,6 +189,7 @@ function recurringTransaction(rule, date) {
     subcategory: rule.subcategory,
     account: rule.account,
     toAccount: rule.toAccount,
+    ...(rule.feeMode ? { feeMode: rule.feeMode } : {}),
     ...(rule.fee ? { fee: rule.fee } : {}),
     date,
     note: rule.note,

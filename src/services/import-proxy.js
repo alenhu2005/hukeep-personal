@@ -6,6 +6,7 @@ const MAX_SHEET_ACCOUNTS = 20;
 const MAX_SHEET_TRANSACTIONS = 5000;
 const MAX_SHEET_BUDGETS = 100;
 const MAX_SHEET_AMOUNT = 1_000_000_000_000;
+let transferFeeCapabilityCheck = null;
 
 function cleanText(value, maxLength) {
   return String(value ?? '')
@@ -194,7 +195,16 @@ function projectTransaction(transaction) {
     date,
   };
   if (type === 'transfer') {
-    projected.fee = assertSheetInteger(transaction?.fee ?? 0, '轉帳手續費');
+    const fee = assertSheetInteger(transaction?.fee ?? 0, '轉帳手續費');
+    const feeMode = transaction?.feeMode == null || transaction.feeMode === ''
+      ? 'additional'
+      : transaction.feeMode;
+    if (!['included', 'additional'].includes(feeMode)) throw new Error('手續費模式格式不正確');
+    if (feeMode === 'included' && fee >= projected.amount) {
+      throw new Error('含手續費時，手續費必須小於金額');
+    }
+    projected.fee = fee;
+    projected.feeMode = feeMode;
   }
   Object.entries(textFields).forEach(([field, maxLength]) => {
     if (field === 'toAccount') return;
@@ -273,6 +283,39 @@ async function postProxyWithRetry(endpoint, payload, options = {}) {
   }
 }
 
+async function ensureTransferFeeModeCapability(endpoint, proxyToken, options = {}) {
+  const url = validateProxyEndpoint(endpoint);
+  const token = cleanText(proxyToken, 300);
+  const key = `${url}\u0000${token}`;
+  if (transferFeeCapabilityCheck?.key === key) return transferFeeCapabilityCheck.promise;
+
+  const promise = postProxy(url, { action: 'getLedgerCapabilities', proxyToken: token }, options)
+    .then(data => {
+      if (data?.transferFeeModeVersion !== 1) {
+        throw new Error('內扣手續費尚未同步，請先更新 GAS 程式後再試；本機紀錄仍待同步。');
+      }
+    })
+    .catch(error => {
+      if (/不支援的操作/.test(error.message)) {
+        throw new Error('內扣手續費尚未同步，請先更新 GAS 程式後再試；本機紀錄仍待同步。', { cause: error });
+      }
+      throw error;
+    });
+  transferFeeCapabilityCheck = { key, promise };
+  try {
+    await promise;
+  } catch (error) {
+    if (transferFeeCapabilityCheck?.promise === promise) transferFeeCapabilityCheck = null;
+    throw error;
+  }
+}
+
+function needsTransferFeeModeVersion(transactions) {
+  return transactions.some(transaction =>
+    transaction.type === 'transfer' && transaction.feeMode === 'included' && transaction.fee > 0,
+  );
+}
+
 export function projectLedgerChangesForSheet(state, changes) {
   const transactionUpserts = changedKeys(changes?.upserts, 80);
   const transactionDeletes = changedKeys(changes?.deletes, 80);
@@ -312,15 +355,20 @@ export function projectLedgerChangesForSheet(state, changes) {
 }
 
 export async function syncLedgerStateToSheet(input, options = {}) {
+  const state = projectLedgerForSheet(input?.state);
+  if (needsTransferFeeModeVersion(state.transactions)) {
+    await ensureTransferFeeModeCapability(input?.endpoint, input?.proxyToken, options);
+  }
   const data = await postProxyWithRetry(
     input?.endpoint,
     {
       action: 'syncLedgerState',
       proxyToken: cleanText(input?.proxyToken, 300),
-      state: projectLedgerForSheet(input?.state),
+      state,
     },
     options,
   );
+  requireTransferFeeModeVersion(data, state.transactions);
   const counts = ['accountCount', 'transactionCount', 'budgetCount'];
   if (!counts.every(field => Number.isInteger(data?.[field]) && data[field] >= 0)) {
     throw new Error('Sheet 同步回傳格式不正確');
@@ -334,12 +382,16 @@ export async function syncLedgerStateToSheet(input, options = {}) {
 
 export async function syncLedgerChangesToSheet(input, options = {}) {
   const changes = projectLedgerChangesForSheet(input?.state, input?.changes);
+  if (needsTransferFeeModeVersion(changes.transactions)) {
+    await ensureTransferFeeModeCapability(input?.endpoint, input?.proxyToken, options);
+  }
   const payload = {
     action: 'syncLedgerChanges',
     proxyToken: cleanText(input?.proxyToken, 300),
     changes,
   };
   const data = await postProxyWithRetry(input?.endpoint, payload, options);
+  requireTransferFeeModeVersion(data, changes.transactions);
   const counts = ['accountCount', 'transactionCount', 'budgetCount'];
   if (!counts.every(field => Number.isInteger(data?.[field]) && data[field] >= 0)) {
     throw new Error('Sheet 自動同步回傳格式不正確');
@@ -424,7 +476,7 @@ function projectSpokenDraft(draft) {
     : 'expense';
   const amount = Number(draft?.amount);
   const fee = Number(draft?.fee);
-  return {
+  const projected = {
     clientId: cleanText(draft?.clientId, 80),
     type,
     amount: Number.isSafeInteger(amount) && amount > 0 ? amount : null,
@@ -437,6 +489,21 @@ function projectSpokenDraft(draft) {
     name: cleanText(draft?.name, 120),
     note: cleanText(draft?.note, 240),
   };
+  if (type === 'transfer') {
+    const feeMode = draft?.feeMode == null || draft.feeMode === '' ? 'additional' : draft.feeMode;
+    if (!['included', 'additional'].includes(feeMode)) throw new Error('手續費模式格式不正確');
+    if (feeMode === 'included' && projected.fee > 0 && (!projected.amount || projected.fee >= projected.amount)) {
+      throw new Error('含手續費時，手續費必須小於金額');
+    }
+    projected.feeMode = feeMode;
+  }
+  return projected;
+}
+
+function requireTransferFeeModeVersion(data, transactions) {
+  if (needsTransferFeeModeVersion(transactions) && data?.transferFeeModeVersion !== 1) {
+    throw new Error('內扣手續費尚未同步，請更新 GAS 程式後再試；本機紀錄仍待同步。');
+  }
 }
 
 function projectSpokenDrafts(drafts, fallback) {
@@ -448,6 +515,11 @@ function projectSpokenDrafts(drafts, fallback) {
 export async function enqueueSpokenEntry(input, options = {}) {
   const transcript = cleanText(input?.transcript, 240).normalize('NFKC');
   if (!transcript) throw new Error('請輸入口語內容');
+  const draft = projectSpokenDraft(input?.draft);
+  const drafts = projectSpokenDrafts(input?.drafts, input?.draft);
+  if (needsTransferFeeModeVersion(drafts)) {
+    await ensureTransferFeeModeCapability(input?.endpoint, input?.proxyToken, options);
+  }
   const data = await postProxy(
     input?.endpoint,
     {
@@ -455,12 +527,13 @@ export async function enqueueSpokenEntry(input, options = {}) {
       proxyToken: cleanText(input?.proxyToken, 300),
       transcript,
       timezone: 'Asia/Taipei',
-      draft: projectSpokenDraft(input?.draft),
-      drafts: projectSpokenDrafts(input?.drafts, input?.draft),
+      draft,
+      drafts,
       groupId: cleanText(input?.groupId, 80),
     },
     options,
   );
+  requireTransferFeeModeVersion(data, drafts);
   const queueId = cleanText(data?.queueId, 80);
   const status = cleanText(data?.status, 24);
   if (!queueId || !['pending', 'processing', 'reviewed'].includes(status)) {

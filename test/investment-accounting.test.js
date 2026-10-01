@@ -104,15 +104,44 @@ describe('投資資產會計', () => {
     const summary = summarizeInvestmentFlows([
       { type: 'transfer', amount: 10000, fee: 20, account: 'sinopac', toAccount: 'investment', category: '投資', subcategory: 'ETF', date: '2026-09-01' },
       { type: 'transfer', amount: 3000, account: 'investment', toAccount: 'bot', category: '投資', subcategory: '股票', date: '2026-09-02' },
+      { type: 'transfer', amount: 10000, fee: 12, feeMode: 'included', account: 'investment', toAccount: 'bot', category: '投資', subcategory: '內扣領回', date: '2026-09-02' },
+      { type: 'transfer', amount: 10000, fee: 12, feeMode: 'additional', account: 'investment', toAccount: 'bot', category: '投資', subcategory: '另扣領回', date: '2026-09-02' },
       { type: 'expense', amount: 500, account: 'cash', category: '投資', subcategory: '投資課程', date: '2026-09-03' },
     ]);
 
     expect(summary).toEqual({
       contributed: 10000,
-      withdrawn: 3000,
-      net: 7000,
-      count: 2,
-      bySubcategory: { ETF: 10000, '股票': -3000 },
+      withdrawn: 22988,
+      net: -12988,
+      count: 4,
+      bySubcategory: { ETF: 10000, '股票': -3000, '內扣領回': -9988, '另扣領回': -10000 },
     });
+  });
+
+  it('快照本金與投資流量採計實際入帳，且快照日後交易不改基準', () => {
+    const transactions = [
+      { id: 'before', type: 'transfer', amount: 10000, fee: 12, feeMode: 'included', account: 'cash', toAccount: 'investment', category: '投資', subcategory: 'ETF', date: INVESTMENT_SNAPSHOT_DATE },
+      { id: 'after', type: 'transfer', amount: 1000, fee: 12, feeMode: 'included', account: 'cash', toAccount: 'investment', category: '投資', subcategory: '股票', date: '2026-09-19' },
+    ];
+    const state = migrateInvestmentAccounting({ accounts: [], transactions }).state;
+    const investment = state.accounts.find(account => account.id === INVESTMENT_ACCOUNT_ID);
+    const flows = summarizeInvestmentFlows(transactions);
+
+    expect(investment.openingBalance).toBe(INVESTMENT_OPENING_ASSET - 9988);
+    expect(investment.openingBalance + 9988 + 988).toBe(INVESTMENT_OPENING_ASSET + 988);
+    expect(flows).toMatchObject({ contributed: 10976, withdrawn: 0, net: 10976, count: 2 });
+    expect(flows.bySubcategory).toEqual({ ETF: 9988, '股票': 988 });
+  });
+
+  it('快照本金扣除實際轉出額，包含額外扣款的轉帳費', () => {
+    const state = migrateInvestmentAccounting({
+      accounts: [],
+      transactions: [
+        { type: 'transfer', amount: 10000, fee: 12, feeMode: 'included', account: 'investment', toAccount: 'cash', category: '投資', date: INVESTMENT_SNAPSHOT_DATE },
+        { type: 'transfer', amount: 10000, fee: 12, feeMode: 'additional', account: 'investment', toAccount: 'cash', category: '投資', date: INVESTMENT_SNAPSHOT_DATE },
+      ],
+    }).state;
+    expect(state.accounts.find(account => account.id === INVESTMENT_ACCOUNT_ID).openingBalance)
+      .toBe(INVESTMENT_OPENING_ASSET + 20012);
   });
 });
