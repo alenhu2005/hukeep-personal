@@ -296,10 +296,8 @@
 }
 
 .asset-total {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  display: grid;
+  gap: 10px;
   margin-bottom: 14px;
   padding: 14px 15px;
   border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--line));
@@ -310,6 +308,19 @@
 .asset-total div {
   display: grid;
   gap: 3px;
+}
+
+.asset-total-heading {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.asset-total-heading > span {
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .asset-total-metrics {
@@ -343,10 +354,20 @@
   color: var(--expense);
 }
 
-.asset-total > span {
+.asset-valuation-button {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--primary) 25%, var(--line));
+  border-radius: 9px;
+  background: var(--surface);
   color: var(--primary);
-  font-size: 13px;
-  font-weight: 800;
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.asset-valuation-button:hover {
+  border-color: var(--primary);
 }
 
 .account-list {
@@ -391,6 +412,16 @@
   margin-bottom: 3px;
   color: var(--muted);
   font-size: 11px;
+}
+
+.account-item .account-reconciliation {
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.account-item .account-reconciliation.mismatch {
+  color: var(--expense);
 }
 
 .account-item strong {

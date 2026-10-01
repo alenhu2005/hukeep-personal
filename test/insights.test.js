@@ -39,6 +39,19 @@ describe('summarizeMonth', () => {
     });
   });
 
+  it('帳務調整改變帳戶餘額，但不進入生活收支、預算與趨勢', () => {
+    const accounts = [{ id: 'cash', openingBalance: 1000 }];
+    const entries = [
+      { type: 'income', amount: 250, category: '帳務調整', source: 'manual', account: 'cash', date: '2026-08-05' },
+      { type: 'expense', amount: 80, category: '帳務調整', source: 'manual', account: 'cash', date: '2026-08-06' },
+    ];
+
+    expect(calculateAccountBalances(accounts, entries)).toEqual([{ id: 'cash', balance: 1170 }]);
+    expect(summarizeMonth(entries, '2026-08')).toMatchObject({ income: 0, expense: 0, balance: 0, count: 0, byCategory: {} });
+    expect(calculateBudgetProgress([{ category: '帳務調整', limit: 100 }], entries, '2026-08')[0].spent).toBe(0);
+    expect(buildMonthlyTrend(entries, '2026-08', 1)[0]).toMatchObject({ income: 0, expense: 0, balance: 0 });
+  });
+
   it('轉帳手續費計入帳單支出，與預算、趨勢及總資產變化一致', () => {
     const accounts = [
       { id: 'cash', openingBalance: 1000 },

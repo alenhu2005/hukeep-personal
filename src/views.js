@@ -4,10 +4,14 @@ import {
   calculateBudgetProgress,
   calculateTotalAssets,
   expenseAmount,
+  isAccountingAdjustment,
   summarizeMonth,
 } from './domain/insights.js';
+import { forecastBudgetProgress } from './domain/budgets.js';
+import { calculateInvestmentValuation, investmentMarketValue } from './domain/investment-valuation.js';
 import { filterTransactions } from './domain/transactions.js';
 import { findTransactionSignals, reconciliationStatus } from './domain/ledger-enhancements.js';
+import { reconciliationAdjustmentStatus } from './domain/reconciliation.js';
 import { buildAnalysisWorkspace } from './domain/analysis-workspace.js';
 import {
   investmentDirection,
@@ -127,7 +131,7 @@ function dailyNetByDate(transactions) {
     if (!date) return;
     const current = result.get(date) || { income: 0, expense: 0 };
     const amount = Number(transaction.amount) || 0;
-    const next = transaction.type === 'income'
+    const next = transaction.type === 'income' && !isAccountingAdjustment(transaction)
       ? { income: current.income + amount, expense: current.expense }
       : { income: current.income, expense: current.expense + expenseAmount(transaction) };
     result.set(date, { ...next, net: next.income - next.expense });
@@ -180,7 +184,18 @@ export function renderOverview(state, month) {
   const investment = summarizeInvestmentFlows(monthlyTransactions);
   const accountBalances = calculateAccountBalances(state.accounts, state.transactions);
   const accountById = Object.fromEntries(accountBalances.map(item => [item.id, item.balance]));
-  const totalAssets = calculateTotalAssets(accountBalances);
+  const latestReconciliations = (state.featureSettings?.reconciliations || [])
+    .toSorted((left, right) => String(right.date).localeCompare(String(left.date)) || String(right.createdAt).localeCompare(String(left.createdAt)))
+    .reduce((result, item) => {
+      if (!result.has(item.accountId)) result.set(item.accountId, item);
+      return result;
+    }, new Map());
+  const investmentReconciliation = latestReconciliations.get('investment');
+  const marketValue = investmentReconciliation
+    ? investmentMarketValue(state, investmentReconciliation, accountById.investment)
+    : undefined;
+  const investmentValuation = calculateInvestmentValuation(state.accounts, state.transactions, marketValue);
+  const totalAssets = investmentValuation.totalAssets;
   const liquidAssets = calculateTotalAssets(accountBalances.filter(item => item.id !== 'investment'));
   const budgetProgress = calculateBudgetProgress(state.budgets, state.transactions, month);
   const totalBudget = budgetProgress.reduce((sum, item) => sum + item.limit, 0);
@@ -195,13 +210,6 @@ export function renderOverview(state, month) {
   const signals = findTransactionSignals(state.transactions);
   const pendingReviews = state.transactions.filter(transaction => transaction.aiStatus === 'pending').length;
   const attentionCount = new Set([...signals.duplicates.keys(), ...signals.anomalies.keys()]).size;
-  const latestReconciliations = (state.featureSettings?.reconciliations || [])
-    .toSorted((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))
-    .reduce((result, item) => {
-      if (!result.has(item.accountId)) result.set(item.accountId, item);
-      return result;
-    }, new Map());
-
   return `<section class="view overview-view" aria-labelledby="overview-title">
     <div class="hero-heading">
       <div>
@@ -236,25 +244,32 @@ export function renderOverview(state, month) {
       <section class="panel accounts-panel">
         <div class="section-heading"><h2>帳戶</h2><span>估算餘額</span></div>
         <div class="asset-total">
+          <div class="asset-total-heading"><span>總資產</span><button class="asset-valuation-button" type="button" data-open-investment-valuation>設定投資市值</button></div>
           <div class="asset-total-metrics">
             <div><small>含投資資產</small><strong class="${totalAssets < 0 ? 'negative' : ''}" data-testid="total-assets">${formatMoney(totalAssets)}</strong></div>
             <div><small>不含投資資產</small><strong class="${liquidAssets < 0 ? 'negative' : ''}" data-testid="liquid-assets">${formatMoney(liquidAssets)}</strong></div>
           </div>
-          <span>總資產</span>
         </div>
         <div class="account-list">
           ${state.accounts
             .map(account => {
               const latest = latestReconciliations.get(account.id);
-              const reconciliation = latest
-                ? reconciliationStatus(accountById[account.id] || 0, latest.actualBalance)
+              const adjustmentStatus = latest && reconciliationAdjustmentStatus(state, latest);
+              const estimatedBalance = adjustmentStatus?.estimatedBalance ?? 0;
+              const reconciliation = latest && account.id !== 'investment'
+                ? reconciliationStatus(estimatedBalance, latest.actualBalance)
                 : null;
-              const note = reconciliation
-                ? reconciliation.status === 'matched'
-                  ? '已對帳'
-                  : `差 ${formatMoney(Math.abs(reconciliation.difference))}`
-                : '';
-              return `<div class="account-item"><span class="account-glyph">${escapeHtml(account.icon)}</span><div><small>${escapeHtml(account.name)} ${note ? `· ${escapeHtml(note)}` : ''}</small><strong>${formatMoney(accountById[account.id] || 0)}</strong></div></div>`;
+              const corrected = adjustmentStatus?.corrected;
+              const reconciliationLabel = account.id === 'investment' && latest
+                ? `市值更新 · ${formatDate(latest.date)}`
+                : reconciliation
+                  ? `已對帳 · ${formatDate(latest.date)}${corrected ? ' · 已調整' : reconciliation.status === 'matched' ? '' : `${adjustmentStatus.adjustment ? ' · 待重新調整' : ''} · 差 ${formatMoney(Math.abs(reconciliation.difference))}`}`
+                  : '';
+              const reconciliationTone = reconciliation?.status === 'mismatch' && !corrected ? ' mismatch' : '';
+              const balance = account.id === 'investment'
+                ? investmentValuation.marketValue ?? investmentValuation.principal
+                : accountById[account.id] || 0;
+              return `<div class="account-item"><span class="account-glyph">${escapeHtml(account.icon)}</span><div><small>${escapeHtml(account.name)}</small>${reconciliationLabel ? `<small class="account-reconciliation${reconciliationTone}">${escapeHtml(reconciliationLabel)}</small>` : ''}<strong>${formatMoney(balance)}</strong></div></div>`;
             })
             .join('')}
         </div>
@@ -291,8 +306,11 @@ export function renderOverview(state, month) {
 }
 
 export function renderHistory(state, month, filters) {
+  const monthScope = filters.monthScope === 'all' ? 'all' : 'month';
+  const scopedMonth = monthScope === 'all' ? '' : month;
+  const scopedFilters = { ...filters, month: scopedMonth };
   const signals = findTransactionSignals(state.transactions);
-  const baseResults = filterTransactions(state.transactions, { month, ...filters });
+  const baseResults = filterTransactions(state.transactions, scopedFilters);
   const today = todayInTaipei();
   const weekStart = new Date(`${today}T00:00:00Z`);
   weekStart.setUTCDate(weekStart.getUTCDate() - 6);
@@ -329,10 +347,7 @@ export function renderHistory(state, month, filters) {
         `<button type="button" data-history-filter="account" data-history-value="${escapeHtml(value)}" aria-pressed="${filters.account === value}">${escapeHtml(label)}</button>`,
     )
     .join('');
-  const monthTypeTransactions = filterTransactions(state.transactions, {
-    month,
-    type: filters.type,
-  });
+  const monthTypeTransactions = filterTransactions(state.transactions, { month: scopedMonth, type: filters.type });
   const rankedCategories = rankedHistoryOptions(monthTypeTransactions, 'category');
   const categoryButtons = [
     { value: '', label: '全部', percent: null },
@@ -367,7 +382,7 @@ export function renderHistory(state, month, filters) {
     week: '最近 7 天',
   }[filters.preset] || '以日期由新到舊';
   return `<section class="view history-view" aria-labelledby="history-title">
-    <div class="page-heading"><div><p class="eyebrow">${monthLabel(month)}</p><h1 id="history-title">紀錄</h1></div><div class="month-stepper" aria-label="切換月份"><button type="button" data-month-shift="-1" aria-label="上個月">‹</button><strong>${Number(month.slice(5))} 月</strong><button type="button" data-month-shift="1" aria-label="下個月">›</button></div></div>
+    <div class="page-heading"><div><p class="eyebrow">${monthScope === 'all' ? '全部月份' : monthLabel(month)}</p><h1 id="history-title">紀錄</h1></div><div class="history-heading-controls">${monthScope === 'month' ? `<div class="month-stepper" aria-label="切換月份"><button type="button" data-month-shift="-1" aria-label="上個月">‹</button><strong>${Number(month.slice(5))} 月</strong><button type="button" data-month-shift="1" aria-label="下個月">›</button></div>` : ''}<div class="filter-chip-scroll" role="group" aria-label="紀錄日期範圍"><button type="button" data-history-month-scope="month" aria-pressed="${monthScope === 'month'}">本月</button><button type="button" data-history-month-scope="all" aria-pressed="${monthScope === 'all'}">全部月份</button></div></div></div>
     <section class="panel history-panel">
       <div class="filter-bar">
         <label class="search-field"><span class="visually-hidden">搜尋紀錄</span><span aria-hidden="true">⌕</span><input id="history-search" aria-label="搜尋紀錄" type="search" value="${escapeHtml(filters.query)}" placeholder="搜尋備註、分類、帳戶" /></label>
@@ -385,6 +400,8 @@ export function renderHistory(state, month, filters) {
 
 export function renderBudgets(state, month) {
   const progress = calculateBudgetProgress(state.budgets, state.transactions, month);
+  const forecasts = new Map(forecastBudgetProgress(state.budgets, state.transactions, month, todayInTaipei())
+    .map(item => [item.category, item]));
   const today = todayInTaipei();
   const monthEnd = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 0)).getUTCDate();
   const isCurrentMonth = today.slice(0, 7) === month;
@@ -403,11 +420,17 @@ export function renderBudgets(state, month) {
         <div class="budget-list">${
           progress.length
             ? progress
-                .map(item => `<article class="budget-row ${item.status}">
+                .map(item => {
+                  const forecast = forecasts.get(item.category);
+                  const forecastLabel = forecast?.expectedExpense == null
+                    ? ''
+                    : `月底預估（本月日均）${formatMoney(forecast.expectedExpense)}${forecast.expectedOverage > 0 ? ` · 可能超出 ${formatMoney(forecast.expectedOverage)}` : ''}`;
+                  return `<article class="budget-row ${item.status}">
                   ${categoryMark(item.category)}
-                  <div class="budget-row-main"><span><strong>${escapeHtml(item.category)}預算</strong><small>${formatMoney(item.spent)} / ${formatMoney(item.limit)}</small></span><div class="progress-track"><i style="width:${Math.min(100, item.ratio * 100)}%"></i></div><p>${item.remaining >= 0 ? `還剩 ${formatMoney(item.remaining)}` : `已超出 ${formatMoney(Math.abs(item.remaining))}`}</p><small class="budget-daily-limit">${item.remaining >= 0 ? `每天還能用 ${formatMoney(Math.floor(item.remaining / daysLeft))}` : `每天需少用 ${formatMoney(Math.ceil(Math.abs(item.remaining) / daysLeft))}`} · ${isCurrentMonth ? `剩 ${daysLeft} 天` : '按整月計算'}</small></div>
+                  <div class="budget-row-main"><span><strong>${escapeHtml(item.category)}預算</strong><small>${formatMoney(item.spent)} / ${formatMoney(item.limit)}</small></span><div class="progress-track"><i style="width:${Math.min(100, item.ratio * 100)}%"></i></div><p>${item.remaining >= 0 ? `還剩 ${formatMoney(item.remaining)}` : `已超出 ${formatMoney(Math.abs(item.remaining))}`}</p><small class="budget-daily-limit">${item.remaining >= 0 ? `每天還能用 ${formatMoney(Math.floor(item.remaining / daysLeft))}` : `每天需少用 ${formatMoney(Math.ceil(Math.abs(item.remaining) / daysLeft))}`} · ${isCurrentMonth ? `剩 ${daysLeft} 天` : '按整月計算'}</small>${forecastLabel ? `<small class="budget-forecast${forecast.expectedOverage > 0 ? ' over' : ''}">${forecastLabel}</small>` : ''}</div>
                   <button type="button" data-remove-budget="${escapeHtml(item.category)}" aria-label="移除 ${escapeHtml(item.category)} 預算">×</button>
-                </article>`)
+                </article>`;
+                })
                 .join('')
             : emptyState('尚未設定預算')
         }</div>
@@ -662,8 +685,12 @@ export function renderInsights(state, month, options = {}) {
       ? `<div class="analysis-cal-weekdays" aria-hidden="true"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div><div class="analysis-cal-grid" role="grid" aria-label="月曆，點選單日">${calendarCells}</div>`
       : `<div class="analysis-year-months" role="group" aria-label="各月支出">${yearMonths}</div>`;
   const accountNames = Object.fromEntries((state.accounts || []).map(account => [account.id, account.name]));
-  const investmentAsset = calculateAccountBalances(state.accounts || [], state.transactions || [])
+  const investmentPrincipal = calculateAccountBalances(state.accounts || [], state.transactions || [])
     .find(account => account.id === 'investment')?.balance || 0;
+  const investmentReconciliation = (state.featureSettings?.reconciliations || [])
+    .filter(item => item.accountId === 'investment')
+    .toSorted((left, right) => String(right.date).localeCompare(String(left.date)) || String(right.createdAt).localeCompare(String(left.createdAt)))[0];
+  const investmentAsset = investmentMarketValue(state, investmentReconciliation, investmentPrincipal) ?? investmentPrincipal;
   const currentBudgetProgress = period === 'month' && month === today.slice(0, 7)
     ? calculateBudgetProgress(state.budgets || [], state.transactions || [], month)
     : [];

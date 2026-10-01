@@ -6,6 +6,8 @@ import {
   findTransactionSignals,
   normalizeFeatureSettings,
   reconciliationStatus,
+  setRecurringRuleEnabled,
+  upsertRecurringRule,
 } from '../src/domain/ledger-enhancements.js';
 
 describe('帳本補強功能', () => {
@@ -17,11 +19,19 @@ describe('帳本補強功能', () => {
         startDate: '2026-01-05', enabled: true,
       }],
       monthlySnapshots: [{ month: '2026-07', assetTotal: 30000, income: 20000, expense: 12000 }],
-      reconciliations: [{ id: 'r1', accountId: 'line', actualBalance: 500, date: '2026-08-30' }],
+      reconciliations: [
+        { id: 'r1', accountId: 'line', actualBalance: 500, estimatedBalance: 550, date: '2026-08-30' },
+        { id: 'r2', accountId: 'line', actualBalance: 400, date: '2026-08-29' },
+        { id: 'r3', accountId: 'line', actualBalance: 300, estimatedBalance: 'not-a-balance', date: '2026-08-28' },
+      ],
     })).toMatchObject({
       recurringRules: [{ id: 'rent', cadence: 'monthly', day: 5, account: 'line' }],
       monthlySnapshots: [{ month: '2026-07', assetTotal: 30000 }],
-      reconciliations: [{ id: 'r1', accountId: 'line', actualBalance: 500 }],
+      reconciliations: [
+        { id: 'r1', accountId: 'line', actualBalance: 500, estimatedBalance: 550 },
+        { id: 'r2', accountId: 'line', actualBalance: 400 },
+        { id: 'r3', accountId: 'line', actualBalance: 300 },
+      ],
     });
   });
 
@@ -40,6 +50,27 @@ describe('帳本補強功能', () => {
     expect(result.created[0]).toMatchObject({
       name: '影音訂閱', date: '2026-08-01', source: 'recurring', sourceId: 'subscription:2026-08-01',
     });
+  });
+
+  it('驗證編輯與暫停固定流水，且既有生成交易保持原樣', () => {
+    const rule = {
+      id: 'subscription', name: '影音訂閱', type: 'expense', amount: 199, category: '娛樂',
+      account: 'line', cadence: 'monthly', day: 1, startDate: '2026-07-01', enabled: true,
+      createdAt: '2026-06-01T00:00:00.000Z',
+    };
+    const settings = normalizeFeatureSettings({ recurringRules: [rule] });
+    const generated = applyRecurringRules(settings.recurringRules, [], '2026-07-01').created;
+    const edited = upsertRecurringRule(settings, { ...rule, amount: 299, createdAt: '' });
+    expect(edited.recurringRules[0]).toMatchObject({ amount: 299, createdAt: rule.createdAt });
+    expect(applyRecurringRules(edited.recurringRules, generated, '2026-08-01').created[0])
+      .toMatchObject({ amount: 299, date: '2026-08-01' });
+    expect(generated[0]).toMatchObject({ amount: 199, date: '2026-07-01' });
+
+    const paused = setRecurringRuleEnabled(edited, 'subscription', false);
+    expect(applyRecurringRules(paused.recurringRules, generated, '2026-08-01').created).toEqual([]);
+    expect(generated[0]).toMatchObject({ amount: 199, date: '2026-07-01' });
+    expect(() => upsertRecurringRule(settings, { ...rule, amount: -1 })).toThrow('不完整');
+    expect(() => setRecurringRuleEnabled(settings, 'subscription', 'false')).toThrow('狀態');
   });
 
   it('找出同日同帳戶的重複交易與分類金額異常', () => {
@@ -82,6 +113,33 @@ describe('帳本補強功能', () => {
     expect(snapshot).toMatchObject({ month: '2026-08', assetTotal: 800, expense: 200 });
     expect(reconciliationStatus(800, 760)).toMatchObject({ difference: -40, status: 'mismatch' });
     expect(reconciliationStatus('800', '800')).toMatchObject({ difference: 0, status: 'matched' });
+  });
+
+  it('月結快照排除下月交易並按月末投資對帳市值計算資產', () => {
+    const snapshot = createMonthlySnapshot({
+      accounts: [
+        { id: 'cash', openingBalance: 1000 },
+        { id: 'investment', openingBalance: 100 },
+      ],
+      transactions: [
+        { id: 'basis', type: 'income', amount: 100, account: 'investment', date: '2026-08-10' },
+        { id: 'after-reconciliation', type: 'income', amount: 50, account: 'investment', date: '2026-08-20' },
+        {
+          id: 'next-month', type: 'income', amount: 500, account: 'cash', date: '2026-09-01',
+          source: 'recurring', sourceId: 'salary:2026-09-01',
+        },
+      ],
+      featureSettings: { reconciliations: [
+        { id: 'august', accountId: 'investment', actualBalance: 250, estimatedBalance: 150, date: '2026-08-15' },
+        { id: 'september', accountId: 'investment', actualBalance: 900, date: '2026-09-01' },
+      ] },
+    }, '2026-08');
+
+    expect(snapshot.accountBalances).toEqual([
+      { id: 'cash', balance: 1000 },
+      { id: 'investment', balance: 300 },
+    ]);
+    expect(snapshot.assetTotal).toBe(1300);
   });
 
   it('略過不安全的設定，支援每週與跨月定期轉帳', () => {

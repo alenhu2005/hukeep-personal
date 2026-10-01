@@ -131,22 +131,6 @@ export async function classifyExpenseWithAi(input, options = {}) {
   return validateClassification(data, { fallback, type });
 }
 
-export async function relayEInvoicePreview(input, options = {}) {
-  if (!['login', 'list', 'detail'].includes(input?.stage)) throw new Error('發票預覽操作不正確');
-  const payload = String(input?.payload ?? '');
-  if (!payload || payload.length > 12000) throw new Error('發票預覽請求格式不正確');
-  const data = await postProxy(input.endpoint, {
-    action: 'relayEInvoicePreview',
-    proxyToken: cleanText(input.proxyToken, 300),
-    stage: input.stage,
-    payload,
-  }, { ...options, requestTimeoutMs: 35_000 });
-  if (!Number.isInteger(data?.status) || data.status < 200 || data.status > 599 ||
-      !data.body || typeof data.body !== 'object') {
-    throw new Error('發票服務回傳格式不正確');
-  }
-  return data;
-}
 
 function assertSheetInteger(value, label, options = {}) {
   const amount = Number(value);
@@ -296,6 +280,23 @@ export function projectLedgerChangesForSheet(state, changes) {
   const accountDeletes = changedKeys(changes?.accountDeletes, 40);
   const budgetUpserts = changedKeys(changes?.budgetUpserts, 40);
   const budgetDeletes = changedKeys(changes?.budgetDeletes, 40);
+  const featureSettings = {};
+  const featureDeletes = {};
+  let legacyFeatureSettings = null;
+  const featureKeys = { recurringRules: item => item?.id, monthlySnapshots: item => item?.month, reconciliations: item => item?.id };
+  Object.entries(featureKeys).forEach(([collection, keyOf]) => {
+    const ids = changedKeys(changes?.featureUpserts?.[collection], 80);
+    const deleted = changedKeys(changes?.featureDeletes?.[collection], 80);
+    if (ids.length) {
+      const byId = new Map((state?.featureSettings?.[collection] ?? []).map(item => [String(keyOf(item) ?? ''), item]));
+      featureSettings[collection] = ids.flatMap(id => byId.has(id) ? [byId.get(id)] : []);
+    }
+    if (deleted.length) featureDeletes[collection] = deleted;
+  });
+  // Old pending journals only carried a coarse flag; keep them uploadable.
+  if (changes?.features && !Object.keys(featureSettings).length && !Object.keys(featureDeletes).length) {
+    legacyFeatureSettings = normalizeFeatureSettings(state?.featureSettings);
+  }
 
   return {
     accounts: changedItems(state?.accounts, accountUpserts, account => cleanText(account?.id, 40), projectAccount),
@@ -304,7 +305,9 @@ export function projectLedgerChangesForSheet(state, changes) {
     transactionDeletes,
     budgets: changedItems(state?.budgets, budgetUpserts, budget => cleanText(budget?.category, 40), projectBudget),
     budgetDeletes,
-    featureSettings: changes?.features ? normalizeFeatureSettings(state?.featureSettings) : null,
+    featureSettingsDelta: Object.keys(featureSettings).length ? featureSettings : null,
+    featureSettings: legacyFeatureSettings,
+    featureDeletes,
   };
 }
 
@@ -330,15 +333,19 @@ export async function syncLedgerStateToSheet(input, options = {}) {
 }
 
 export async function syncLedgerChangesToSheet(input, options = {}) {
+  const changes = projectLedgerChangesForSheet(input?.state, input?.changes);
   const payload = {
     action: 'syncLedgerChanges',
     proxyToken: cleanText(input?.proxyToken, 300),
-    changes: projectLedgerChangesForSheet(input?.state, input?.changes),
+    changes,
   };
   const data = await postProxyWithRetry(input?.endpoint, payload, options);
   const counts = ['accountCount', 'transactionCount', 'budgetCount'];
   if (!counts.every(field => Number.isInteger(data?.[field]) && data[field] >= 0)) {
     throw new Error('Sheet 自動同步回傳格式不正確');
+  }
+  if ((changes.featureSettingsDelta || Object.keys(changes.featureDeletes).length) && data.featureSettingsVersion !== 1) {
+    throw new Error('Sheet 同步服務版本過舊，功能設定尚未確認上傳；請更新 GAS 程式後再試。');
   }
   return {
     accountCount: data.accountCount,
@@ -402,7 +409,11 @@ export async function loadLedgerStateFromSheet(input, options = {}) {
     transactions: data.transactions.map(transaction => ({ ...transaction })),
     budgets: data.budgets.map(budget => ({ ...budget })),
     ...(data?.featureSettings && typeof data.featureSettings === 'object'
-      ? { featureSettings: normalizeFeatureSettings(data.featureSettings) }
+      ? { featureSettings: { ...normalizeFeatureSettings(data.featureSettings), ...Object.fromEntries(
+          ['recurringRules', 'monthlySnapshots', 'reconciliations']
+            .filter(key => Array.isArray(data.featureSettings[key]))
+            .map(key => [key, normalizeFeatureSettings({ [key]: data.featureSettings[key] })[key]]),
+        ) } }
       : {}),
   };
 }

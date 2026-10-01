@@ -3,9 +3,11 @@ import {
   acknowledgePendingSheetChanges,
   hasPendingSheetChanges,
   mergeLedgerStates,
+  mergeConcurrentLedgerState,
   reconcileLedgerFromSheet,
   updatePendingSheetChanges,
 } from '../src/domain/ledger-sync.js';
+import { syncLedgerChangesToSheet } from '../src/services/import-proxy.js';
 
 function state(transactions = [], options = {}) {
   return {
@@ -19,6 +21,128 @@ function state(transactions = [], options = {}) {
 }
 
 describe('Sheet 雙向更新合併', () => {
+  it('將本機交易編輯套用到最新狀態，同時保留另一分頁的新增與修改', () => {
+    const base = state([
+      { id: 't1', name: '原始 T1' },
+      { id: 't2', name: '原始 T2' },
+    ], {
+      accounts: [{ id: 'cash', name: '原始現金' }, { id: 'bank', name: '原始銀行' }],
+      budgets: [{ category: '飲食', limit: 1000 }, { category: '交通', limit: 500 }],
+    });
+    const intended = state([
+      { id: 't1', name: '本機 T1 編輯' },
+      { id: 't2', name: '原始 T2' },
+    ], {
+      accounts: [{ id: 'cash', name: '本機現金' }, { id: 'bank', name: '原始銀行' }],
+      budgets: [{ category: '飲食', limit: 1200 }, { category: '交通', limit: 500 }],
+    });
+    const latest = state([
+      { id: 't1', name: '最新 T1' },
+      { id: 't2', name: '另一分頁 T2 編輯' },
+      { id: 't3', name: '另一分頁新增' },
+    ], {
+      accounts: [
+        { id: 'cash', name: '最新現金' },
+        { id: 'bank', name: '另一分頁銀行' },
+        { id: 'line', name: '另一分頁新增帳戶' },
+      ],
+      budgets: [
+        { category: '飲食', limit: 1100 },
+        { category: '交通', limit: 700 },
+        { category: '娛樂', limit: 900 },
+      ],
+    });
+
+    const merged = mergeConcurrentLedgerState(base, intended, latest);
+    expect(merged.transactions).toEqual([
+      intended.transactions[0],
+      latest.transactions[1],
+      latest.transactions[2],
+    ]);
+    expect(merged.accounts).toEqual([
+      intended.accounts[0],
+      latest.accounts[1],
+      latest.accounts[2],
+    ]);
+    expect(merged.budgets).toEqual([
+      intended.budgets[0],
+      latest.budgets[1],
+      latest.budgets[2],
+    ]);
+  });
+
+  it('套用本機明確刪除，但保留另一分頁新增的交易', () => {
+    const base = state([{ id: 'deleted', name: '原始記錄' }]);
+    const intended = state([]);
+    const latest = state([
+      { id: 'deleted', name: '另一分頁編輯' },
+      { id: 'remote-new', name: '另一分頁新增' },
+    ]);
+
+    expect(mergeConcurrentLedgerState(base, intended, latest).transactions).toEqual([
+      latest.transactions[1],
+    ]);
+  });
+
+  it('只套用本機功能設定與偏好異動，保留其他分頁的設定', () => {
+    const base = state([], {
+      preferences: { theme: 'system', proxyEndpoint: 'https://old.example' },
+      featureSettings: {
+        recurringRules: [{ id: 'local-rule', name: '原始規則' }, { id: 'remote-rule', name: '原始遠端規則' }],
+        monthlySnapshots: [{ month: '2026-08', assetTotal: 10 }],
+        reconciliations: [{ id: 'local-reconciliation', note: '原始對帳' }],
+      },
+    });
+    const intended = state([], {
+      preferences: { theme: 'dark', proxyEndpoint: 'https://old.example' },
+      featureSettings: {
+        recurringRules: [{ id: 'local-rule', name: '本機規則' }, { id: 'remote-rule', name: '原始遠端規則' }],
+        monthlySnapshots: [{ month: '2026-08', assetTotal: 12 }],
+        reconciliations: [{ id: 'local-reconciliation', note: '本機對帳' }],
+      },
+    });
+    const latest = state([], {
+      preferences: { theme: 'system', proxyEndpoint: 'https://remote.example', locale: 'zh-Hant' },
+      featureSettings: {
+        recurringRules: [
+          { id: 'local-rule', name: 'Sheet 舊規則' },
+          { id: 'remote-rule', name: '另一分頁規則' },
+          { id: 'remote-new-rule', name: '另一分頁新增' },
+        ],
+        monthlySnapshots: [
+          { month: '2026-08', assetTotal: 11 },
+          { month: '2026-09', assetTotal: 30 },
+        ],
+        reconciliations: [
+          { id: 'local-reconciliation', note: 'Sheet 舊對帳' },
+          { id: 'remote-reconciliation', note: '另一分頁新增' },
+        ],
+      },
+    });
+
+    const merged = mergeConcurrentLedgerState(base, intended, latest);
+    expect(merged.preferences).toEqual({
+      theme: 'dark',
+      proxyEndpoint: 'https://remote.example',
+      locale: 'zh-Hant',
+    });
+    expect(merged.featureSettings).toEqual({
+      recurringRules: [
+        intended.featureSettings.recurringRules[0],
+        latest.featureSettings.recurringRules[1],
+        latest.featureSettings.recurringRules[2],
+      ],
+      monthlySnapshots: [
+        intended.featureSettings.monthlySnapshots[0],
+        latest.featureSettings.monthlySnapshots[1],
+      ],
+      reconciliations: [
+        intended.featureSettings.reconciliations[0],
+        latest.featureSettings.reconciliations[1],
+      ],
+    });
+  });
+
   it('Sheet 已刪除的既有交易會從網頁移除', () => {
     const local = state([
       { id: 'kept', updatedAt: '2026-08-29T06:00:00.000Z' },
@@ -84,6 +208,8 @@ describe('Sheet 雙向更新合併', () => {
       accountDeletes: [],
       budgetUpserts: [],
       budgetDeletes: [],
+      featureUpserts: { recurringRules: [], monthlySnapshots: [], reconciliations: [] },
+      featureDeletes: { recurringRules: [], monthlySnapshots: [], reconciliations: [] },
       features: false,
     });
     expect(previous).toEqual({ upserts: ['restored'], deletes: ['added'] });
@@ -217,10 +343,60 @@ describe('Sheet 雙向更新合併', () => {
     expect(hasPendingSheetChanges(pending)).toBe(true);
 
     const remote = state([], { featureSettings: { recurringRules: [], monthlySnapshots: [{ month: '2026-08' }], reconciliations: [] } });
-    expect(reconcileLedgerFromSheet(after, remote, pending).featureSettings).toEqual(after.featureSettings);
+    expect(reconcileLedgerFromSheet(after, remote, pending).featureSettings).toEqual({
+      recurringRules: after.featureSettings.recurringRules,
+      monthlySnapshots: remote.featureSettings.monthlySnapshots,
+      reconciliations: [],
+    });
     expect(reconcileLedgerFromSheet(before, remote, {}).featureSettings).toEqual(remote.featureSettings);
     expect(hasPendingSheetChanges({})).toBe(false);
     expect(mergeLedgerStates(after, state([])).featureSettings).toEqual(after.featureSettings);
+  });
+
+  it('功能設定按項目合併跨裝置編輯，並將本機刪除套用到 Sheet 最新狀態', () => {
+    const before = state([], { featureSettings: {
+      recurringRules: [{ id: 'deleted', name: '舊規則' }, { id: 'shared', name: '規則' }],
+      monthlySnapshots: [], reconciliations: [],
+    } });
+    const after = state([], { featureSettings: {
+      recurringRules: [{ id: 'shared', name: '本機編輯' }],
+      monthlySnapshots: [], reconciliations: [],
+    } });
+    const pending = updatePendingSheetChanges({}, before, after);
+    const remote = state([], { featureSettings: {
+      recurringRules: [
+        { id: 'deleted', name: '舊規則' },
+        { id: 'shared', name: 'Sheet 舊版本' },
+        { id: 'remote-only', name: '另一台新增' },
+      ],
+      monthlySnapshots: [{ month: '2026-08', assetTotal: 100 }],
+      reconciliations: [],
+    } });
+
+    expect(pending.featureUpserts.recurringRules).toEqual(['shared']);
+    expect(pending.featureDeletes.recurringRules).toEqual(['deleted']);
+    expect(reconcileLedgerFromSheet(after, remote, pending).featureSettings).toEqual({
+      recurringRules: [{ id: 'shared', name: '本機編輯' }, { id: 'remote-only', name: '另一台新增' }],
+      monthlySnapshots: remote.featureSettings.monthlySnapshots,
+      reconciliations: [],
+    });
+  });
+
+  it('不確認舊版 GAS 忽略的功能設定增量，且請求不會送出可覆蓋整份設定的欄位', async () => {
+    const payloads = [];
+    const fetchImpl = async (_url, request) => {
+      payloads.push(JSON.parse(request.body));
+      return { ok: true, json: async () => ({ ok: true, data: { accountCount: 0, transactionCount: 0, budgetCount: 0 } }) };
+    };
+    await expect(syncLedgerChangesToSheet({
+      endpoint: 'https://example.com/proxy',
+      proxyToken: 'token',
+      state: { accounts: [], transactions: [], budgets: [], featureSettings: { recurringRules: [], monthlySnapshots: [], reconciliations: [] } },
+      changes: { featureDeletes: { recurringRules: ['gone'] } },
+    }, { fetchImpl })).rejects.toThrow('功能設定尚未確認上傳');
+    expect(payloads[0].changes.featureSettings).toBeNull();
+    expect(payloads[0].changes.featureSettingsDelta).toBeNull();
+    expect(payloads[0].changes.featureDeletes.recurringRules).toEqual(['gone']);
   });
 
   it('只確認實際送出且仍是同一版本的交易，保留同步期間的再次編輯', () => {

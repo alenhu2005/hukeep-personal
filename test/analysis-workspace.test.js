@@ -2,6 +2,25 @@ import { describe, expect, it } from 'vitest';
 import { analysisRange, buildAnalysisWorkspace } from '../src/domain/analysis-workspace.js';
 
 describe('分析工作台', () => {
+  it('排除手動帳務調整的收支分析，同時保留原交易列', () => {
+    const model = buildAnalysisWorkspace([
+      { id: 'salary', type: 'income', amount: 1000, category: '薪資', date: '2026-09-01' },
+      { id: 'adj-in', type: 'income', amount: 300, category: '帳務調整', source: 'manual', date: '2026-09-02' },
+      { id: 'adj-out', type: 'expense', amount: 120, category: '帳務調整', source: 'manual', date: '2026-09-03' },
+      { id: 'meal', type: 'expense', amount: 80, category: '飲食', date: '2026-09-04' },
+    ], {
+      period: 'month', selectedMonth: '2026-09', today: '2026-09-04',
+      selectedDate: '2026-09-02',
+    });
+
+    expect(model.totals).toEqual({ income: 1000, expense: 80 });
+    expect(model.incomeGroups.map(row => row.category)).toEqual(['薪資']);
+    expect(model.expenseGroups.map(row => row.category)).toEqual(['飲食']);
+    expect(model.expenseTransactions.map(row => row.id)).toEqual(['meal']);
+    expect(model.selectedDay.totals).toEqual({ income: 0, expense: 0 });
+    expect(model.incomeInsights[2].value).toBe('未命名 · 1000');
+  });
+
   it('收支各自依大分類與小分類彙總，轉帳只納入手續費', () => {
     const model = buildAnalysisWorkspace([
       { id: 'a', type: 'income', amount: 1200, category: '接案', subcategory: '家教', date: '2026-09-01' },

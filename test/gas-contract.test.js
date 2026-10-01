@@ -8,6 +8,26 @@ describe('GAS 同步合約', () => {
     expect(() => new Function(source)).not.toThrow();
   });
 
+  it('功能設定同步逐項合併，並保留明確刪除而不清除其他裝置項目', () => {
+    const merge = new Function(`${source}\nreturn mergeFeatureSettings_;`)();
+    const rule = id => ({ id, name: id, type: 'expense', amount: 10, category: '生活', account: 'cash', cadence: 'monthly', day: 1, startDate: '2026-01-01' });
+    const result = merge({
+      recurringRules: [rule('remove'), rule('remote')],
+      monthlySnapshots: [{ month: '2026-08', assetTotal: 1 }],
+      reconciliations: [],
+    }, {
+      recurringRules: [rule('local')],
+    }, { recurringRules: ['remove'] }, false, { recurringRules: true });
+
+    expect(result.recurringRules).toEqual([
+      expect.objectContaining({ id: 'remote' }),
+      expect.objectContaining({ id: 'local' }),
+    ]);
+    expect(result.monthlySnapshots).toEqual([{ month: '2026-08', assetTotal: 1 }]);
+    expect(source).toContain('featureSettingsVersion: 1');
+    expect(source).toContain('changes.featureSettingsDelta');
+  });
+
   it('保留帳本 Sheet 同步，但不再暴露載具 API、排程或財政部 AppID 設定', () => {
     expect(source).toContain("body.action === 'syncLedgerState'");
     expect(source).toContain("body.action === 'syncLedgerChanges'");
@@ -16,39 +36,17 @@ describe('GAS 同步合約', () => {
     expect(source).toContain('小帳_帳戶');
     expect(source).toContain('小帳_交易');
     expect(source).not.toContain("body.action === 'syncCarrierInvoices'");
-    expect(source).not.toContain('EINVOICE_');
+    expect(source).not.toContain('EINVOICE_APP_ID');
+    expect(source).not.toContain('EINVOICE_UUID');
     expect(source).not.toContain('callEinvoice_');
     expect(source).not.toContain('1nlUSUpk5F4fnhDRTPWS4KlIIfqAYWkT6xn3965Xl8N-eRKiFyVjqNO4w');
   });
 
-  it('發票預覽只轉送固定唯讀端點，不觸碰 Sheet 或保存憑證', () => {
-    const fetch = (...args) => {
-      if (fetch.error) throw fetch.error;
-      fetch.calls.push(args);
-      return { getResponseCode: () => 200, getContentText: () => JSON.stringify({ result: 0, payload: { data: [] } }) };
-    };
-    fetch.calls = [];
-    const cache = { get: () => null, put: () => {} };
-    const relay = new Function('UrlFetchApp', 'CacheService', 'LockService',
-      `${source}\nreturn relayEInvoicePreview_;`)(
-      { fetch },
-      { getScriptCache: () => cache },
-      { getScriptLock: () => ({ waitLock: () => {}, releaseLock: () => {} }) },
-    );
-    expect(() => relay('list', 'aaa.bbb.ccc')).not.toThrow();
-    expect(fetch.calls[0][0]).toBe('https://upi.einvoice.nat.gov.tw/einvoice/carriers/query-invoices-header');
-    expect(fetch.calls[0][1].payload).toBe('einvoiceJwt=aaa.bbb.ccc');
-    expect(() => relay('https://example.com', 'aaa.bbb.ccc')).toThrow('操作不正確');
-    expect(() => relay('login', 'plain-password')).toThrow('格式不正確');
-    expect(fetch.calls).toHaveLength(1);
-    fetch.error = new Error('You do not have permission to call UrlFetchApp.fetch');
-    expect(() => relay('list', 'aaa.bbb.ccc')).toThrow('GAS 尚未授權對外連線');
-    fetch.error = new Error('Connection failed');
-    expect(() => relay('list', 'aaa.bbb.ccc')).toThrow('GAS 無法連到電子發票服務');
-    const relayBody = source.match(/function relayEInvoicePreview_\([\s\S]*?\n}\n/)?.[0] || '';
-    expect(relayBody).not.toContain('SpreadsheetApp');
-    expect(relayBody).not.toContain('PropertiesService');
-    expect(source).not.toContain("setProperty('EINVOICE");
+  it('不再提供發票或銀行連線操作與轉送端點', () => {
+    expect(source).not.toContain('relayEInvoicePreview');
+    expect(source).not.toContain('EINVOICE_RELAY');
+    expect(source).not.toContain('authorizeEInvoicePreview');
+    expect(source).not.toContain('workers.dev');
   });
 
   it('提供受授權的精準 Sheet 刪除操作，而非只從本機移除', () => {

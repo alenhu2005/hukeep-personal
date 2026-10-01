@@ -3,6 +3,8 @@ import {
   calculateTotalAssets,
   summarizeMonth,
 } from './insights.js';
+import { investmentMarketValue } from './investment-valuation.js';
+import { INVESTMENT_ACCOUNT_ID } from './investment-accounting.js';
 
 const MAX_RECURRING_RULES = 100;
 const MAX_MONTHLY_SNAPSHOTS = 120;
@@ -80,9 +82,20 @@ function normalizeReconciliation(value) {
   const id = cleanText(value?.id, 80);
   const accountId = cleanText(value?.accountId, 40);
   const actualBalance = safeInteger(value?.actualBalance, -1_000_000_000_000);
+  const estimatedBalance = value?.estimatedBalance == null
+    ? null
+    : safeInteger(value.estimatedBalance, -1_000_000_000_000);
   const date = cleanText(value?.date, 10);
   if (!id || !accountId || actualBalance == null || !validDate(date)) return null;
-  return { id, accountId, actualBalance, date, note: cleanText(value?.note, 120), createdAt: cleanText(value?.createdAt, 40) };
+  return {
+    id,
+    accountId,
+    actualBalance,
+    ...(estimatedBalance == null ? {} : { estimatedBalance }),
+    date,
+    note: cleanText(value?.note, 120),
+    createdAt: cleanText(value?.createdAt, 40),
+  };
 }
 
 export function normalizeFeatureSettings(value) {
@@ -96,6 +109,35 @@ export function normalizeFeatureSettings(value) {
     ? value.reconciliations.slice(0, MAX_RECONCILIATIONS).map(normalizeReconciliation).filter(Boolean)
     : [];
   return { recurringRules, monthlySnapshots, reconciliations };
+}
+
+export function upsertRecurringRule(settings, input) {
+  const current = normalizeFeatureSettings(settings);
+  const existing = current.recurringRules.find(rule => rule.id === cleanText(input?.id, 80));
+  const candidate = normalizeFeatureSettings({ recurringRules: [input] }).recurringRules[0];
+  if (!candidate) throw new Error('固定流水資料不完整，請檢查欄位');
+
+  const rule = existing && !candidate.createdAt
+    ? { ...candidate, createdAt: existing.createdAt }
+    : candidate;
+  const recurringRules = existing
+    ? current.recurringRules.map(item => item.id === rule.id ? rule : item)
+    : [...current.recurringRules, rule];
+  const next = normalizeFeatureSettings({ ...current, recurringRules });
+  if (next.recurringRules.length !== recurringRules.length) {
+    throw new Error('固定流水資料過多');
+  }
+  return next;
+}
+
+export function setRecurringRuleEnabled(settings, id, enabled) {
+  const current = normalizeFeatureSettings(settings);
+  if (typeof enabled !== 'boolean') throw new Error('固定流水狀態無效');
+  if (!current.recurringRules.some(rule => rule.id === id)) throw new Error('找不到固定流水');
+  return normalizeFeatureSettings({
+    ...current,
+    recurringRules: current.recurringRules.map(rule => rule.id === id ? { ...rule, enabled } : rule),
+  });
 }
 
 function lastDayOfMonth(year, month) {
@@ -200,8 +242,28 @@ export function findTransactionSignals(transactions) {
 }
 
 export function createMonthlySnapshot(state, month, createdAt = new Date().toISOString()) {
-  const summary = summarizeMonth(state.transactions || [], month);
-  const accountBalances = calculateAccountBalances(state.accounts || [], state.transactions || []);
+  const [year, monthNumber] = month.split('-').map(Number);
+  const monthEnd = dateText(year, monthNumber, lastDayOfMonth(year, monthNumber));
+  const transactions = (state.transactions || []).filter(transaction => transaction.date <= monthEnd);
+  const summary = summarizeMonth(transactions, month);
+  let accountBalances = calculateAccountBalances(state.accounts || [], transactions);
+  const principal = accountBalances.find(account => account.id === INVESTMENT_ACCOUNT_ID)?.balance;
+  const reconciliation = (state.featureSettings?.reconciliations || [])
+    .filter(item => item?.accountId === INVESTMENT_ACCOUNT_ID
+      && validDate(item.date)
+      && item.date <= monthEnd
+      && Number.isSafeInteger(item.actualBalance)
+      && item.actualBalance >= 0)
+    .toSorted((left, right) => right.date.localeCompare(left.date)
+      || String(right.createdAt).localeCompare(String(left.createdAt)))[0];
+  const marketValue = reconciliation
+    ? investmentMarketValue({ ...state, transactions }, reconciliation, principal)
+    : undefined;
+  if (marketValue !== undefined) {
+    accountBalances = accountBalances.map(account => account.id === INVESTMENT_ACCOUNT_ID
+      ? { ...account, balance: marketValue }
+      : account);
+  }
   return {
     month,
     assetTotal: calculateTotalAssets(accountBalances),

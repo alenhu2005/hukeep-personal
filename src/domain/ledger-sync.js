@@ -117,6 +117,105 @@ function reconcileEntities(localItems, remoteItems, pending, keyOf) {
   return result;
 }
 
+const FEATURE_KEYS = {
+  recurringRules: item => item?.id,
+  monthlySnapshots: item => item?.month,
+  reconciliations: item => item?.id,
+};
+
+function mergeConcurrentItems(baseItems, intendedItems, latestItems, keyOf) {
+  const changes = updateEntityChanges({}, baseItems, intendedItems, keyOf, 'upserts', 'deletes');
+  return reconcileEntities(intendedItems, latestItems, changes, keyOf);
+}
+
+function mergeConcurrentPreferences(base, intended, latest) {
+  const result = { ...(latest ?? {}) };
+  const basePreferences = base ?? {};
+  const intendedPreferences = intended ?? {};
+  new Set([...Object.keys(basePreferences), ...Object.keys(intendedPreferences)]).forEach(key => {
+    const hadBase = Object.prototype.hasOwnProperty.call(basePreferences, key);
+    const hasIntended = Object.prototype.hasOwnProperty.call(intendedPreferences, key);
+    if (!hasIntended && hadBase) delete result[key];
+    else if (hasIntended && (!hadBase || transactionChanged(basePreferences[key], intendedPreferences[key]))) {
+      result[key] = intendedPreferences[key];
+    }
+  });
+  return result;
+}
+
+export function mergeConcurrentLedgerState(baseState, intendedState, latestStoredState) {
+  const base = baseState ?? {};
+  const intended = intendedState ?? {};
+  const latest = latestStoredState ?? {};
+  const merged = { ...latest };
+  merged.transactions = mergeConcurrentItems(base.transactions, intended.transactions,
+    Array.isArray(latest.transactions) ? latest.transactions : [], item => String(item?.id ?? '').trim());
+  merged.accounts = mergeConcurrentItems(base.accounts, intended.accounts,
+    Array.isArray(latest.accounts) ? latest.accounts : [], item => String(item?.id ?? '').trim());
+  merged.budgets = mergeConcurrentItems(base.budgets, intended.budgets,
+    Array.isArray(latest.budgets) ? latest.budgets : [], item => String(item?.category ?? '').trim());
+  merged.preferences = mergeConcurrentPreferences(base.preferences, intended.preferences, latest.preferences);
+  merged.featureSettings = { ...(latest.featureSettings ?? {}) };
+  Object.entries(FEATURE_KEYS).forEach(([collection, keyOf]) => {
+    merged.featureSettings[collection] = mergeConcurrentItems(
+      base.featureSettings?.[collection],
+      intended.featureSettings?.[collection],
+      Array.isArray(latest.featureSettings?.[collection]) ? latest.featureSettings[collection] : [],
+      item => String(keyOf(item) ?? '').trim(),
+    );
+  });
+  return merged;
+}
+
+function featureChanges(before, after, current = {}) {
+  const upserts = { ...(current.upserts ?? {}) };
+  const deletes = { ...(current.deletes ?? {}) };
+  Object.entries(FEATURE_KEYS).forEach(([collection, keyOf]) => {
+    const oldItems = new Map((before?.[collection] ?? []).map(item => [String(keyOf(item) ?? ''), item]).filter(([key]) => key));
+    const newItems = new Map((after?.[collection] ?? []).map(item => [String(keyOf(item) ?? ''), item]).filter(([key]) => key));
+    const changed = new Set(entityIds(upserts[collection]));
+    const removed = new Set(entityIds(deletes[collection]));
+    newItems.forEach((item, key) => {
+      if (!oldItems.has(key) || transactionChanged(oldItems.get(key), item)) {
+        removed.delete(key);
+        changed.add(key);
+      }
+    });
+    oldItems.forEach((_item, key) => {
+      if (!newItems.has(key)) {
+        changed.delete(key);
+        removed.add(key);
+      }
+    });
+    upserts[collection] = [...changed];
+    deletes[collection] = [...removed];
+  });
+  return { upserts, deletes };
+}
+
+function reconcileFeatureSettings(local, remote, pending) {
+  const hasKeyedChanges = Object.values(pending?.featureUpserts ?? {}).some(items => entityIds(items).length) ||
+    Object.values(pending?.featureDeletes ?? {}).some(items => entityIds(items).length);
+  if (pending?.features && !hasKeyedChanges) return { ...(local ?? {}) };
+  const result = {};
+  Object.entries(FEATURE_KEYS).forEach(([collection, keyOf]) => {
+    const localItems = Array.isArray(local?.[collection]) ? local[collection] : [];
+    const remoteItems = Array.isArray(remote?.[collection]) ? remote[collection] : [];
+    const upserts = new Set(entityIds(pending?.featureUpserts?.[collection]));
+    const deletes = new Set(entityIds(pending?.featureDeletes?.[collection]));
+    const localByKey = new Map(localItems.map(item => [String(keyOf(item) ?? ''), item]).filter(([key]) => key));
+    const merged = remoteItems.filter(item => !deletes.has(String(keyOf(item) ?? ''))).map(item =>
+      upserts.has(String(keyOf(item) ?? '')) && localByKey.has(String(keyOf(item) ?? ''))
+        ? { ...localByKey.get(String(keyOf(item))) }
+        : { ...item },
+    );
+    const seen = new Set(merged.map(item => String(keyOf(item) ?? '')));
+    upserts.forEach(key => { if (!seen.has(key) && localByKey.has(key) && !deletes.has(key)) merged.push({ ...localByKey.get(key) }); });
+    result[collection] = merged;
+  });
+  return result;
+}
+
 export function hasPendingSheetChanges(value) {
   const coreChanges = [
     value?.upserts,
@@ -126,7 +225,9 @@ export function hasPendingSheetChanges(value) {
     value?.budgetUpserts,
     value?.budgetDeletes,
   ].some(items => entityIds(items).length > 0);
-  return coreChanges || Boolean(value?.features);
+  const featureChangesPending = Object.values(value?.featureUpserts ?? {}).some(items => entityIds(items).length) ||
+    Object.values(value?.featureDeletes ?? {}).some(items => entityIds(items).length);
+  return coreChanges || featureChangesPending || Boolean(value?.features);
 }
 
 function acknowledgeEntities(current, sent, sentItems, currentItems, keyOf, upsertField, deleteField) {
@@ -153,6 +254,16 @@ export function acknowledgePendingSheetChanges(current, sent, sentState, current
       idOf, 'accountUpserts', 'accountDeletes'),
     ...acknowledgeEntities(current, sent, sentState?.budgets, currentState?.budgets,
       item => String(item?.category ?? '').trim(), 'budgetUpserts', 'budgetDeletes'),
+    featureUpserts: Object.fromEntries(Object.keys(FEATURE_KEYS).map(collection => [collection,
+      entityIds(current?.featureUpserts?.[collection]).filter(id =>
+        !entityIds(sent?.featureUpserts?.[collection]).includes(id) || transactionChanged(
+          (sentState?.featureSettings?.[collection] ?? []).find(item => String(FEATURE_KEYS[collection](item)) === id),
+          (currentState?.featureSettings?.[collection] ?? []).find(item => String(FEATURE_KEYS[collection](item)) === id),
+        )),
+    ])),
+    featureDeletes: Object.fromEntries(Object.keys(FEATURE_KEYS).map(collection => [collection,
+      entityIds(current?.featureDeletes?.[collection]).filter(id => !entityIds(sent?.featureDeletes?.[collection]).includes(id)),
+    ])),
     features: Boolean(current?.features) && (!sent?.features || transactionChanged(
       sentState?.featureSettings ?? {}, currentState?.featureSettings ?? {},
     )),
@@ -204,6 +315,10 @@ export function updatePendingSheetChanges(current, beforeState, afterState) {
     'budgetUpserts',
     'budgetDeletes',
   );
+  const featureDelta = featureChanges(beforeState?.featureSettings, afterState?.featureSettings, {
+    upserts: current?.featureUpserts,
+    deletes: current?.featureDeletes,
+  });
   return {
     upserts: [...upserts],
     deletes: [...deletes],
@@ -211,6 +326,8 @@ export function updatePendingSheetChanges(current, beforeState, afterState) {
     accountDeletes: accounts.deletes,
     budgetUpserts: budgets.upserts,
     budgetDeletes: budgets.deletes,
+    featureUpserts: featureDelta.upserts,
+    featureDeletes: featureDelta.deletes,
     features: Boolean(current?.features) || transactionChanged(
       beforeState?.featureSettings ?? {},
       afterState?.featureSettings ?? {},
@@ -254,10 +371,6 @@ export function reconcileLedgerFromSheet(local, remote, pendingChanges = {}) {
       deletes: pendingChanges?.budgetDeletes,
     }, budget => String(budget?.category ?? '').trim()),
     preferences: { ...(local?.preferences ?? {}) },
-    featureSettings: pendingChanges?.features
-      ? { ...(local?.featureSettings ?? {}) }
-      : remote?.featureSettings
-        ? { ...remote.featureSettings }
-        : { ...(local?.featureSettings ?? {}) },
+    featureSettings: reconcileFeatureSettings(local?.featureSettings, remote?.featureSettings, pendingChanges),
   };
 }

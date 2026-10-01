@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { renderHistory, renderInsights, renderOverview, transactionRows } from '../src/views.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { renderBudgets, renderHistory, renderInsights, renderOverview, transactionRows } from '../src/views.js';
+import { todayInTaipei } from '../src/format.js';
 
 describe('交易列表', () => {
   it('以名稱為主文字，列表只保留分類與日期並安全跳脫', () => {
@@ -71,6 +72,61 @@ describe('總覽', () => {
     expect(html).toContain('data-testid="summary-income"');
     expect(html).toContain('data-testid="summary-expense"');
   });
+
+  it('投資市值取代本金，且後續交易不會改寫歷史對帳狀態', () => {
+    const html = renderOverview({
+      accounts: [
+        { id: 'cash', name: '現金', icon: '現', openingBalance: 100 },
+        { id: 'investment', name: '投資資產', icon: '投', openingBalance: 500 },
+      ],
+      transactions: [
+        { id: 'income', type: 'income', amount: 50, account: 'cash', date: '2026-09-01' },
+        { id: 'later', type: 'expense', amount: 30, account: 'cash', date: '2026-09-20' },
+      ],
+      budgets: [],
+      featureSettings: { reconciliations: [
+        { id: 'cash-check', accountId: 'cash', actualBalance: 150, date: '2026-09-10' },
+        { id: 'investment-value', accountId: 'investment', actualBalance: 900, date: '2026-09-15', createdAt: '2026-09-16T00:00:00Z' },
+        { id: 'older-investment-value', accountId: 'investment', actualBalance: 700, date: '2026-09-10', createdAt: '2026-09-20T00:00:00Z' },
+      ] },
+    }, '2026-09');
+
+    expect(html).toContain('data-testid="total-assets">NT$ 1,020</strong>');
+    expect(html).toContain('data-open-investment-valuation');
+    expect(html).toContain('已對帳 · 9/10');
+    expect(html).toContain('市值更新 · 9/15');
+    expect(html).not.toContain('差 NT$ 30');
+  });
+
+  it('市值更新後的買入只增加新增本金，不把舊本金算第二次', () => {
+    const html = renderOverview({
+      accounts: [
+        { id: 'cash', name: '現金', icon: '現', openingBalance: 2000 },
+        { id: 'investment', name: '投資資產', icon: '投', openingBalance: 1000 },
+      ],
+      transactions: [{ id: 'new-buy', type: 'transfer', amount: 200, fee: 0, category: '投資',
+        account: 'cash', toAccount: 'investment', date: '2026-09-20', name: 'ETF' }],
+      budgets: [],
+      featureSettings: { reconciliations: [{ id: 'valuation', accountId: 'investment',
+        actualBalance: 1200, estimatedBalance: 1000, date: '2026-09-10' }] },
+    }, '2026-09');
+    expect(html).toContain('data-testid="total-assets">NT$ 3,200</strong>');
+    expect(html).toContain('NT$ 1,400');
+  });
+
+  it('投資分析使用與總覽相同的手動市值', () => {
+    const state = {
+      accounts: [{ id: 'investment', name: '投資資產', icon: '投', openingBalance: 1000 }],
+      transactions: [], budgets: [],
+      featureSettings: { reconciliations: [{ id: 'valuation', accountId: 'investment',
+        actualBalance: 1200, estimatedBalance: 1000, date: '2026-09-10' }] },
+    };
+    const html = renderInsights(state, '2026-09', { insightFilters: {
+      period: 'month', section: 'investment', selectedDate: '', anchorDate: '2026-09-30',
+    } });
+    expect(html).toContain('目前投資資產');
+    expect(html).toContain('NT$ 1,200');
+  });
 });
 
 describe('紀錄篩選與月份', () => {
@@ -118,9 +174,55 @@ describe('紀錄篩選與月份', () => {
     expect(html).toContain('data-history-filter="category" data-history-value=""');
     expect(html).not.toContain('data-history-filter="category" data-history-value="飲食"');
   });
+
+  it('全部月份會搜尋歷史交易，並用相同範圍產生分類選項', () => {
+    const historical = {
+      id: 'older', type: 'expense', amount: 900, category: '居家', subcategory: '水電',
+      account: 'cash', date: '2026-08-01', name: '電費', note: '',
+    };
+    const html = renderHistory({ accounts, transactions: [...transactions, historical] }, '2026-09', {
+      query: '', type: 'expense', category: '', subcategory: '', account: '', preset: 'all', monthScope: 'all',
+    });
+
+    expect(html).toContain('data-history-month-scope="all" aria-pressed="true"');
+    expect(html).toContain('全部月份</p>');
+    expect(html).toContain('data-history-filter="category" data-history-value="居家"');
+    expect(html).toContain('電費');
+    expect(html).toContain('3 筆紀錄');
+  });
+});
+
+describe('預算月底預測', () => {
+  afterEach(() => vi.useRealTimers());
+  it('顯示資料足夠時的月底預估，資料不足時不顯示假預測', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-15T04:00:00Z'));
+    const today = todayInTaipei();
+    const month = today.slice(0, 7);
+    const state = {
+      accounts: [{ id: 'cash', name: '現金', icon: '現', openingBalance: 0 }],
+      budgets: [{ category: '飲食', limit: 100 }],
+      transactions: [{ id: 'meal', type: 'expense', amount: 300, category: '飲食', account: 'cash', date: `${month}-01` }],
+    };
+    const forecast = renderBudgets(state, month);
+    const insufficient = renderBudgets({ ...state, transactions: [] }, month);
+
+    expect(forecast).toContain('月底預估');
+    expect(forecast).toContain('可能超出');
+    expect(insufficient).not.toContain('月底預估');
+  });
 });
 
 describe('趨勢每日淨額', () => {
+  it('正向帳務調整不計入日曆收入或結餘', () => {
+    const html = renderInsights({
+      accounts: [{ id: 'cash', name: '現金', icon: '現', openingBalance: 0 }], budgets: [],
+      transactions: [{ id: 'balance-correction', type: 'income', amount: 20, category: '帳務調整',
+        source: 'manual', account: 'cash', date: '2026-09-10', name: '對帳調整' }],
+    }, '2026-09', { insightFilters: { period: 'month', section: 'overview', anchorDate: '2026-09-30' } });
+    expect(html).toContain('9/10 收入 NT$ 0，支出 NT$ 0，淨額 NT$ 0');
+    expect(html).not.toContain('9/10 收入 NT$ 20');
+  });
   it('以每日收支淨額標示紅色支出與綠色收入', () => {
     const html = renderInsights({
       accounts: [{ id: 'cash', name: '現金', icon: '現', openingBalance: 0 }],

@@ -63,3 +63,45 @@ export function parseBackup(text) {
     throw new Error('備份檔案無法讀取', { cause: error });
   }
 }
+
+function compareByKey(current, incoming, key) {
+  const currentByKey = new Map(current.map(item => [item[key], item]));
+  const incomingByKey = new Map(incoming.map(item => [item[key], item]));
+  let added = 0;
+  let changed = 0;
+  let removed = 0;
+
+  for (const [id, item] of incomingByKey) {
+    const previous = currentByKey.get(id);
+    if (!previous) added += 1;
+    else if (JSON.stringify(previous) !== JSON.stringify(item)) changed += 1;
+  }
+  for (const id of currentByKey.keys()) {
+    if (!incomingByKey.has(id)) removed += 1;
+  }
+  return { added, changed, removed };
+}
+
+export function previewBackupRestore(currentState, importedState) {
+  const current = normalizeLedgerState(currentState);
+  const imported = normalizeLedgerState(importedState);
+  const currentFeatures = current.featureSettings;
+  const importedFeatures = imported.featureSettings;
+  const counts = {
+    transactions: compareByKey(current.transactions, imported.transactions, 'id'),
+    accounts: compareByKey(current.accounts, imported.accounts, 'id'),
+    budgets: compareByKey(current.budgets, imported.budgets, 'category'),
+    recurringRules: compareByKey(currentFeatures.recurringRules, importedFeatures.recurringRules, 'id'),
+    monthlySnapshots: compareByKey(currentFeatures.monthlySnapshots, importedFeatures.monthlySnapshots, 'month'),
+    reconciliations: compareByKey(currentFeatures.reconciliations, importedFeatures.reconciliations, 'id'),
+    preferences: {
+      added: 0,
+      changed: JSON.stringify(current.preferences) === JSON.stringify(imported.preferences) ? 0 : 1,
+      removed: 0,
+    },
+  };
+  return {
+    ...counts,
+    hasChanges: Object.values(counts).some(({ added, changed, removed }) => added + changed + removed > 0),
+  };
+}

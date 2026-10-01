@@ -77,14 +77,14 @@ test('可新增收支、重新整理仍保留並透過歷史搜尋', async ({ pa
   expect(corrected.subcategory).toBe('便當');
 });
 
-test('智慧匯入只保留截圖 OCR 與 AI 分類，不再顯示載具同步', async ({ page }) => {
+test('移除發票與銀行整合，但保留帳戶、備份與 Sheet 同步', async ({ page }) => {
   await page.getByRole('button', { name: '備份與設定' }).click();
-  await page.getByRole('button', { name: '智慧匯入' }).click();
-
-  await expect(page.getByRole('heading', { name: '截圖自動記帳' })).toBeVisible();
-  await expect(page.locator('#carrier-form')).toHaveCount(0);
-  await expect(page.getByText('財政部載具同步')).toHaveCount(0);
-  await expect(page.getByText('載具驗證碼')).toHaveCount(0);
+  const tools = page.locator('#tools-dialog');
+  await expect(page.locator('#smart-import-dialog, #einvoice-preview-form, #invoice-file-input')).toHaveCount(0);
+  await expect(tools.getByText(/發票|銀行登入|網銀/)).toHaveCount(0);
+  await expect(tools.locator('#opening-balance-fields input')).toHaveCount(6);
+  await expect(tools.locator('#export-json')).toBeVisible();
+  await expect(tools.locator('#sheet-sync-form')).toBeVisible();
 });
 
 test('手機記帳移除多餘分類提示，且長對話框仍固定保留關閉按鈕', async ({ page }) => {
@@ -269,6 +269,9 @@ test('口語內容直接上傳 Sheet，不等待 AI 審查', async ({ page }) =>
   await page.getByRole('button', { name: '直接記帳', exact: true }).click();
   await expect(page.getByText('已先記下 1 筆，網路恢復後會自動上傳。')).toBeVisible();
 
+  await expect.poll(() => page.evaluate(() =>
+    JSON.parse(localStorage.getItem('hukeep_personal_state_v1')).transactions[0]?.name,
+  )).toBe('高鐵車票');
   const saved = await page.evaluate(() =>
     JSON.parse(localStorage.getItem('hukeep_personal_state_v1')).transactions[0],
   );
@@ -635,7 +638,7 @@ test('預算儲存後會自動同步，切換頁面會立即讀取 Sheet', async
       changeRequests.push(body);
       await route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({ ok: true, data: { accountCount: 5, transactionCount: 0, budgetCount: 1 } }),
+        body: JSON.stringify({ ok: true, data: { accountCount: 5, transactionCount: 0, budgetCount: 1, featureSettingsVersion: 1 } }),
       });
       return;
     }
@@ -752,19 +755,19 @@ test('手機可直接輸入一次性短碼完成綁定', async ({ page }) => {
 });
 
 test('可設定帳戶初始金額並安全同步到 Google Sheet', async ({ page }) => {
-  let receivedBody;
+  const receivedBodies = [];
   let remote = { schemaVersion: 1, accounts: [], transactions: [], budgets: [] };
   await page.route('https://proxy.example/sheet', async route => {
     const body = route.request().postDataJSON();
     if (body.action === 'syncLedgerChanges') {
-      receivedBody = body;
+      receivedBodies.push(body);
       remote = { ...remote, accounts: body.changes.accounts };
     }
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({
         ok: true,
-        data: body.action === 'loadLedgerState' ? remote : { accountCount: 5, transactionCount: 0, budgetCount: 0 },
+        data: body.action === 'loadLedgerState' ? remote : { accountCount: 5, transactionCount: 0, budgetCount: 0, featureSettingsVersion: 1 },
       }),
     });
   });
@@ -790,7 +793,7 @@ test('可設定帳戶初始金額並安全同步到 Google Sheet', async ({ page
 
   await expect(page.getByText('同步完成：6 個帳戶、0 筆交易、0 筆預算。')).toBeVisible();
   await expect(page.locator('#sync-indicator')).toContainText('已同步');
-  expect(receivedBody).toMatchObject({
+  expect(receivedBodies.find(body => body.changes.accounts.some(account => account.id === 'cash' && account.openingBalance === 15000))).toMatchObject({
     action: 'syncLedgerChanges',
     proxyToken: 'session-token',
     changes: {

@@ -1,4 +1,4 @@
-import { expenseAmount, expenseCategory } from './insights.js';
+import { expenseAmount, expenseCategory, isAccountingAdjustment } from './insights.js';
 import { investmentDirection, isInvestmentTransfer, summarizeInvestmentFlows } from './investment-accounting.js';
 
 function dateFromText(value) {
@@ -58,7 +58,7 @@ function inRange(transaction, range) {
 
 function totals(transactions) {
   return transactions.reduce((result, transaction) => ({
-    income: result.income + (transaction.type === 'income' ? Number(transaction.amount) || 0 : 0),
+    income: result.income + (transaction.type === 'income' && !isAccountingAdjustment(transaction) ? Number(transaction.amount) || 0 : 0),
     expense: result.expense + expenseAmount(transaction),
   }), { income: 0, expense: 0 });
 }
@@ -86,6 +86,7 @@ function comparisonRange(range, period, currentDate) {
 }
 
 function amountFor(transaction, type) {
+  if (isAccountingAdjustment(transaction)) return 0;
   return type === 'income' && transaction.type === 'income'
     ? Number(transaction.amount) || 0
     : type === 'expense'
@@ -256,7 +257,7 @@ export function buildAnalysisWorkspace(transactions, options = {}) {
     change == null ? { label: '較前期', value: '尚無可比較資料' } : { label: '較前期', value: `${change > 0 ? '+' : ''}${change}%` },
     largest ? { label: '最大單筆', value: `${largest.name || '未命名'} · ${largest.amount}` } : { label: '最大單筆', value: '尚無資料' },
   ];
-  const incomeLargest = scoped.filter(row => row.type === 'income').toSorted((a, b) => b.amount - a.amount)[0];
+  const incomeLargest = scoped.filter(row => amountFor(row, 'income') > 0).toSorted((a, b) => b.amount - a.amount)[0];
   const incomeChange = percentChange(totalsNow.income, previousTotals.income);
   const incomeInsights = [
     { label: '主要來源', value: incomeGroups.length ? `${incomeGroups[0].category} ${incomeGroups[0].percent}%` : '尚無收入' },

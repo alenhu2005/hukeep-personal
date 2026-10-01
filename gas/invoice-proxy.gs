@@ -38,7 +38,7 @@ var INVESTMENT_SNAPSHOT_DATE = '2026-09-18';
 var INVESTMENT_SNAPSHOT_ASSET = 12891;
 
 function doGet() {
-  return jsonOutput_({ ok: true, data: { service: 'hukeep-invoice-proxy' } });
+  return jsonOutput_({ ok: true, data: { service: 'hukeep-ledger-proxy' } });
 }
 
 function authorizeSpreadsheetAccess() {
@@ -46,16 +46,6 @@ function authorizeSpreadsheetAccess() {
   return spreadsheet.getId();
 }
 
-// Run once in the Apps Script editor after adding invoice preview. This
-// requests the external-fetch permission without sending login credentials.
-function authorizeEInvoicePreview() {
-  var response = UrlFetchApp.fetch('https://uia.einvoice.nat.gov.tw/', {
-    method: 'get',
-    followRedirects: false,
-    muteHttpExceptions: true
-  });
-  return response.getResponseCode();
-}
 
 function installBackgroundProcessing() {
   ensureSpokenQueueTrigger_();
@@ -73,9 +63,6 @@ function doPost(event) {
       return jsonOutput_({ ok: true, data: claimDeviceBinding_(body.code) });
     }
     authorize_(body.proxyToken);
-    if (body.action === 'relayEInvoicePreview') {
-      return jsonOutput_({ ok: true, data: relayEInvoicePreview_(body.stage, body.payload) });
-    }
     if (body.action === 'createDevicePairingCode') {
       return jsonOutput_({ ok: true, data: createDevicePairingCode_() });
     }
@@ -117,78 +104,6 @@ function authorize_(providedToken) {
   if (!providedToken || String(providedToken) !== expectedToken) throw new Error('代理通行碼不正確');
 }
 
-// Only these three read-only invoice calls are reachable through the proxy.
-// Credentials arrive inside the encrypted login packet; nothing is persisted.
-function relayEInvoicePreview_(stage, payload) {
-  var routes = {
-    login: 'https://uia.einvoice.nat.gov.tw/mid/v1/login',
-    list: 'https://upi.einvoice.nat.gov.tw/einvoice/carriers/query-invoices-header',
-    detail: 'https://upi.einvoice.nat.gov.tw/einvoice/carriers/query-invoices-details'
-  };
-  if (!Object.prototype.hasOwnProperty.call(routes, stage)) throw new Error('發票預覽操作不正確');
-  payload = String(payload == null ? '' : payload);
-  var valid = stage === 'login'
-    ? /^[A-Za-z0-9]{16}\|[A-Za-z0-9+/=]{20,8000}\|[A-Za-z0-9]{16}$/.test(payload)
-    : /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(payload) && payload.length <= 12000;
-  if (!valid) throw new Error('發票預覽請求格式不正確');
-  enforceInvoicePreviewRateLimit_(stage);
-  var headers = {
-    Accept: 'application/json',
-    'User-Agent': 'okhttp/5.3.0',
-    appver: '6.800.2',
-    appbn: '66',
-    platform: 'android',
-    version: '6.800.2'
-  };
-  var isLogin = stage === 'login';
-  var options = {
-    method: 'post',
-    contentType: isLogin ? 'application/json; charset=utf-8' : 'application/x-www-form-urlencoded; charset=utf-8',
-    headers: headers,
-    payload: isLogin ? JSON.stringify({ ldata: payload }) : 'einvoiceJwt=' + encodeURIComponent(payload),
-    followRedirects: false,
-    muteHttpExceptions: true
-  };
-  var response;
-  try {
-    response = UrlFetchApp.fetch(routes[stage], options);
-  } catch (error) {
-    var reason = String(error && error.message || '');
-    if (/permission|authorization|script\.external_request|權限|授權/i.test(reason)) {
-      throw new Error('GAS 尚未授權對外連線；請在編輯器執行 authorizeEInvoicePreview');
-    }
-    throw new Error('GAS 無法連到電子發票服務；可能是網路或服務端限制');
-  }
-  var status = response.getResponseCode();
-  var raw = response.getContentText();
-  if (raw.length > 1048576) throw new Error('電子發票回應過大');
-  var parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (error) {
-    throw new Error('電子發票服務回傳無法解讀');
-  }
-  if (status < 200 || status > 599 || status >= 300 && status < 400) {
-    throw new Error('電子發票服務回傳狀態不正確');
-  }
-  return { status: status, body: parsed };
-}
-
-function enforceInvoicePreviewRateLimit_(stage) {
-  var bucket = Math.floor(Date.now() / 600000);
-  var key = 'invoice-preview:' + stage + ':' + bucket;
-  var limit = stage === 'login' ? 6 : 120;
-  var lock = LockService.getScriptLock();
-  lock.waitLock(5000);
-  try {
-    var cache = CacheService.getScriptCache();
-    var count = Number(cache.get(key) || 0);
-    if (count >= limit) throw new Error('發票預覽請求過於頻繁，請稍後再試');
-    cache.put(key, String(count + 1), 660);
-  } finally {
-    lock.releaseLock();
-  }
-}
 
 function pairingCodeHash_(code) {
   var bytes = Utilities.computeDigest(
@@ -306,7 +221,7 @@ function syncLedgerState_(state) {
     replaceSheetContents_(transactionSheet, mergeLedgerTransactionRows_(transactionSheet, transactionRows));
     repairInvestmentAccountSheet_(accountSheet, transactionSheet);
     replaceSheetContents_(getOrCreateSheet_(spreadsheet, '小帳_設定'), settingsRows);
-    writeFeatureSettings_(spreadsheet, featureSettings);
+    writeFeatureSettings_(spreadsheet, mergeFeatureSettings_(readFeatureSettings_(spreadsheet), featureSettings, {}, true));
     ensureVoiceQueueForTransactions_(spreadsheet, transactions);
     SpreadsheetApp.flush();
   } finally {
@@ -328,9 +243,11 @@ function syncLedgerChanges_(changes) {
   var transactionDeletes = limitedTextArray_(changes.transactionDeletes, 5000, 80, '交易刪除');
   var budgets = limitedArray_(changes.budgets, 100, '預算');
   var budgetDeletes = limitedTextArray_(changes.budgetDeletes, 100, 40, '預算刪除');
-  var featureSettings = changes.featureSettings && typeof changes.featureSettings === 'object'
-    ? normalizeFeatureSettings_(changes.featureSettings)
-    : null;
+  var rawFeatureSettings = changes.featureSettingsDelta && typeof changes.featureSettingsDelta === 'object'
+    ? changes.featureSettingsDelta
+    : (changes.featureSettings && typeof changes.featureSettings === 'object' ? changes.featureSettings : null);
+  var featureSettings = rawFeatureSettings ? normalizeFeatureSettings_(rawFeatureSettings) : null;
+  var featureDeletes = changes.featureDeletes && typeof changes.featureDeletes === 'object' ? changes.featureDeletes : {};
   var syncedAt = new Date().toISOString();
 
   var accountRows = accounts.map(function (account) {
@@ -366,13 +283,16 @@ function syncLedgerChanges_(changes) {
     ensureVoiceQueueForTransactions_(spreadsheet, transactions);
     upsertSheetRowById_(settingsSheet, ['schemaVersion', 1]);
     upsertSheetRowById_(settingsSheet, ['syncedAt', syncedAt]);
-    if (featureSettings) writeFeatureSettings_(spreadsheet, featureSettings);
+    if (featureSettings || Object.keys(featureDeletes).length) {
+      writeFeatureSettings_(spreadsheet, mergeFeatureSettings_(readFeatureSettings_(spreadsheet), featureSettings || {}, featureDeletes, false, rawFeatureSettings));
+    }
     SpreadsheetApp.flush();
     return {
       accountCount: countSheetRowsById_(accountSheet),
       transactionCount: countSheetRowsById_(transactionSheet),
       budgetCount: countBudgetRows_(settingsSheet),
       syncedAt: syncedAt,
+      featureSettingsVersion: 1,
     };
   } finally {
     lock.releaseLock();
@@ -701,6 +621,28 @@ function normalizeFeatureSettings_(value) {
   var text = JSON.stringify(settings);
   if (text.length > 60000) throw new Error('功能設定資料過大');
   return settings;
+}
+
+function mergeFeatureSettings_(existing, incoming, deletes, mergeAll, supplied) {
+  var current = normalizeFeatureSettings_(existing);
+  var next = normalizeFeatureSettings_(incoming);
+  var result = {};
+  var keys = {
+    recurringRules: function (item) { return boundedText_(item && item.id, 80); },
+    monthlySnapshots: function (item) { return boundedText_(item && item.month, 7); },
+    reconciliations: function (item) { return boundedText_(item && item.id, 80); },
+  };
+  Object.keys(keys).forEach(function (collection) {
+    var base = new Map((current[collection] || []).map(function (item) { return [keys[collection](item), item]; }).filter(function (pair) { return pair[0]; }));
+    var changed = new Map((next[collection] || []).map(function (item) { return [keys[collection](item), item]; }).filter(function (pair) { return pair[0]; }));
+    var removed = new Set(limitedTextArray_(deletes[collection] || [], 200, 80, '功能設定刪除'));
+    if (mergeAll || Object.prototype.hasOwnProperty.call(supplied || {}, collection)) {
+      changed.forEach(function (item, key) { base.set(key, item); });
+    }
+    removed.forEach(function (key) { base.delete(key); });
+    result[collection] = Array.from(base.values()).slice(-({ recurringRules: 100, monthlySnapshots: 120, reconciliations: 200 }[collection]));
+  });
+  return normalizeFeatureSettings_(result);
 }
 
 function writeFeatureSettings_(spreadsheet, value) {

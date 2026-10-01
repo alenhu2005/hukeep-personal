@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { parseBackup, serializeBackup, transactionsToCsv } from '../src/backup.js';
+import {
+  parseBackup,
+  previewBackupRestore,
+  serializeBackup,
+  transactionsToCsv,
+} from '../src/backup.js';
 import {
   STORAGE_KEY,
   createEmptyState,
@@ -339,5 +344,59 @@ describe('備份', () => {
     expect(csv).toContain('類型,名稱,金額,手續費,分類,帳戶,目的帳戶,日期,備註');
     expect(csv).toContain('expense,午餐,120');
     expect(csv).toContain("\"'=SUM(1,2) 「午餐」\"");
+  });
+
+  it('還原預覽在狀態相同時回報零變更', () => {
+    expect(previewBackupRestore(state, parseBackup(serializeBackup(state)))).toEqual({
+      transactions: { added: 0, changed: 0, removed: 0 },
+      accounts: { added: 0, changed: 0, removed: 0 },
+      budgets: { added: 0, changed: 0, removed: 0 },
+      recurringRules: { added: 0, changed: 0, removed: 0 },
+      monthlySnapshots: { added: 0, changed: 0, removed: 0 },
+      reconciliations: { added: 0, changed: 0, removed: 0 },
+      preferences: { added: 0, changed: 0, removed: 0 },
+      hasChanges: false,
+    });
+  });
+
+  it('還原預覽明確計算被移除的資料', () => {
+    const current = {
+      ...createEmptyState(),
+      accounts: [...createEmptyState().accounts, { id: 'travel', name: '旅費', icon: '旅', openingBalance: 0 }],
+      transactions: [state.transactions[0]],
+      budgets: [{ category: '飲食', limit: 3000 }],
+    };
+    const imported = createEmptyState();
+
+    expect(previewBackupRestore(current, imported)).toMatchObject({
+      transactions: { added: 0, changed: 0, removed: 1 },
+      accounts: { added: 0, changed: 0, removed: 1 },
+      budgets: { added: 0, changed: 0, removed: 1 },
+      hasChanges: true,
+    });
+  });
+
+  it('還原預覽包含設定集合與偏好變更', () => {
+    const current = createEmptyState();
+    current.featureSettings = {
+      recurringRules: [{ id: 'rent', name: '房租', type: 'expense', amount: 12000, category: '居家', account: 'cash', cadence: 'monthly', day: 1, startDate: '2026-01-01' }],
+      monthlySnapshots: [{ month: '2026-08', assetTotal: 100 }],
+      reconciliations: [{ id: 'cash-check', accountId: 'cash', actualBalance: 100, date: '2026-08-31' }],
+    };
+    current.preferences = { theme: 'dark' };
+    const imported = createEmptyState();
+    imported.featureSettings = {
+      recurringRules: [],
+      monthlySnapshots: [{ month: '2026-08', assetTotal: 200 }],
+      reconciliations: [{ id: 'cash-check', accountId: 'cash', actualBalance: 100, date: '2026-08-31' }],
+    };
+
+    expect(previewBackupRestore(current, imported)).toMatchObject({
+      recurringRules: { added: 0, changed: 0, removed: 1 },
+      monthlySnapshots: { added: 0, changed: 1, removed: 0 },
+      reconciliations: { added: 0, changed: 0, removed: 0 },
+      preferences: { changed: 1 },
+      hasChanges: true,
+    });
   });
 });

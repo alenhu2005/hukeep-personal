@@ -1,4 +1,4 @@
-const CACHE_NAME = 'hukeep-personal-shell-v1';
+const CACHE_NAME = 'hukeep-personal-shell-v2';
 const APP_SHELL = ['./', './manifest.json', './icons/icon.svg'];
 
 self.addEventListener('install', event => {
@@ -20,7 +20,13 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
 
   if (request.mode === 'navigate') {
-    event.respondWith(fetch(request).catch(() => caches.match('./')));
+    event.respondWith(fetch(request).then(async response => {
+      if (response.ok) {
+        const cache = await caches.open(CACHE_NAME);
+        await cache.put('./', response.clone());
+      }
+      return response;
+    }).catch(() => caches.match('./')));
     return;
   }
 

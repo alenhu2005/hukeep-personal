@@ -77,6 +77,7 @@
               <button id="voice-submit-button" class="primary-button" type="button">直接記帳</button>
             </div>
             <p id="voice-status" class="form-error" role="status" hidden></p>
+            <div id="voice-review" class="settings-list" hidden></div>
           </div>
         </section>
 
@@ -163,9 +164,6 @@
       </div>
       <p class="tools-intro">資料只存在這台裝置。建議定期匯出 JSON，換機時就能完整還原。</p>
       <div class="tool-actions">
-        <button id="smart-import-button" class="tool-action featured" type="button">
-          <strong>智慧匯入</strong><span>截圖 OCR · AI 細分類</span>
-        </button>
         <button id="export-json" class="tool-action" type="button">
           <strong>匯出完整備份</strong><span>JSON · 可還原</span>
         </button>
@@ -196,6 +194,7 @@
           <p>薪資、訂閱或投資定期扣款會在到期日自動建立，並照常同步到 Sheet。</p>
         </div>
         <form id="recurring-rule-form" class="compact-settings-form">
+          <input name="id" type="hidden" />
           <label><span>名稱</span><input name="name" maxlength="120" required /></label>
           <label><span>金額</span><input name="amount" type="number" min="1" step="1" inputmode="numeric" required /></label>
           <label><span>類型</span><select name="type"><option value="expense">支出</option><option value="income">收入</option><option value="transfer">轉帳</option></select></label>
@@ -208,6 +207,7 @@
           <label class="recurring-fee" hidden><span>手續費</span><input name="fee" type="number" min="0" step="1" inputmode="numeric" value="0" /></label>
           <label class="wide"><span>備註</span><input name="note" maxlength="240" /></label>
           <button class="primary-button wide" type="submit">新增固定流水</button>
+          <button id="recurring-edit-cancel" class="secondary-button wide" type="button" hidden>取消編輯</button>
         </form>
         <div id="recurring-rule-list" class="settings-list"></div>
       </section>
@@ -261,23 +261,17 @@
           <p id="sync-health-status" class="settings-status" role="status"></p>
         </form>
       </section>
-      <section class="settings-section" aria-labelledby="einvoice-preview-title">
-        <div class="settings-section-heading">
-          <h3 id="einvoice-preview-title">預覽電子發票資料</h3>
-          <p>只讀取最近兩個期別；預覽，尚未記帳。關閉設定後會清除本次預覽。</p>
-        </div>
-        <form id="einvoice-preview-form" class="compact-settings-form" autocomplete="off">
-          <label><span>電子發票 App 手機號碼</span><input name="mobile" type="tel" inputmode="tel" pattern="09[0-9]{8}" maxlength="10" autocomplete="off" required /></label>
-          <label><span>電子發票 App 密碼</span><input name="password" type="password" maxlength="128" autocomplete="off" required /></label>
-          <button class="primary-button wide" type="submit">登入並預覽</button>
-        </form>
-        <p id="einvoice-preview-status" class="settings-status" role="status" aria-live="polite">憑證只用於這次預覽，不會存入帳本或 Sheet。</p>
-        <div id="einvoice-preview-results" class="einvoice-preview-results"></div>
-      </section>
       <div class="privacy-note">
         <span aria-hidden="true">●</span>
         <p><strong>離線優先</strong><br />帳本先存在裝置；只有同步與後台 AI 審查時才會連到你的私人 GAS 與 Sheet。</p>
       </div>
+    </dialog>
+
+    <dialog id="backup-preview-dialog" class="app-dialog">
+      <div class="dialog-header"><h2>確認還原備份</h2><button class="icon-button dialog-close" type="button" aria-label="關閉">×</button></div>
+      <div id="backup-preview-content" class="settings-list"></div>
+      <p>還原會以備份取代目前帳本。執行前會下載目前資料供復原。</p>
+      <div class="sheet-sync-actions"><button id="backup-preview-confirm" class="primary-button" type="button">下載現有備份並還原</button><button id="backup-preview-cancel" class="secondary-button" type="button">取消</button></div>
     </dialog>
 
     <dialog id="device-binding-dialog" class="app-dialog device-binding-dialog">
@@ -300,53 +294,6 @@
       </div>
     </dialog>
 
-    <dialog id="smart-import-dialog" class="app-dialog smart-import-dialog">
-      <div class="dialog-header">
-        <div>
-          <p class="eyebrow">不用重複輸入</p>
-          <h2>智慧匯入</h2>
-        </div>
-        <button class="icon-button dialog-close" type="button" aria-label="關閉">×</button>
-      </div>
-
-      <div class="smart-import-grid">
-        <section class="import-card" aria-labelledby="ocr-title">
-          <div class="import-card-heading">
-            <span class="import-step">01</span>
-            <div><h3 id="ocr-title">截圖自動記帳</h3><p>圖片只在這台裝置 OCR，不會上傳。</p></div>
-          </div>
-          <label class="image-drop" for="receipt-image">
-            <strong>選擇發票或付款截圖</strong>
-            <span>JPG、PNG、WebP · 最大 12 MB</span>
-            <input id="receipt-image" type="file" accept="image/jpeg,image/png,image/webp,image/bmp" />
-          </label>
-          <p id="ocr-progress" class="import-progress" role="status">選擇圖片後，會先辨識再讓你確認。</p>
-
-          <form id="ocr-draft-form" class="import-draft" hidden>
-            <div class="classification-pill"><span aria-hidden="true">✦</span><span id="ocr-classification-hint">已自動分類</span></div>
-            <div class="import-form-grid">
-              <label class="wide"><span>商家</span><input name="merchant" maxlength="120" required /></label>
-              <label><span>金額</span><input name="amount" type="number" min="1" step="1" required /></label>
-              <label><span>日期</span><input name="date" type="date" required /></label>
-              <label><span>大分類</span><select name="category" required></select></label>
-              <label><span>小分類</span><select name="subcategory" required></select></label>
-              <fieldset class="account-choice-field wide">
-                <legend>帳戶</legend>
-                <select id="ocr-account" class="visually-hidden" name="account" tabindex="-1" aria-hidden="true" required></select>
-                <div class="account-choice-buttons compact" data-account-for="ocr-account"></div>
-              </fieldset>
-              <label><span>發票號碼</span><input name="invoiceNumber" maxlength="12" placeholder="AB12345678" /></label>
-            </div>
-            <details class="ocr-raw"><summary>查看 OCR 原文</summary><textarea name="rawText" rows="5"></textarea></details>
-            <div class="import-form-actions">
-              <button id="ocr-ai-classify" class="secondary-button" type="button">用 AI 再分類</button>
-              <button class="primary-button" type="submit">確認記帳</button>
-            </div>
-          </form>
-        </section>
-
-      </div>
-    </dialog>
 
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
     <script type="module" src="/src/main.js"></script>
