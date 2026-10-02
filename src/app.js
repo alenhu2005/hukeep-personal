@@ -513,7 +513,12 @@ export function createApp() {
 
   function render(options = {}) {
     historySelection.ids = historySelection.ids.filter(id => state.transactions.some(item => item.id === id));
+    const disclosures = new Map([...main.querySelectorAll('[data-analysis-disclosure]')]
+      .map(element => [element.dataset.analysisDisclosure, element.open]));
     main.innerHTML = renderView(view, state, selectedMonth, historyFilters, { insightFilters, historySelection });
+    main.querySelectorAll('[data-analysis-disclosure]').forEach(element => {
+      if (disclosures.has(element.dataset.analysisDisclosure)) element.open = disclosures.get(element.dataset.analysisDisclosure);
+    });
     if (toolsDialog.open) {
       renderRecurringRules();
       renderReconciliations();
@@ -1252,6 +1257,8 @@ export function createApp() {
       const selected = insightFilters.compareSubcategories || [];
       insightFilters = { ...insightFilters, compareSubcategories: selected.includes(value) ? selected.filter(item => item !== value) : [...selected, value] };
       render();
+      [...main.querySelectorAll('[data-insight-compare-subcategory]')]
+        .find(button => button.dataset.insightCompareSubcategory === value)?.focus({ preventScroll: true });
       return;
     }
     if (Object.hasOwn(target.dataset, 'bulkToggle')) {
@@ -1305,6 +1312,7 @@ export function createApp() {
         compareSubcategories: [],
       };
       render();
+      (main.querySelector('.analysis-focus h2') || main.querySelector('[data-insight-category]'))?.focus({ preventScroll: true });
       return;
     }
     if (Object.hasOwn(target.dataset, 'insightSubcategory')) {
@@ -1314,6 +1322,7 @@ export function createApp() {
         subcategory: insightFilters.subcategory === subcategory ? '' : subcategory,
       };
       render();
+      main.querySelector('.analysis-focus h2')?.focus({ preventScroll: true });
       return;
     }
     if (target.dataset.insightShift) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  analysisHeatLevel,
+  analysisHeatIntensity,
   buildAnalysisWorkspace,
 } from '../src/domain/analysis-workspace.js';
 import { renderAnalysisUpgrades } from '../src/views/analysis-upgrades.js';
@@ -69,10 +69,22 @@ describe('分析升級圖表資料', () => {
     ]);
   });
 
-  it('使用固定正負共用熱度門檻', () => {
-    expect([0, 100, 101, 500, 501, 2000, 2001, 10000, 10001].map(analysisHeatLevel))
-      .toEqual([0, 1, 2, 2, 3, 3, 4, 4, 5]);
-    expect(analysisHeatLevel(-501)).toBe(3);
+  it('正負共用連續熱度，金額增加時平滑變深且不超出可讀範圍', () => {
+    const values = [0, 100, 101, 500, 501, 2000, 2001, 10000, 10001, 100000000].map(analysisHeatIntensity);
+    expect(values[0]).toBe(0);
+    values.slice(1).forEach((value, index) => {
+      expect(value).toBeGreaterThan(values[index]);
+      expect(value).toBeLessThan(72);
+    });
+    expect(analysisHeatIntensity(101) - analysisHeatIntensity(100)).toBeLessThan(.1);
+    expect(analysisHeatIntensity(-501)).toBe(analysisHeatIntensity(501));
+    expect(analysisHeatIntensity(Infinity)).toBe(0);
+    expect(analysisHeatIntensity('invalid')).toBe(0);
+  });
+
+  it('未選大分類時不自行展開其他分類的分析', () => {
+    const html = renderAnalysisUpgrades({}, workspace({ category: '' }), { section: 'income', category: '' });
+    expect(html).toBe('');
   });
 
   it('以可鑽取按鈕呈現分類前後期與多選小分類圖表', () => {

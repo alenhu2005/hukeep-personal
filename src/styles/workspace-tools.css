@@ -14,17 +14,6 @@
 .drill-transactions small { color:var(--muted); }
 .drill-transactions strong { overflow-wrap:anywhere; }
 #refund-link-form { border-top:1px solid var(--line); padding-top:12px; }
-.analysis-section-tabs button, .analysis-tabs button { min-height:44px; }
-.analysis-heat-legend { grid-column:1 / -1; margin:2px 0; font-size:10px; color:var(--ink-soft); line-height:1.5; }
-.analysis-filter-breadcrumb { display:flex; flex-wrap:wrap; gap:4px; align-items:center; margin:4px 0; color:var(--ink-soft); font-size:12px; }
-.analysis-filter-breadcrumb button { min-height:44px; border:0; padding:4px 6px; background:transparent; color:var(--primary); font:inherit; }
-.analysis-upgrade-value > span, .analysis-upgrade-compare-value > span { font-size:12px; }
-.analysis-upgrade-budget-day > .actual { min-height:0; }
-button.analysis-time-bar { background:transparent; border:0; color:var(--ink); min-height:44px; padding:0; }
-.analysis-comparison-row > button { display:grid; grid-template-columns:34px minmax(0,1fr) 90px; align-items:center; gap:7px; min-height:44px; border:0; background:transparent; color:var(--ink); padding:0; text-align:left; }
-.analysis-investment-series > button { display:grid; grid-template-rows:94px auto; min-width:0; gap:4px; background:transparent; border:0; color:var(--ink); padding:0; }
-.analysis-investment-series > button > span { display:flex; align-items:flex-end; justify-content:center; gap:3px; }
-button.investment-flow-row { width:100%; text-align:left; border:0; border-bottom:1px solid var(--line); background:transparent; color:var(--ink); min-height:44px; }
 .sync-inspector-item { display:flex; gap:10px; justify-content:space-between; border-bottom:1px solid var(--line); padding:10px 0; }
 .sync-inspector-item > div:first-child { display:grid; gap:4px; min-width:0; }
 .sync-inspector-item span { color:var(--muted); font-size:11px; overflow-wrap:anywhere; }

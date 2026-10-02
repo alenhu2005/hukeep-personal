@@ -286,9 +286,11 @@ describe('趨勢每日淨額', () => {
     expect(html).toContain('-120');
     expect(html).toContain('analysis-net-positive');
     expect(html).toContain('+200');
-    expect(html).toContain('analysis-net-negative analysis-heat-2');
-    expect(html).toContain('analysis-net-positive analysis-heat-2');
-    expect(html).toContain('101–500');
+    expect(html).toMatch(/analysis-net-negative[^>]*style="--heat:[\d.]+%"/);
+    expect(html).toMatch(/analysis-net-positive[^>]*style="--heat:[\d.]+%"/);
+    expect(html).not.toContain('analysis-heat-2');
+    expect(html).not.toContain('101–500');
+    expect(html).not.toContain('顏色深淺說明');
     expect(html).toContain('data-insight-section="overview"');
     expect(html).toContain('data-insight-section="expense"');
     expect(html).toContain('data-insight-section="income"');

@@ -254,12 +254,17 @@ test('本期與前期的圖表鑽取只顯示所選日期、類型與分類，�
   await page.locator('[data-insight-section="expense"]').click();
   await page.locator('[data-insight-category="飲食"]').click();
   await expect(page.locator('[data-insight-compare-subcategory]')).toHaveCount(2);
+  await page.locator('[data-analysis-disclosure="expense-budget-history"] > summary').click();
   await expect(page.locator('.analysis-upgrade-budget-chart')).toBeVisible();
+  await page.locator('[data-analysis-disclosure="expense-飲食-multi"] > summary').click();
   for (const value of ['咖啡', '飲料']) {
     await page.locator(`[data-insight-compare-subcategory="${value}"]`).click();
   }
   await expect(page.locator('[data-insight-compare-subcategory][aria-pressed="true"]')).toHaveCount(2);
+  await expect(page.locator('[data-analysis-disclosure="expense-飲食-multi"]')).toHaveAttribute('open');
+  expect(await page.evaluate(() => document.activeElement.dataset.insightCompareSubcategory)).toBe('飲料');
   await expect(page.locator('.analysis-upgrade-compare-value')).not.toHaveCount(0);
+  await page.locator('[data-analysis-disclosure="expense-飲食--comparison"] > summary').click();
 
   for (const [selector, expectedIds] of [
     ['.analysis-upgrade-value.current[data-date="2026-10-02"]', ['food-current-coffee', 'food-current-drink']],
@@ -297,6 +302,7 @@ test('360px 深色與減少動態偏好下的分析頁沒有水平溢出', async
   await page.locator('[data-insight-section="expense"]').click();
   await page.locator('[data-insight-category="飲食"]').click();
   await expect(page.locator('[data-insight-compare-subcategory]')).toHaveCount(2);
+  await page.locator('[data-analysis-disclosure="expense-飲食-multi"] > summary').click();
   await page.locator('[data-insight-compare-subcategory="咖啡"]').click();
   await page.locator('[data-insight-compare-subcategory="飲料"]').click();
   await expect(page.locator('.analysis-upgrade-compare-value')).not.toHaveCount(0);

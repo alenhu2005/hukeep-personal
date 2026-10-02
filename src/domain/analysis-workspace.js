@@ -9,14 +9,10 @@ import { investmentDirection, isInvestmentTransfer, INVESTMENT_ACCOUNT_ID, summa
 import { transferAmounts } from './transfer-fees.js';
 import { transactionsAtReconciliation } from './reconciliation.js';
 
-export const ANALYSIS_HEAT_THRESHOLDS = Object.freeze([100, 500, 2000, 10000]);
-
-export function heatLevel(amount) {
+export function analysisHeatIntensity(amount) {
   const value = Math.abs(Number(amount) || 0);
-  return value ? ANALYSIS_HEAT_THRESHOLDS.findIndex(threshold => value <= threshold) + 1 || 5 : 0;
+  return Number.isFinite(value) && value ? 12 + 60 * value / (value + 3000) : 0;
 }
-
-export const analysisHeatLevel = heatLevel;
 
 function dateFromText(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value ?? ''))
