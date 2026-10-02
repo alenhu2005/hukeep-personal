@@ -13,7 +13,7 @@ import {
 } from './domain/category-taxonomy.js';
 import { parseSpokenTransactions } from './domain/spoken-entry.js';
 import { detectSpokenReview } from './domain/spoken-review.js';
-import { reconciliationAdjustmentId, reconciliationAdjustmentNote, reconciliationAdjustmentStatus } from './domain/reconciliation.js';
+import { reconciliationAdjustmentId, reconciliationAdjustmentNote, reconciliationAdjustmentStatus, transactionsAtReconciliation } from './domain/reconciliation.js';
 import { isInvestmentTransfer } from './domain/investment-accounting.js';
 import {
   acknowledgePendingSheetChanges,
@@ -1469,14 +1469,15 @@ export function createApp() {
     event.preventDefault();
     const values = Object.fromEntries(new FormData(event.currentTarget));
     const featureSettings = normalizeFeatureSettings(state.featureSettings);
+    const createdAt = new Date().toISOString();
     const item = {
       ...values,
       id: globalThis.crypto?.randomUUID?.() || `reconcile-${Date.now()}`,
       actualBalance: Number(values.actualBalance),
       estimatedBalance: calculateAccountBalances(
-        state.accounts, state.transactions.filter(tx => tx.date <= values.date),
+        state.accounts, transactionsAtReconciliation(state.transactions, { date: values.date, createdAt }),
       ).find(account => account.id === values.accountId)?.balance,
-      createdAt: new Date().toISOString(),
+      createdAt,
     };
     const nextFeatures = normalizeFeatureSettings({
       ...featureSettings,

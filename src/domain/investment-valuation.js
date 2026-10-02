@@ -1,5 +1,6 @@
 import { calculateAccountBalances, calculateTotalAssets } from './insights.js';
 import { INVESTMENT_ACCOUNT_ID } from './investment-accounting.js';
+import { transactionsAtReconciliation } from './reconciliation.js';
 
 function validDate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -17,7 +18,7 @@ export function investmentMarketValue(state, reconciliation, principal) {
 
   const basis = calculateAccountBalances(
     state.accounts || [],
-    (state.transactions || []).filter(transaction => transaction.date <= reconciliation.date),
+    transactionsAtReconciliation(state.transactions || [], reconciliation),
   ).find(account => account.id === INVESTMENT_ACCOUNT_ID)?.balance;
   const value = actualBalance + principal - basis;
   return Number.isSafeInteger(basis) && Number.isSafeInteger(value) ? Math.max(0, value) : undefined;

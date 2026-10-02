@@ -1,5 +1,12 @@
 import { calculateAccountBalances, isAccountingAdjustment } from './insights.js';
 
+export function transactionsAtReconciliation(transactions, item) {
+  const cutoff = Date.parse(item.createdAt);
+  // ponytail: same-day boundary uses creation time; add occurrence times if backdated same-day entries need distinction.
+  return transactions.filter(transaction => transaction.date <= item.date
+    && (transaction.date !== item.date || !(Date.parse(transaction.createdAt) > cutoff)));
+}
+
 export function reconciliationAdjustmentNote(item) {
   return `依 ${item.date} 對帳差額調整 [${item.id}]`;
 }
@@ -12,7 +19,7 @@ export function reconciliationAdjustmentStatus(state, item) {
     && (transaction.note === reconciliationAdjustmentNote(item) || transaction.id === legacyId));
   const excludedIds = new Set(matches.map(transaction => transaction.id));
   const estimatedBalance = calculateAccountBalances(state.accounts,
-    transactions.filter(transaction => transaction.date <= item.date && !excludedIds.has(transaction.id)))
+    transactionsAtReconciliation(transactions, item).filter(transaction => !excludedIds.has(transaction.id)))
     .find(account => account.id === item.accountId)?.balance ?? 0;
   const difference = item.actualBalance - estimatedBalance;
   const adjustment = matches[0];

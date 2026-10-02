@@ -43,6 +43,19 @@ describe('投資市值估算', () => {
     }, 10150)).toBe(300);
   });
 
+  it('同日更新市值後的買入與賣出繼續反映，不被算回舊市值基準', () => {
+    const state = { accounts, transactions: [
+      { type: 'transfer', amount: 2000, account: 'cash', toAccount: 'investment', date: '2026-09-10',
+        createdAt: '2026-09-10T02:00:00.000Z' },
+      { type: 'transfer', amount: 1000, account: 'cash', toAccount: 'investment', date: '2026-09-10',
+        createdAt: '2026-09-10T04:00:00.000Z' },
+      { type: 'transfer', amount: 400, account: 'investment', toAccount: 'cash', date: '2026-09-10',
+        createdAt: '2026-09-10T05:00:00.000Z' },
+    ] };
+    expect(investmentMarketValue(state, { actualBalance: 15000, date: '2026-09-10',
+      createdAt: '2026-09-10T03:00:00.000Z' }, 12600)).toBe(15600);
+  });
+
   it('略過無效或負數的實際對帳餘額', () => {
     expect(investmentMarketValue({ accounts, transactions: [] }, { actualBalance: -1, date: '2026-08-15' }, 10000))
       .toBeUndefined();
