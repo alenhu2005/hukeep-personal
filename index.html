@@ -68,6 +68,8 @@
 
         <input id="transaction-id" name="id" type="hidden" />
         <input id="transaction-type" name="type" type="hidden" value="expense" />
+        <div id="entry-templates" class="entry-templates" aria-label="快速記帳範本"></div>
+        <button id="discard-entry-draft" class="secondary-button" type="button" hidden>捨棄草稿</button>
 
         <section id="voice-entry" class="voice-entry" aria-labelledby="voice-entry-title">
           <h3 id="voice-entry-title" class="voice-entry-title"><span aria-hidden="true">●</span> 口語直接記帳</h3>
@@ -138,6 +140,8 @@
               </label>
             </div>
             <p id="transaction-error" class="form-error" role="alert" hidden></p>
+            <label class="rule-opt-in"><input id="remember-category-rule" type="checkbox" />以後同店家／同名稱使用這個分類</label>
+            <button id="save-entry-template" class="secondary-button" type="button">存為快速範本</button>
             <button class="primary-button dialog-submit" type="submit">儲存這筆</button>
           </div>
         </details>
@@ -176,6 +180,10 @@
           <input id="import-json" type="file" accept="application/json,.json" />
         </label>
       </div>
+      <section class="settings-section" aria-labelledby="category-rules-title">
+        <h3 id="category-rules-title">我的分類規則</h3>
+        <div id="category-rules-list" class="settings-list"></div>
+      </section>
       <section class="settings-section" aria-labelledby="opening-balance-title">
         <div class="settings-section-heading">
           <h3 id="opening-balance-title">帳戶初始金額</h3>
@@ -259,12 +267,18 @@
           </div>
           <p id="sheet-sync-status" class="settings-status" role="status">尚未同步。</p>
           <p id="sync-health-status" class="settings-status" role="status"></p>
+          <button id="inspect-pending-sync" class="secondary-button" type="button">查看待上傳項目</button>
         </form>
       </section>
       <div class="privacy-note">
         <span aria-hidden="true">●</span>
         <p><strong>離線優先</strong><br />帳本先存在裝置；只有同步與後台 AI 審查時才會連到你的私人 GAS 與 Sheet。</p>
       </div>
+    </dialog>
+
+    <dialog id="workspace-dialog" class="app-dialog" aria-labelledby="workspace-dialog-title">
+      <div class="dialog-header"><h2 id="workspace-dialog-title">明細</h2><button class="icon-button dialog-close" type="button" aria-label="關閉">×</button></div>
+      <div id="workspace-dialog-content" class="workspace-dialog-content"></div>
     </dialog>
 
     <dialog id="backup-preview-dialog" class="app-dialog">

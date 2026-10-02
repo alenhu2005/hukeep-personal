@@ -5,10 +5,13 @@ import {
 } from './insights.js';
 import { investmentMarketValue } from './investment-valuation.js';
 import { INVESTMENT_ACCOUNT_ID } from './investment-accounting.js';
+import { normalizeCategoryRule, normalizeEntryTemplate } from './entry-tools.js';
 
 const MAX_RECURRING_RULES = 100;
 const MAX_MONTHLY_SNAPSHOTS = 120;
 const MAX_RECONCILIATIONS = 200;
+const MAX_ENTRY_TEMPLATES = 100;
+const MAX_CATEGORY_RULES = 100;
 const VALID_TYPES = new Set(['expense', 'income', 'transfer']);
 const VALID_CADENCES = new Set(['monthly', 'weekly']);
 const VALID_TRANSFER_FEE_MODES = new Set(['included', 'additional']);
@@ -73,7 +76,7 @@ function normalizeSnapshot(value) {
   const assetTotal = safeInteger(value?.assetTotal, -1_000_000_000_000);
   if (!/^\d{4}-\d{2}$/.test(month) || assetTotal == null) return null;
   const income = safeInteger(value?.income, 0) || 0;
-  const expense = safeInteger(value?.expense, 0) || 0;
+  const expense = safeInteger(value?.expense, -1_000_000_000_000) || 0;
   const balances = Array.isArray(value?.accountBalances)
     ? value.accountBalances.slice(0, 20).flatMap(item => {
         const id = cleanText(item?.id, 40);
@@ -114,7 +117,19 @@ export function normalizeFeatureSettings(value) {
   const reconciliations = Array.isArray(value?.reconciliations)
     ? value.reconciliations.slice(0, MAX_RECONCILIATIONS).map(normalizeReconciliation).filter(Boolean)
     : [];
-  return { recurringRules, monthlySnapshots, reconciliations };
+  const templates = Array.isArray(value?.templates)
+    ? value.templates.slice(0, MAX_ENTRY_TEMPLATES).map(item => normalizeEntryTemplate(item)).filter(Boolean)
+    : [];
+  const categoryRules = Array.isArray(value?.categoryRules)
+    ? value.categoryRules.slice(0, MAX_CATEGORY_RULES).map(item => normalizeCategoryRule(item)).filter(Boolean)
+    : [];
+  return {
+    recurringRules,
+    monthlySnapshots,
+    reconciliations,
+    ...(templates.length ? { templates } : {}),
+    ...(categoryRules.length ? { categoryRules } : {}),
+  };
 }
 
 export function upsertRecurringRule(settings, input) {

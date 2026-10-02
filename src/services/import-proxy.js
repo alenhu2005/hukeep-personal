@@ -7,6 +7,7 @@ const MAX_SHEET_TRANSACTIONS = 5000;
 const MAX_SHEET_BUDGETS = 100;
 const MAX_SHEET_AMOUNT = 1_000_000_000_000;
 let transferFeeCapabilityCheck = null;
+let enhancementsCapabilityCheck = null;
 
 function cleanText(value, maxLength) {
   return String(value ?? '')
@@ -206,6 +207,14 @@ function projectTransaction(transaction) {
     projected.fee = fee;
     projected.feeMode = feeMode;
   }
+  if (transaction?.refundOf != null && String(transaction.refundOf).trim()) {
+    const refundOf = cleanText(transaction.refundOf, 80);
+    if (!refundOf || refundOf === id || type !== 'income' ||
+      (cleanText(transaction?.category, 60) === '帳務調整' && cleanText(transaction?.source, 16) === 'manual')) {
+      throw new Error('退款關聯資料格式不正確');
+    }
+    projected.refundOf = refundOf;
+  }
   Object.entries(textFields).forEach(([field, maxLength]) => {
     if (field === 'toAccount') return;
     if (transaction?.[field] != null) projected[field] = cleanText(transaction[field], maxLength);
@@ -316,6 +325,40 @@ function needsTransferFeeModeVersion(transactions) {
   );
 }
 
+async function ensureEnhancementsVersion(endpoint, proxyToken, options = {}) {
+  const url = validateProxyEndpoint(endpoint);
+  const token = cleanText(proxyToken, 300);
+  const key = `${url}\u0000${token}`;
+  if (enhancementsCapabilityCheck?.key === key) return enhancementsCapabilityCheck.promise;
+
+  const promise = postProxy(url, { action: 'getLedgerCapabilities', proxyToken: token }, options)
+    .then(data => {
+      if (data?.enhancementsVersion !== 1) {
+        throw new Error('新增的模板、分類規則或退款關聯尚未同步，請先更新 GAS 程式後再試；本機資料仍待同步。');
+      }
+    })
+    .catch(error => {
+      if (/不支援的操作/.test(error.message)) {
+        throw new Error('新增的模板、分類規則或退款關聯尚未同步，請先更新 GAS 程式後再試；本機資料仍待同步。', { cause: error });
+      }
+      throw error;
+    });
+  enhancementsCapabilityCheck = { key, promise };
+  try {
+    await promise;
+  } catch (error) {
+    if (enhancementsCapabilityCheck?.promise === promise) enhancementsCapabilityCheck = null;
+    throw error;
+  }
+}
+
+function needsEnhancementsVersion(transactions, featureSettings, featureDeletes = {}, refundClears = []) {
+  return (transactions || []).some(transaction => Boolean(cleanText(transaction?.refundOf, 80))) ||
+    ['templates', 'categoryRules'].some(collection =>
+      (featureSettings?.[collection]?.length || 0) > 0 || changedKeys(featureDeletes?.[collection], 80).length > 0,
+    ) || changedKeys(refundClears, 80).length > 0;
+}
+
 export function projectLedgerChangesForSheet(state, changes) {
   const transactionUpserts = changedKeys(changes?.upserts, 80);
   const transactionDeletes = changedKeys(changes?.deletes, 80);
@@ -326,7 +369,13 @@ export function projectLedgerChangesForSheet(state, changes) {
   const featureSettings = {};
   const featureDeletes = {};
   let legacyFeatureSettings = null;
-  const featureKeys = { recurringRules: item => item?.id, monthlySnapshots: item => item?.month, reconciliations: item => item?.id };
+  const featureKeys = {
+    recurringRules: item => item?.id,
+    monthlySnapshots: item => item?.month,
+    reconciliations: item => item?.id,
+    templates: item => item?.id,
+    categoryRules: item => item?.id,
+  };
   Object.entries(featureKeys).forEach(([collection, keyOf]) => {
     const ids = changedKeys(changes?.featureUpserts?.[collection], 80);
     const deleted = changedKeys(changes?.featureDeletes?.[collection], 80);
@@ -356,6 +405,9 @@ export function projectLedgerChangesForSheet(state, changes) {
 
 export async function syncLedgerStateToSheet(input, options = {}) {
   const state = projectLedgerForSheet(input?.state);
+  if (needsEnhancementsVersion(state.transactions, state.featureSettings)) {
+    await ensureEnhancementsVersion(input?.endpoint, input?.proxyToken, options);
+  }
   if (needsTransferFeeModeVersion(state.transactions)) {
     await ensureTransferFeeModeCapability(input?.endpoint, input?.proxyToken, options);
   }
@@ -369,6 +421,9 @@ export async function syncLedgerStateToSheet(input, options = {}) {
     options,
   );
   requireTransferFeeModeVersion(data, state.transactions);
+  if (needsEnhancementsVersion(state.transactions, state.featureSettings) && data?.enhancementsVersion !== 1) {
+    throw new Error('新增的模板、分類規則或退款關聯尚未同步，請更新 GAS 程式後再試；本機資料仍待同步。');
+  }
   const counts = ['accountCount', 'transactionCount', 'budgetCount'];
   if (!counts.every(field => Number.isInteger(data?.[field]) && data[field] >= 0)) {
     throw new Error('Sheet 同步回傳格式不正確');
@@ -382,6 +437,14 @@ export async function syncLedgerStateToSheet(input, options = {}) {
 
 export async function syncLedgerChangesToSheet(input, options = {}) {
   const changes = projectLedgerChangesForSheet(input?.state, input?.changes);
+  if (needsEnhancementsVersion(
+    changes.transactions,
+    changes.featureSettingsDelta || changes.featureSettings,
+    changes.featureDeletes,
+    input?.changes?.refundClears,
+  )) {
+    await ensureEnhancementsVersion(input?.endpoint, input?.proxyToken, options);
+  }
   if (needsTransferFeeModeVersion(changes.transactions)) {
     await ensureTransferFeeModeCapability(input?.endpoint, input?.proxyToken, options);
   }
@@ -392,6 +455,14 @@ export async function syncLedgerChangesToSheet(input, options = {}) {
   };
   const data = await postProxyWithRetry(input?.endpoint, payload, options);
   requireTransferFeeModeVersion(data, changes.transactions);
+  if (needsEnhancementsVersion(
+    changes.transactions,
+    changes.featureSettingsDelta || changes.featureSettings,
+    changes.featureDeletes,
+    input?.changes?.refundClears,
+  ) && data?.enhancementsVersion !== 1) {
+    throw new Error('新增的模板、分類規則或退款關聯尚未同步，請更新 GAS 程式後再試；本機資料仍待同步。');
+  }
   const counts = ['accountCount', 'transactionCount', 'budgetCount'];
   if (!counts.every(field => Number.isInteger(data?.[field]) && data[field] >= 0)) {
     throw new Error('Sheet 自動同步回傳格式不正確');
@@ -462,7 +533,7 @@ export async function loadLedgerStateFromSheet(input, options = {}) {
     budgets: data.budgets.map(budget => ({ ...budget })),
     ...(data?.featureSettings && typeof data.featureSettings === 'object'
       ? { featureSettings: { ...normalizeFeatureSettings(data.featureSettings), ...Object.fromEntries(
-          ['recurringRules', 'monthlySnapshots', 'reconciliations']
+          ['recurringRules', 'monthlySnapshots', 'reconciliations', 'templates', 'categoryRules']
             .filter(key => Array.isArray(data.featureSettings[key]))
             .map(key => [key, normalizeFeatureSettings({ [key]: data.featureSettings[key] })[key]]),
         ) } }

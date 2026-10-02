@@ -121,7 +121,11 @@ const FEATURE_KEYS = {
   recurringRules: item => item?.id,
   monthlySnapshots: item => item?.month,
   reconciliations: item => item?.id,
+  templates: item => item?.id,
+  categoryRules: item => item?.id,
 };
+const OPTIONAL_FEATURE_COLLECTIONS = new Set(['templates', 'categoryRules']);
+const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value ?? {}, key);
 
 function mergeConcurrentItems(baseItems, intendedItems, latestItems, keyOf) {
   const changes = updateEntityChanges({}, baseItems, intendedItems, keyOf, 'upserts', 'deletes');
@@ -157,6 +161,9 @@ export function mergeConcurrentLedgerState(baseState, intendedState, latestStore
   merged.preferences = mergeConcurrentPreferences(base.preferences, intended.preferences, latest.preferences);
   merged.featureSettings = { ...(latest.featureSettings ?? {}) };
   Object.entries(FEATURE_KEYS).forEach(([collection, keyOf]) => {
+    if (OPTIONAL_FEATURE_COLLECTIONS.has(collection) && ![
+      base.featureSettings, intended.featureSettings, latest.featureSettings,
+    ].some(settings => hasOwn(settings, collection))) return;
     merged.featureSettings[collection] = mergeConcurrentItems(
       base.featureSettings?.[collection],
       intended.featureSettings?.[collection],
@@ -171,6 +178,9 @@ function featureChanges(before, after, current = {}) {
   const upserts = { ...(current.upserts ?? {}) };
   const deletes = { ...(current.deletes ?? {}) };
   Object.entries(FEATURE_KEYS).forEach(([collection, keyOf]) => {
+    if (OPTIONAL_FEATURE_COLLECTIONS.has(collection) && ![
+      before, after, current?.upserts, current?.deletes,
+    ].some(settings => hasOwn(settings, collection))) return;
     const oldItems = new Map((before?.[collection] ?? []).map(item => [String(keyOf(item) ?? ''), item]).filter(([key]) => key));
     const newItems = new Map((after?.[collection] ?? []).map(item => [String(keyOf(item) ?? ''), item]).filter(([key]) => key));
     const changed = new Set(entityIds(upserts[collection]));
@@ -211,7 +221,9 @@ function reconcileFeatureSettings(local, remote, pending) {
     );
     const seen = new Set(merged.map(item => String(keyOf(item) ?? '')));
     upserts.forEach(key => { if (!seen.has(key) && localByKey.has(key) && !deletes.has(key)) merged.push({ ...localByKey.get(key) }); });
-    result[collection] = merged;
+    if (!OPTIONAL_FEATURE_COLLECTIONS.has(collection) || merged.length || hasOwn(local, collection) || hasOwn(remote, collection)) {
+      result[collection] = merged;
+    }
   });
   return result;
 }
@@ -227,7 +239,7 @@ export function hasPendingSheetChanges(value) {
   ].some(items => entityIds(items).length > 0);
   const featureChangesPending = Object.values(value?.featureUpserts ?? {}).some(items => entityIds(items).length) ||
     Object.values(value?.featureDeletes ?? {}).some(items => entityIds(items).length);
-  return coreChanges || featureChangesPending || Boolean(value?.features);
+  return coreChanges || featureChangesPending || entityIds(value?.refundClears).length > 0 || Boolean(value?.features);
 }
 
 function acknowledgeEntities(current, sent, sentItems, currentItems, keyOf, upsertField, deleteField) {
@@ -247,6 +259,7 @@ function acknowledgeEntities(current, sent, sentItems, currentItems, keyOf, upse
 // A successful request acknowledges its snapshot, never edits made while it was in flight.
 export function acknowledgePendingSheetChanges(current, sent, sentState, currentState) {
   const idOf = item => String(item?.id ?? '').trim();
+  const refundClears = entityIds(current?.refundClears).filter(id => !entityIds(sent?.refundClears).includes(id));
   return {
     ...acknowledgeEntities(current, sent, sentState?.transactions, currentState?.transactions,
       idOf, 'upserts', 'deletes'),
@@ -264,6 +277,7 @@ export function acknowledgePendingSheetChanges(current, sent, sentState, current
     featureDeletes: Object.fromEntries(Object.keys(FEATURE_KEYS).map(collection => [collection,
       entityIds(current?.featureDeletes?.[collection]).filter(id => !entityIds(sent?.featureDeletes?.[collection]).includes(id)),
     ])),
+    ...(refundClears.length ? { refundClears } : {}),
     features: Boolean(current?.features) && (!sent?.features || transactionChanged(
       sentState?.featureSettings ?? {}, currentState?.featureSettings ?? {},
     )),
@@ -273,6 +287,7 @@ export function acknowledgePendingSheetChanges(current, sent, sentState, current
 export function updatePendingSheetChanges(current, beforeState, afterState) {
   const upserts = new Set(transactionIds(current?.upserts));
   const deletes = new Set(transactionIds(current?.deletes));
+  const refundClears = new Set(entityIds(current?.refundClears));
   const before = new Map(
     (Array.isArray(beforeState?.transactions) ? beforeState.transactions : []).map(transaction => [
       transaction.id,
@@ -291,6 +306,8 @@ export function updatePendingSheetChanges(current, beforeState, afterState) {
       deletes.delete(id);
       upserts.add(id);
     }
+    if (String(before.get(id)?.refundOf ?? '').trim() && !String(transaction?.refundOf ?? '').trim()) refundClears.add(id);
+    if (String(transaction?.refundOf ?? '').trim()) refundClears.delete(id);
   });
   before.forEach((_transaction, id) => {
     if (!after.has(id)) {
@@ -328,6 +345,7 @@ export function updatePendingSheetChanges(current, beforeState, afterState) {
     budgetDeletes: budgets.deletes,
     featureUpserts: featureDelta.upserts,
     featureDeletes: featureDelta.deletes,
+    ...(refundClears.size ? { refundClears: [...refundClears] } : {}),
     features: Boolean(current?.features) || transactionChanged(
       beforeState?.featureSettings ?? {},
       afterState?.featureSettings ?? {},

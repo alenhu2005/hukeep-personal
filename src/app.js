@@ -4,8 +4,12 @@ import { parseBackup, previewBackupRestore, serializeBackup, transactionsToCsv }
 import { EXPENSE_CATEGORIES, INCOME_CATEGORIES } from './config.js';
 import { updateOpeningBalances } from './domain/accounts.js';
 import { removeBudget, upsertBudget } from './domain/budgets.js';
-import { calculateAccountBalances } from './domain/insights.js';
+import { calculateAccountBalances, expenseAmount, expenseCategory, incomeAmount } from './domain/insights.js';
+import { bulkUpdateTransactions, linkRefund } from './domain/transaction-tools.js';
+import { applyCategoryRules, normalizeEntryTemplate, normalizeCategoryRule, readEntryDraft, saveEntryDraft, clearEntryDraft } from './domain/entry-tools.js';
+import { renderSyncInspector } from './views/sync-inspector.js';
 import { transferAmounts } from './domain/transfer-fees.js';
+import { buildAnalysisWorkspace } from './domain/analysis-workspace.js';
 import {
   classifyIncomeLocally,
   classifyLocally,
@@ -46,7 +50,6 @@ import {
   classifyExpenseWithAi,
   createDevicePairingCode,
   deleteLedgerBudgetFromSheet,
-  deleteLedgerTransactionFromSheet,
   enqueueSpokenEntry,
   loadLedgerStateFromSheet,
   syncLedgerChangesToSheet,
@@ -56,7 +59,7 @@ import {
   createDeviceBindingStore,
   parseDeviceBindingHash,
 } from './services/device-binding.js';
-import { renderView } from './views.js';
+import { renderView, renderAccountHistory } from './views.js';
 
 const LAST_SHEET_SYNC_KEY = 'hukeep_last_sheet_sync_at';
 const PENDING_SHEET_CHANGES_KEY = 'hukeep_pending_sheet_changes_v1';
@@ -150,12 +153,16 @@ export function createApp() {
   let view = safeViewFromHash();
   let selectedMonth = todayInTaipei().slice(0, 7);
   let historyFilters = { query: '', type: '', category: '', subcategory: '', account: '', preset: 'all', monthScope: 'month' };
+  let historySelection = { enabled: false, ids: [] };
+  const deletedDuringSession = new Set();
   let insightFilters = {
     period: 'month', section: 'overview', category: '', subcategory: '', selectedDate: '',
-    anchorDate: todayInTaipei(),
+    anchorDate: todayInTaipei(), compareSubcategories: [],
   };
   let toastTimer = null;
   let classificationReady = false;
+  let manualCategoryChosen = false;
+  let draftStorageWarning = false;
   let classificationTimer = null;
   let classificationRequest = 0;
   let sheetPullInFlight = false;
@@ -283,6 +290,7 @@ export function createApp() {
       return {
         upserts: Array.isArray(value?.upserts) ? value.upserts : [],
         deletes: Array.isArray(value?.deletes) ? value.deletes : [],
+        ...(Array.isArray(value?.refundClears) && value.refundClears.length ? { refundClears: value.refundClears } : {}),
         accountUpserts: Array.isArray(value?.accountUpserts) ? value.accountUpserts : [],
         accountDeletes: Array.isArray(value?.accountDeletes) ? value.accountDeletes : [],
         budgetUpserts: Array.isArray(value?.budgetUpserts) ? value.budgetUpserts : [],
@@ -377,16 +385,6 @@ export function createApp() {
         : pending.accountUpserts,
     });
     schedulePendingSheetSync();
-  }
-
-  function acknowledgePendingTransactionDelete(transactionId) {
-    if (sheetWriteInFlight || sheetPullInFlight) return;
-    const pending = readPendingSheetChanges();
-    writePendingSheetChanges({
-      ...pending,
-      upserts: pending.upserts.filter(id => id !== transactionId),
-      deletes: pending.deletes.filter(id => id !== transactionId),
-    });
   }
 
   function setSyncStatus(status, options = {}) {
@@ -514,10 +512,12 @@ export function createApp() {
   }
 
   function render(options = {}) {
-    main.innerHTML = renderView(view, state, selectedMonth, historyFilters, { insightFilters });
+    historySelection.ids = historySelection.ids.filter(id => state.transactions.some(item => item.id === id));
+    main.innerHTML = renderView(view, state, selectedMonth, historyFilters, { insightFilters, historySelection });
     if (toolsDialog.open) {
       renderRecurringRules();
       renderReconciliations();
+      renderCategoryRules();
     }
     document.querySelector('#month-title').textContent = monthLabel(selectedMonth);
     document.querySelectorAll('[data-nav-view]').forEach(button => {
@@ -559,7 +559,8 @@ export function createApp() {
 
   function setSubcategoryOptions(type, selectedSubcategory = '') {
     const category = transactionForm.elements.category.value;
-    const subcategories = getSubcategories(category, type);
+    const refundEditing = state.transactions.find(item => item.id === transactionForm.elements.id.value)?.refundOf;
+    const subcategories = getSubcategories(category, refundEditing ? 'expense' : type);
     transactionForm.elements.subcategory.innerHTML = subcategories
       .map(
         subcategory =>
@@ -572,8 +573,8 @@ export function createApp() {
     const transfer = type === 'transfer';
     const editing = Boolean(transactionForm.elements.id.value);
     classificationReady = transfer || ready;
-    document.querySelector('#category-field').hidden = transfer || !editing;
-    document.querySelector('#subcategory-field').hidden = transfer || !editing;
+    document.querySelector('#category-field').hidden = transfer || !(editing || ready);
+    document.querySelector('#subcategory-field').hidden = transfer || !(editing || ready);
   }
 
   function setTransactionType(
@@ -594,7 +595,8 @@ export function createApp() {
     transactionForm.elements.category.required = !transfer;
     transactionForm.elements.subcategory.required = !transfer;
     transactionForm.elements.toAccount.required = transfer;
-    const categories = type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+    const refundEditing = state.transactions.find(item => item.id === transactionForm.elements.id.value)?.refundOf;
+    const categories = type === 'income' && !refundEditing ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
     transactionForm.elements.category.innerHTML = categories
       .map(
         category =>
@@ -630,6 +632,9 @@ export function createApp() {
   }
 
   function openTransactionDialog(transaction = null) {
+    clearTimeout(classificationTimer);
+    classificationRequest += 1;
+    manualCategoryChosen = Boolean(transaction);
     transactionForm.reset();
     document.querySelector('#manual-entry').open = Boolean(transaction);
     document.querySelector('#transaction-error').hidden = true;
@@ -655,10 +660,80 @@ export function createApp() {
     const voiceStatus = document.querySelector('#voice-status');
     voiceStatus.textContent = '';
     voiceStatus.hidden = true;
-    transactionDialog.showModal();
+    renderEntryTemplates();
+    document.querySelector('#discard-entry-draft').hidden = true;
+    if (!transaction) {
+      const draft = readEntryDraft(localStorage);
+      if (draft) {
+        fillEntryForm(draft);
+        document.querySelector('#voice-transcript').value = draft.transcript || '';
+        document.querySelector('#manual-entry').open = Boolean(draft.manualOpen);
+        document.querySelector('#discard-entry-draft').hidden = ![draft.name, draft.amount, draft.note, draft.transcript].some(value => String(value || '').trim());
+      }
+    }
+    if (!transactionDialog.open) transactionDialog.showModal();
     requestAnimationFrame(() =>
       (transaction ? transactionForm.elements.name : document.querySelector('#voice-transcript')).focus(),
     );
+  }
+
+  function fillEntryForm(values) {
+    manualCategoryChosen = Boolean(values.category);
+    setAccountOptions(transactionForm.elements.account, values.account || 'cash');
+    setTransactionType(values.type || 'expense', values.category || '', values.subcategory || '', { classificationReady: Boolean(values.category) || values.type === 'transfer' });
+    for (const key of ['name', 'amount', 'date', 'note', 'fee', 'feeMode']) {
+      if (values[key] != null) transactionForm.elements[key].value = values[key];
+    }
+    if (values.toAccount) updateDestinationAccounts(values.toAccount);
+    updateTransferPreview(transactionForm, document.querySelector('#transfer-preview'));
+  }
+
+  function renderEntryTemplates() {
+    const templates = normalizeFeatureSettings(state.featureSettings).templates || [];
+    document.querySelector('#entry-templates').innerHTML = templates.map(item =>
+      `<span><button type="button" data-entry-template="${escapeHtml(item.id)}">${escapeHtml(item.label || item.name)} · ${escapeHtml(formatMoney(item.amount))}</button><button type="button" data-remove-entry-template="${escapeHtml(item.id)}" aria-label="移除 ${escapeHtml(item.label || item.name)} 範本">×</button></span>`,
+    ).join('');
+  }
+
+  function rememberEntryDraft() {
+    if (!transactionDialog.open || transactionForm.elements.id.value) return;
+    const values = Object.fromEntries(new FormData(transactionForm));
+    const draft = { ...values, ...(!classificationReady ? { category: '', subcategory: '' } : {}), transcript: document.querySelector('#voice-transcript').value, manualOpen: document.querySelector('#manual-entry').open };
+    const hasContent = [draft.name, draft.amount, draft.note, draft.transcript].some(value => String(value || '').trim());
+    document.querySelector('#discard-entry-draft').hidden = !hasContent;
+    if (!hasContent) { clearEntryDraft(localStorage); return; }
+    if (!saveEntryDraft(draft, localStorage) && !draftStorageWarning) {
+      draftStorageWarning = true;
+      showToast('草稿暫時無法儲存，請勿關閉此表單，並檢查瀏覽器空間。', 'error');
+    }
+  }
+
+  function rememberCategoryRule(input, features) {
+    if (!document.querySelector('#remember-category-rule').checked || input.type === 'transfer') return features;
+    const match = input.merchant || input.name;
+    const rule = normalizeCategoryRule({ id: crypto.randomUUID(), match, type: input.type, category: input.category, subcategory: input.subcategory, createdAt: new Date().toISOString() });
+    if (!rule) throw new ValidationError('請選擇完整分類後再儲存分類規則');
+    const categoryRules = [...(features.categoryRules || []).filter(item => item.type !== rule.type || item.match.toLocaleLowerCase() !== rule.match.toLocaleLowerCase()), rule];
+    if (categoryRules.length > 100) throw new ValidationError('分類規則最多 100 個，請先移除不需要的規則');
+    return { ...features, categoryRules };
+  }
+
+  function saveEntryTemplate() {
+    try {
+      if (!classificationReady) applyLocalTransactionClassification();
+      const values = Object.fromEntries(new FormData(transactionForm));
+      const template = normalizeEntryTemplate({ ...values, id: crypto.randomUUID(), label: values.name, amount: Number(values.amount), fee: Number(values.fee || 0), createdAt: new Date().toISOString() }, { accounts: state.accounts });
+      if (!template) throw new Error('請先填妥名稱、金額、帳戶與分類');
+      const features = normalizeFeatureSettings(state.featureSettings);
+      if ((features.templates || []).length >= 100) throw new Error('範本最多 100 個');
+      if (!persist({ ...state, featureSettings: { ...features, templates: [...(features.templates || []), template] } })) return;
+      renderEntryTemplates();
+      showToast('已存為快速範本。');
+    } catch (error) { showToast(error.message, 'error'); }
+  }
+
+  function personalClassification(input) {
+    return applyCategoryRules(input, normalizeFeatureSettings(state.featureSettings).categoryRules || []);
   }
 
   async function classifyTransactionNote({ force = false } = {}) {
@@ -691,6 +766,8 @@ export function createApp() {
       }
     }
     if (request !== classificationRequest) return false;
+    const personal = personalClassification({ type, name, category: classification.topCategory, subcategory: classification.subcategory });
+    classification = { topCategory: personal.category, subcategory: personal.subcategory };
     setTransactionType(type, classification.topCategory, classification.subcategory, {
       classificationReady: true,
     });
@@ -698,7 +775,7 @@ export function createApp() {
   }
 
   function scheduleTransactionClassification() {
-    if (transactionForm.elements.id.value) return;
+    if (transactionForm.elements.id.value || manualCategoryChosen) return;
     classificationReady = transactionForm.elements.type.value === 'transfer';
     clearTimeout(classificationTimer);
     classificationTimer = setTimeout(() => classifyTransactionNote(), 650);
@@ -715,7 +792,8 @@ export function createApp() {
       type === 'income'
         ? classifyIncomeLocally(text)
         : classifyLocally({ merchant: text, items: [text] });
-    setTransactionType(type, classification.topCategory, classification.subcategory, {
+    const personal = personalClassification({ type, name: transactionForm.elements.name.value.trim(), category: classification.topCategory, subcategory: classification.subcategory });
+    setTransactionType(type, personal.category, personal.subcategory, {
       classificationReady: true,
     });
   }
@@ -726,7 +804,7 @@ export function createApp() {
       if (!Number.isSafeInteger(Number(draft?.amount)) || Number(draft.amount) <= 0) return [];
       const clientId = draft.clientId || `${groupId}:${index + 1}`;
       try {
-        return [createTransaction({
+        return [createTransaction(personalClassification({
           ...draft,
           source: 'voice',
           sourceId: clientId,
@@ -734,7 +812,7 @@ export function createApp() {
           aiStatus: 'pending',
           groupId,
           note: draft.note || '',
-        }, { id: `voice:${clientId}`, now })];
+        }), { id: `voice:${clientId}`, now })];
       } catch {
         return [];
       }
@@ -782,7 +860,7 @@ export function createApp() {
     }
     const groupId = globalThis.crypto?.randomUUID?.() || `voice-group-${Date.now()}`;
     const stableDrafts = drafts.map((draft, index) => ({
-      ...draft,
+      ...personalClassification(draft),
       clientId: `${drafts.length > 1 ? 'multi:' : ''}${groupId}:${index + 1}`,
     }));
     const localTransactions = localSpokenTransactions(stableDrafts, transcript, groupId);
@@ -802,6 +880,7 @@ export function createApp() {
       return;
     }
     document.querySelector('#voice-transcript').value = '';
+    clearEntryDraft(localStorage);
     spokenReviewDrafts = null;
     document.querySelector('#voice-review').hidden = true;
     transactionDialog.close();
@@ -819,7 +898,8 @@ export function createApp() {
 
     const sentState = state;
     const mergeUploaded = result => {
-      const uploaded = result.transactions.map(normalizeStoredTransaction).filter(Boolean);
+      const deletedIds = new Set([...readPendingSheetChanges().deletes, ...deletedDuringSession]);
+      const uploaded = result.transactions.map(normalizeStoredTransaction).filter(item => item && !deletedIds.has(item.id) && !deletedIds.has(`voice:${item.sourceId}`));
       if (!uploaded.length) return [];
       const byId = new Map(uploaded.map(transaction => [transaction.id, transaction]));
       const bySourceId = new Map(uploaded.filter(transaction => transaction.sourceId)
@@ -913,10 +993,13 @@ export function createApp() {
       fee: values.fee === '' ? 0 : Number(values.fee),
     };
     try {
+      const features = rememberCategoryRule(input, normalizeFeatureSettings(state.featureSettings));
+      const candidate = values.id ? input : applyCategoryRules(input, features.categoryRules || []);
       const transactions = values.id
         ? updateTransaction(state.transactions, values.id, input)
-        : [...state.transactions, createTransaction(input)];
-      if (!persist({ ...state, transactions })) return;
+        : [...state.transactions, createTransaction(candidate)];
+      if (!persist({ ...state, transactions, featureSettings: features })) return;
+      if (!values.id) clearEntryDraft(localStorage);
       setSyncStatus('local', { detail: '已儲存在本機，尚未同步這次修改' });
       transactionDialog.close();
       render();
@@ -938,32 +1021,22 @@ export function createApp() {
     const transaction = state.transactions.find(item => item.id === id);
     if (!transaction) return;
     const name = transaction.name || transaction.note || '這筆記錄';
-    if (!confirm(`確定要刪除「${name}」嗎？這會一併刪除 Google Sheet 中的同一筆資料。`)) return;
-    const credentials = proxySession();
-    if (!credentials.bound) {
-      showToast('這台裝置尚未綁定 Google Sheet，無法確認同步刪除。', 'error');
+    if (state.transactions.some(item => item.refundOf === id)) {
+      showToast('請先解除這筆消費的退款連結，再刪除原消費。', 'error');
       return;
     }
-    if (!await waitForSheetIdle()) {
-      showToast('更新尚未完成，稍後會自動接續。');
-      return;
-    }
-    sheetWriteInFlight = true;
-    try {
-      await deleteLedgerTransactionFromSheet({ ...credentials, transactionId: id });
-    } catch (error) {
-      setSyncStatus('error', { detail: `Sheet 刪除失敗：${error.message}` });
-      showToast(`尚未刪除：${error.message}`, 'error');
-      return;
-    } finally {
-      sheetWriteInFlight = false;
-    }
+    if (!confirm(`確定要刪除「${name}」嗎？刪除會在背景同步，短時間內可復原。`)) return;
     if (!persist({ ...state, transactions: removeTransaction(state.transactions, id) })) return;
-    acknowledgePendingTransactionDelete(id);
-    rememberProxySession(credentials.endpoint, credentials.proxyToken);
-    rememberSuccessfulSync();
+    deletedDuringSession.add(id);
     render();
-    showToast('已從本機與 Google Sheet 刪除。');
+    showToast('已刪除，稍後自動同步。', 'default', { label: '復原', handler: () => {
+      if (state.transactions.some(item => item.id === id)) return;
+      const restored = { ...transaction, updatedAt: new Date().toISOString() };
+      if (!persist({ ...state, transactions: [...state.transactions, restored] })) return;
+      deletedDuringSession.delete(id);
+      render();
+      showToast('已復原原本這筆記錄。');
+    } });
   }
 
   async function deleteBudget(category) {
@@ -1050,13 +1123,101 @@ export function createApp() {
         <div><dt>建立時間</dt><dd>${escapeHtml(formatDetailTimestamp(transaction.createdAt))}</dd></div>
         <div><dt>最後更新</dt><dd>${escapeHtml(formatDetailTimestamp(transaction.updatedAt))}</dd></div>
       </dl>`;
+    const refunds = state.transactions.filter(item => item.refundOf === transaction.id);
+    if (transaction.type === 'expense' && refunds.length) {
+      const refundTotal = refunds.reduce((sum, item) => sum + item.amount, 0);
+      detailDialog.querySelector('#transaction-detail-content').insertAdjacentHTML('beforeend', `<p>原消費 ${escapeHtml(formatMoney(transaction.amount))} · 已退款 ${escapeHtml(formatMoney(refundTotal))} · 淨支出 ${escapeHtml(formatMoney(transaction.amount - refundTotal))}</p>${refunds.map(item => `<button type="button" data-detail-id="${escapeHtml(item.id)}">查看退款 ${escapeHtml(formatMoney(item.amount))}</button>`).join('')}`);
+    }
+    if (transaction.type === 'income') {
+      const candidates = state.transactions.filter(item => item.type === 'expense' && item.category !== '帳務調整' && item.date <= transaction.date);
+      detailDialog.querySelector('#transaction-detail-content').insertAdjacentHTML('beforeend', `<form id="refund-link-form" data-refund-id="${escapeHtml(transaction.id)}"><label>連結原消費（退款不計收入）<select name="originalId"><option value="">不連結退款</option>${candidates.map(item => `<option value="${escapeHtml(item.id)}" ${item.id === transaction.refundOf ? 'selected' : ''}>${escapeHtml(item.date)} · ${escapeHtml(item.name)} · ${escapeHtml(formatMoney(item.amount))}</option>`).join('')}</select></label><button class="secondary-button" type="submit">儲存退款連結</button></form>`);
+    }
+    detailDialog.querySelector('#transaction-detail-content').insertAdjacentHTML('beforeend', `<div class="sheet-sync-actions"><button class="secondary-button" type="button" data-edit-id="${escapeHtml(transaction.id)}">編輯這筆</button><button class="secondary-button" type="button" data-delete-id="${escapeHtml(transaction.id)}">刪除</button></div>`);
     if (attentionReasons.length) {
       detailDialog.querySelector('#transaction-detail-content').insertAdjacentHTML(
         'beforeend',
         `<button class="secondary-button detail-confirm-button" type="button" data-confirm-attention-id="${escapeHtml(transaction.id)}">確認無誤</button>`,
       );
     }
-    detailDialog.showModal();
+    if (!detailDialog.open) detailDialog.showModal();
+  }
+
+  function openWorkspaceDialog(title, html, mode = '') {
+    document.querySelector('#workspace-dialog-title').textContent = title;
+    document.querySelector('#workspace-dialog-content').innerHTML = html;
+    const dialog = document.querySelector('#workspace-dialog');
+    dialog.dataset.mode = mode;
+    if (!dialog.open) {
+      dialog.dataset.returnScroll = String(window.scrollY);
+      dialog.showModal();
+    }
+  }
+
+  function transactionDrillRows(transactions, kind = '') {
+    const accounts = Object.fromEntries(state.accounts.map(item => [item.id, item.name]));
+    return transactions.length ? `<div class="drill-transactions">${transactions.toSorted((a, b) => b.date.localeCompare(a.date) || String(b.createdAt).localeCompare(String(a.createdAt))).map(item => {
+      const expenseDrill = kind === 'expense' || kind === 'merchant';
+      const contribution = expenseDrill ? expenseAmount(item) : item.amount;
+      const sign = expenseDrill ? contribution < 0 ? '+' : '-' : item.type === 'expense' ? '-' : item.type === 'income' ? '+' : '';
+      const name = `${item.name || '未命名'}${expenseDrill && item.type === 'transfer' ? '（手續費）' : item.refundOf ? '（退款）' : ''}`;
+      return `<button type="button" data-detail-id="${escapeHtml(item.id)}"><span><strong>${escapeHtml(name)}</strong><small>${escapeHtml([item.date, item.category, item.subcategory, accounts[item.account]].filter(Boolean).join(' · '))}</small></span><strong>${sign}${escapeHtml(formatMoney(Math.abs(contribution)))}</strong></button>`;
+    }).join('')}</div>` : '<p class="empty-state">這個篩選沒有交易。</p>';
+  }
+
+  function openChartDrill(target) {
+    const filters = target.dataset;
+    const workspace = buildAnalysisWorkspace(state.transactions, { period: insightFilters.period, selectedMonth, today: insightFilters.anchorDate, currentDate: todayInTaipei(), category: insightFilters.category, subcategory: insightFilters.subcategory });
+    const range = workspace.range;
+    const kind = filters.analysisDrill || insightFilters.section;
+    const start = filters.start || range.from;
+    const end = filters.end || range.to;
+    const transactions = state.transactions.filter(item => {
+      if (item.date < start || item.date > end) return false;
+      if (filters.date && !item.date.startsWith(filters.date)) return false;
+      if (filters.month && !item.date.startsWith(filters.month)) return false;
+      if (filters.category && (kind === 'expense' || kind === 'merchant' ? expenseCategory(item) : item.category) !== filters.category) return false;
+      if (filters.subcategory && (kind === 'expense' && item.type === 'transfer' ? '轉帳手續費' : item.subcategory || '未細分') !== filters.subcategory) return false;
+      if (filters.account && item.account !== filters.account && item.toAccount !== filters.account) return false;
+      if (filters.accountGroup === 'liquid' && item.account === 'investment' && (item.type !== 'transfer' || item.toAccount === 'investment')) return false;
+      if (filters.accountGroup === 'investment' && item.account !== 'investment' && (item.type !== 'transfer' || item.toAccount !== 'investment')) return false;
+      if (filters.merchant && item.merchant !== filters.merchant) return false;
+      if (filters.name && (item.merchant || item.itemName || item.name || '未命名') !== filters.name) return false;
+      if ((kind === 'expense' || kind === 'merchant') && !expenseAmount(item)) return false;
+      if (kind === 'income' && !incomeAmount(item)) return false;
+      if (kind === 'living' && !incomeAmount(item) && !expenseAmount(item)) return false;
+      if (kind === 'investment' && !isInvestmentTransfer(item)) return false;
+      return true;
+    });
+    const title = filters.label || [filters.category, filters.subcategory, filters.date || filters.month].filter(Boolean).join(' › ') || '所選資料';
+    openWorkspaceDialog('圖表交易明細', `<p>${escapeHtml(title)} · ${transactions.length} 筆${filters.accountGroup ? '（餘額另含初始金額）' : ''}</p>${transactionDrillRows(transactions, kind)}`);
+  }
+
+  function openBulkEdit() {
+    if (!historySelection.ids.length) return;
+    const selected = state.transactions.filter(item => historySelection.ids.includes(item.id));
+    const types = new Set(selected.map(item => item.refundOf ? 'expense' : item.type));
+    const commonType = types.size === 1 ? [...types][0] : '';
+    const categories = commonType === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+    openWorkspaceDialog('批次修改', `<form id="bulk-edit-form"><p>已選 ${selected.length} 筆。留空的欄位保持原樣。</p><label>大分類<select name="category" ${!commonType || commonType === 'transfer' ? 'disabled' : ''}><option value="">不修改</option>${categories.map(item => `<option>${escapeHtml(item)}</option>`).join('')}</select></label><label>小分類<select name="subcategory" disabled><option value="">不修改</option></select></label><label>帳戶<select name="account"><option value="">不修改</option>${renderAccountOptions(state.accounts, '')}</select></label><p class="form-error" role="alert" hidden></p><button class="primary-button" type="submit">套用 ${selected.length} 筆</button></form>`);
+    const form = document.querySelector('#bulk-edit-form');
+    form.elements.category.addEventListener('change', () => {
+      const category = form.elements.category.value;
+      form.elements.subcategory.disabled = !category;
+      form.elements.subcategory.innerHTML = category ? getSubcategories(category, commonType).map(item => `<option>${escapeHtml(item)}</option>`).join('') : '<option value="">不修改</option>';
+    });
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      try {
+        const patch = Object.fromEntries([...new FormData(form)].filter(([, value]) => value !== ''));
+        if (!Object.keys(patch).length) throw new Error('請選擇至少一個要修改的欄位');
+        const transactions = bulkUpdateTransactions(state.transactions, historySelection.ids, patch, state.accounts);
+        if (!persist({ ...state, transactions })) return;
+        document.querySelector('#workspace-dialog').close();
+        historySelection = { enabled: false, ids: [] };
+        render();
+        showToast('已批次修改，稍後同步。');
+      } catch (error) { const output = form.querySelector('.form-error'); output.textContent = error.message; output.hidden = false; }
+    });
   }
 
   function confirmTransactionAttention(id) {
@@ -1085,6 +1246,25 @@ export function createApp() {
   function handleMainClick(event) {
     const target = event.target.closest('button');
     if (!target) return;
+    if (Object.hasOwn(target.dataset, 'analysisDrill')) { openChartDrill(target); return; }
+    if (Object.hasOwn(target.dataset, 'insightCompareSubcategory')) {
+      const value = target.dataset.insightCompareSubcategory;
+      const selected = insightFilters.compareSubcategories || [];
+      insightFilters = { ...insightFilters, compareSubcategories: selected.includes(value) ? selected.filter(item => item !== value) : [...selected, value] };
+      render();
+      return;
+    }
+    if (Object.hasOwn(target.dataset, 'bulkToggle')) {
+      historySelection = { enabled: !historySelection.enabled, ids: [] };
+      render();
+      return;
+    }
+    if (Object.hasOwn(target.dataset, 'bulkClear')) { historySelection.ids = []; render(); return; }
+    if (Object.hasOwn(target.dataset, 'bulkEdit')) { openBulkEdit(); return; }
+    if (target.dataset.accountHistory) {
+      openWorkspaceDialog('帳戶與對帳紀錄', renderAccountHistory(state, target.dataset.accountHistory));
+      return;
+    }
     if (Object.hasOwn(target.dataset, 'openInvestmentValuation')) {
       configureToolsForms();
       toolsDialog.showModal();
@@ -1110,6 +1290,7 @@ export function createApp() {
         section: target.dataset.insightSection,
         category: '',
         subcategory: '',
+        compareSubcategories: [],
       };
       render();
       requestAnimationFrame(() => main.querySelector(`[data-insight-section="${target.dataset.insightSection}"]`)?.focus());
@@ -1121,6 +1302,7 @@ export function createApp() {
         ...insightFilters,
         category: insightFilters.category === category ? '' : category,
         subcategory: '',
+        compareSubcategories: [],
       };
       render();
       return;
@@ -1175,6 +1357,7 @@ export function createApp() {
     }
     if (target.dataset.historyFilter) {
       const key = target.dataset.historyFilter;
+      if (!['type', 'category', 'subcategory', 'account', 'query'].includes(key)) return;
       const value = target.dataset.historyValue || '';
       historyFilters = {
         ...historyFilters,
@@ -1185,7 +1368,7 @@ export function createApp() {
       render();
       requestAnimationFrame(() =>
         main
-          .querySelector(`[data-history-filter="${key}"][data-history-value="${value}"]`)
+          .querySelector(`[data-history-filter="${CSS.escape(key)}"][data-history-value="${CSS.escape(value)}"]`)
           ?.focus(),
       );
       return;
@@ -1298,6 +1481,7 @@ export function createApp() {
 
 
   function configureToolsForms() {
+    renderCategoryRules();
     const fields = document.querySelector('#opening-balance-fields');
     fields.innerHTML = state.accounts
       .map(
@@ -1377,6 +1561,11 @@ export function createApp() {
       : '<p class="settings-empty">尚未儲存對帳結果。</p>';
   }
 
+  function renderCategoryRules() {
+    const rules = normalizeFeatureSettings(state.featureSettings).categoryRules || [];
+    document.querySelector('#category-rules-list').innerHTML = rules.length ? rules.map(item => `<article><div><strong>${escapeHtml(item.match)}</strong><span>${escapeHtml([item.type === 'income' ? '收入' : '支出', item.category, item.subcategory].join(' · '))}</span></div><button type="button" data-remove-category-rule="${escapeHtml(item.id)}" aria-label="移除 ${escapeHtml(item.match)} 分類規則">×</button></article>`).join('') : '<p>尚未設定規則；在手動記帳時可選擇記住分類。</p>';
+  }
+
   function updateSyncHealthStatus() {
     const status = document.querySelector('#sync-health-status');
     if (!status) return;
@@ -1394,6 +1583,8 @@ export function createApp() {
     const first = pending.upserts[0];
     const item = first ? ` · 下一筆交易 #${String(first).slice(-8)}` : '';
     status.textContent = `${lastLabel} · 待上傳 ${queued} 項${item}${next} · AI 待審 ${review} 筆`;
+    const inspector = document.querySelector('#workspace-dialog');
+    if (inspector.open && inspector.dataset.mode === 'sync') document.querySelector('#workspace-dialog-content').innerHTML = renderSyncInspector(state, pending, { now: Date.now() });
   }
 
   function saveRecurringRule(event) {
@@ -1595,6 +1786,7 @@ export function createApp() {
       rememberProxySession(credentials.endpoint, credentials.proxyToken);
       rememberSuccessfulSync();
       completed = true;
+      sheetConfigurationNotice = '';
       return true;
     } catch (error) {
       // Keep the local journal authoritative and retry quietly. The user can
@@ -1820,6 +2012,11 @@ export function createApp() {
   document.querySelector('#recurring-rule-form').elements.account.addEventListener('change', configureRecurringFields);
   document.querySelector('#reconciliation-form').addEventListener('submit', saveReconciliation);
   toolsDialog.addEventListener('click', event => {
+    const removeRule = event.target.closest('[data-remove-category-rule]');
+    if (removeRule && confirm('確定移除這個分類規則？')) {
+      const features = normalizeFeatureSettings(state.featureSettings);
+      if (persist({ ...state, featureSettings: { ...features, categoryRules: features.categoryRules.filter(item => item.id !== removeRule.dataset.removeCategoryRule) } })) renderCategoryRules();
+    }
     const remove = event.target.closest('[data-remove-recurring]');
     if (remove) removeRecurringRule(remove.dataset.removeRecurring);
     const edit = event.target.closest('[data-edit-recurring]');
@@ -1842,7 +2039,65 @@ export function createApp() {
   document.querySelector('#transaction-detail-dialog').addEventListener('click', event => {
     const button = event.target.closest('[data-confirm-attention-id]');
     if (button) confirmTransactionAttention(button.dataset.confirmAttentionId);
+    const target = event.target.closest('button');
+    if (target?.dataset.editId) { document.querySelector('#transaction-detail-dialog').close(); openTransactionDialog(state.transactions.find(item => item.id === target.dataset.editId)); }
+    if (target?.dataset.deleteId) { document.querySelector('#transaction-detail-dialog').close(); void deleteTransaction(target.dataset.deleteId); }
+    if (target?.dataset.detailId) openTransactionDetail(target.dataset.detailId);
   });
+  document.querySelector('#transaction-detail-dialog').addEventListener('submit', event => {
+    const form = event.target.closest('#refund-link-form');
+    if (!form) return;
+    event.preventDefault();
+    try {
+      const transactions = linkRefund(state.transactions, form.dataset.refundId, form.elements.originalId.value);
+      if (!persist({ ...state, transactions })) return;
+      render();
+      openTransactionDetail(form.dataset.refundId);
+      showToast('已更新退款連結。');
+    } catch (error) { showToast(error.message, 'error'); }
+  });
+  document.querySelector('#workspace-dialog').addEventListener('click', event => {
+    const target = event.target.closest('button');
+    if (target?.dataset.detailId) openTransactionDetail(target.dataset.detailId);
+    if (Object.hasOwn(target?.dataset || {}, 'syncRetry')) {
+      pendingSheetRetryCount = 0;
+      void syncPendingSheetChanges();
+      showToast('已安排重試；本機資料仍保留。');
+    }
+  });
+  document.querySelector('#workspace-dialog').addEventListener('close', event => {
+    const top = Number(event.target.dataset.returnScroll);
+    if (Number.isFinite(top)) requestAnimationFrame(() => scrollTo({ top, behavior: 'instant' }));
+  });
+  document.querySelector('#inspect-pending-sync').addEventListener('click', () =>
+    openWorkspaceDialog('待上傳項目', renderSyncInspector(state, readPendingSheetChanges(), { now: Date.now() }), 'sync'),
+  );
+  document.querySelector('#save-entry-template').addEventListener('click', saveEntryTemplate);
+  document.querySelector('#discard-entry-draft').addEventListener('click', () => {
+    clearEntryDraft(localStorage);
+    openTransactionDialog();
+    showToast('草稿已捨棄。');
+  });
+  document.querySelector('#entry-templates').addEventListener('click', event => {
+    const apply = event.target.closest('[data-entry-template]');
+    const remove = event.target.closest('[data-remove-entry-template]');
+    const features = normalizeFeatureSettings(state.featureSettings);
+    if (apply) {
+      const template = (features.templates || []).find(item => item.id === apply.dataset.entryTemplate);
+      if (!template) return;
+      fillEntryForm({ ...template, date: todayInTaipei() });
+      document.querySelector('#manual-entry').open = true;
+      rememberEntryDraft();
+    }
+    if (remove && confirm('確定移除這個快速範本？')) {
+      if (persist({ ...state, featureSettings: { ...features, templates: features.templates.filter(item => item.id !== remove.dataset.removeEntryTemplate) } })) renderEntryTemplates();
+    }
+  });
+  transactionForm.addEventListener('input', rememberEntryDraft);
+  transactionForm.addEventListener('change', rememberEntryDraft);
+  transactionForm.addEventListener('click', () => queueMicrotask(rememberEntryDraft));
+  document.querySelector('#manual-entry').addEventListener('toggle', rememberEntryDraft);
+  window.addEventListener('pagehide', rememberEntryDraft);
   transactionForm.addEventListener('submit', saveTransaction);
   transactionForm.addEventListener('input', event => {
     if (['amount', 'fee', 'feeMode'].includes(event.target.name)) updateTransferPreview(transactionForm, document.querySelector('#transfer-preview'));
@@ -1854,6 +2109,7 @@ export function createApp() {
   transactionForm.addEventListener('click', event => {
     const button = event.target.closest('[data-transaction-type]');
     if (button) {
+      manualCategoryChosen = false;
       setTransactionType(button.dataset.transactionType);
       scheduleTransactionClassification();
     }
@@ -1872,9 +2128,13 @@ export function createApp() {
   transactionForm.elements.account.addEventListener('change', () =>
     updateDestinationAccounts(transactionForm.elements.toAccount.value),
   );
-  transactionForm.elements.category.addEventListener('change', () =>
-    setSubcategoryOptions(transactionForm.elements.type.value),
-  );
+  transactionForm.elements.category.addEventListener('change', () => {
+    manualCategoryChosen = true;
+    clearTimeout(classificationTimer);
+    classificationRequest += 1;
+    setSubcategoryOptions(transactionForm.elements.type.value);
+  });
+  transactionForm.elements.subcategory.addEventListener('change', () => { manualCategoryChosen = true; classificationRequest += 1; });
   transactionForm.elements.name.addEventListener('input', scheduleTransactionClassification);
   transactionForm.elements.note.addEventListener('input', scheduleTransactionClassification);
   document.querySelector('#voice-submit-button').addEventListener('click', () =>
@@ -1913,6 +2173,13 @@ export function createApp() {
   main.addEventListener('click', handleMainClick);
   main.addEventListener('input', handleHistoryFilters);
   main.addEventListener('change', handleHistoryFilters);
+  main.addEventListener('change', event => {
+    const id = event.target.dataset.selectTransaction;
+    if (!id) return;
+    historySelection.ids = event.target.checked ? [...new Set([...historySelection.ids, id])] : historySelection.ids.filter(item => item !== id);
+    render();
+    requestAnimationFrame(() => main.querySelector(`[data-select-transaction="${CSS.escape(id)}"]`)?.focus());
+  });
   main.addEventListener('submit', saveBudget);
   window.addEventListener('hashchange', () => {
     view = safeViewFromHash();

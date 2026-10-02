@@ -115,6 +115,12 @@ describe('帳本補強功能', () => {
     expect(reconciliationStatus('800', '800')).toMatchObject({ difference: 0, status: 'matched' });
   });
 
+  it('保留退款大於支出時的負月支出快照', () => {
+    expect(normalizeFeatureSettings({ monthlySnapshots: [
+      { month: '2026-08', assetTotal: 100, income: 0, expense: -50 },
+    ] }).monthlySnapshots[0].expense).toBe(-50);
+  });
+
   it('月結快照排除下月交易並按月末投資對帳市值計算資產', () => {
     const snapshot = createMonthlySnapshot({
       accounts: [

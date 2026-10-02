@@ -40,6 +40,21 @@ describe('GAS 同步合約', () => {
     });
   });
 
+  it('功能設定以 ID 合併並保留模板與自動分類規則', () => {
+    const functions = new Function(`${source}\nreturn { normalizeFeatureSettings_, mergeFeatureSettings_ };`)();
+    const template = { id: 'template-1', label: '午餐', name: '便當', type: 'expense', amount: 120, account: 'line' };
+    const categoryRule = { id: 'category-1', match: '咖啡店', type: 'expense', category: '飲食', subcategory: '咖啡' };
+    const existing = functions.normalizeFeatureSettings_({ templates: [{ ...template, name: '舊名稱' }] });
+    const merged = functions.mergeFeatureSettings_(existing, {
+      templates: [template], categoryRules: [categoryRule],
+    }, {}, false, { templates: true, categoryRules: true });
+
+    expect(merged.templates).toEqual([template]);
+    expect(merged.categoryRules).toEqual([categoryRule]);
+    expect(functions.normalizeFeatureSettings_({})).not.toHaveProperty('templates');
+    expect(functions.normalizeFeatureSettings_({})).not.toHaveProperty('categoryRules');
+  });
+
   it('保留帳本 Sheet 同步，但不再暴露載具 API、排程或財政部 AppID 設定', () => {
     expect(source).toContain("body.action === 'syncLedgerState'");
     expect(source).toContain("body.action === 'syncLedgerChanges'");
@@ -58,7 +73,7 @@ describe('GAS 同步合約', () => {
 
   it('提供不寫入 Sheet 的已授權模式能力檢查', () => {
     const capabilities = new Function(`${source}\nreturn getLedgerCapabilities_;`)();
-    expect(capabilities()).toEqual({ transferFeeModeVersion: 1 });
+    expect(capabilities()).toEqual({ transferFeeModeVersion: 1, enhancementsVersion: 1 });
   });
 
   it('不再提供發票或銀行連線操作與轉送端點', () => {
@@ -128,8 +143,9 @@ describe('GAS 同步合約', () => {
     };
     const values = row(transaction);
 
-    expect(headers.at(-1)).toBe('手續費方式');
-    expect(values).toHaveLength(28);
+    expect(headers[27]).toBe('手續費方式');
+    expect(headers[28]).toBe('退款來源ID');
+    expect(values).toHaveLength(29);
     expect(values[22]).toBe(12);
     expect(values[27]).toBe('included');
     expect(fromRow(values)).toMatchObject({ fee: 12, feeMode: 'included' });
@@ -238,7 +254,7 @@ describe('GAS 同步合約', () => {
     expect(normalizeRow(legacyRow)).toEqual([
       'voice:test', 'income', '家教', 2500, '接案', '家教', 'bot', '', '2026-08-27', '口語原文',
       'voice', 'test', '', '', '[]', 'created', 'updated', '', '', 'pending', '', '口語原文', '', '', '', '', '',
-      '',
+      '', '',
     ]);
   });
 

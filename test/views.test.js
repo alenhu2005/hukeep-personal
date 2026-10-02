@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { renderBudgets, renderHistory, renderInsights, renderOverview, transactionRows } from '../src/views.js';
+import { renderAccountHistory, renderBudgets, renderHistory, renderInsights, renderOverview, renderView, transactionRows } from '../src/views.js';
 import { todayInTaipei } from '../src/format.js';
 
 describe('交易列表', () => {
@@ -46,6 +46,16 @@ describe('交易列表', () => {
 });
 
 describe('總覽', () => {
+  it('只有退款的月份不產生無效或負數的支出圖條', () => {
+    const html = renderOverview({
+      accounts: [{ id: 'cash', name: '現金', icon: '現', openingBalance: 0 }],
+      transactions: [{ id: 'refund', type: 'income', refundOf: 'old-expense', amount: 50, account: 'cash', date: '2026-10-02', category: '飲食', subcategory: '正餐' }],
+      budgets: [],
+    }, '2026-10');
+    expect(html).toContain('data-testid="summary-expense">-NT$ 50</strong>');
+    expect(html).toContain('class="rail-expense"><span style="width:0%"');
+    expect(html).not.toMatch(/width:(?:NaN|Infinity|-)/);
+  });
   it('同時顯示含投資與不含投資的帳戶餘額', () => {
     const html = renderOverview({
       accounts: [
@@ -190,6 +200,44 @@ describe('紀錄篩選與月份', () => {
     expect(html).toContain('電費');
     expect(html).toContain('3 筆紀錄');
   });
+
+  it('顯示可移除的篩選條件，並把批次選取控制放在交易按鈕之外', () => {
+    const html = renderView('history', { accounts, transactions }, '2026-09', {
+      query: '', type: '', category: '飲食', subcategory: '', account: '', preset: 'all',
+    }, { historySelection: { enabled: true, ids: ['attention-1'] } });
+
+    expect(html).toContain('data-history-filter="category" data-history-value=""');
+    expect(html).toContain('data-select-transaction="attention-1" checked');
+    expect(html).toContain('data-selected-count>1</strong>');
+    expect(html).toContain('data-bulk-edit');
+    expect(html).not.toContain('data-bulk-delete');
+    expect(html.indexOf('data-select-transaction="attention-1"')).toBeLessThan(html.indexOf('data-detail-id="attention-1"'));
+  });
+});
+
+describe('帳戶對帳紀錄', () => {
+  it('按日期列出檢查點，並讓後續交易只影響當下估算', () => {
+    const state = {
+      accounts: [{ id: 'cash', name: '現金', icon: '現', openingBalance: 100 }],
+      transactions: [
+        { id: 'before', type: 'expense', amount: 10, account: 'cash', date: '2026-09-01', createdAt: '2026-09-01T09:00:00Z' },
+        { id: 'same-day-after', type: 'income', amount: 20, account: 'cash', date: '2026-09-01', createdAt: '2026-09-01T11:00:00Z' },
+        { id: 'current-flow', type: 'expense', amount: 30, account: 'cash', date: '2026-09-06', createdAt: '2026-09-06T09:00:00Z' },
+      ],
+      featureSettings: { reconciliations: [
+        { id: 'older', accountId: 'cash', actualBalance: 90, date: '2026-09-01', createdAt: '2026-09-01T10:00:00Z' },
+        { id: 'newer', accountId: 'cash', actualBalance: 110, date: '2026-09-05', createdAt: '2026-09-05T10:00:00Z' },
+      ] },
+    };
+    const html = renderAccountHistory(state, 'cash');
+
+    expect(html.indexOf('9/5 對帳')).toBeLessThan(html.indexOf('9/1 對帳'));
+    expect(html).toContain('對帳當時估算 NT$ 90');
+    expect(html).toContain('對帳後淨流動 -NT$ 30 · 目前估算 NT$ 80');
+    expect(html).toContain('current-flow');
+    expect(html).not.toContain('差 NT$ 30');
+    expect(html).not.toContain('不含市場漲跌');
+  });
 });
 
 describe('預算月底預測', () => {
@@ -238,8 +286,9 @@ describe('趨勢每日淨額', () => {
     expect(html).toContain('-120');
     expect(html).toContain('analysis-net-positive');
     expect(html).toContain('+200');
-    expect(html).toContain('analysis-heat-3');
-    expect(html).toContain('analysis-heat-5');
+    expect(html).toContain('analysis-net-negative analysis-heat-2');
+    expect(html).toContain('analysis-net-positive analysis-heat-2');
+    expect(html).toContain('101–500');
     expect(html).toContain('data-insight-section="overview"');
     expect(html).toContain('data-insight-section="expense"');
     expect(html).toContain('data-insight-section="income"');

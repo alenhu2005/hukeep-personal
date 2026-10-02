@@ -1,0 +1,205 @@
+.history-view .filter-bar {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.history-view .search-field,
+.history-view .history-filter-group,
+.history-view .history-preset-group,
+.history-view .history-type-group,
+.history-view .history-advanced-filters {
+  grid-column: 1 / -1;
+}
+
+.history-view .filter-chip-scroll {
+  min-height: 48px;
+  gap: 4px;
+}
+
+.history-view .filter-chip-scroll button {
+  min-height: 44px;
+  padding-inline: 10px;
+}
+
+.history-advanced-filters {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+}
+
+.history-advanced-filters > summary {
+  min-height: 44px;
+  padding: 12px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.history-advanced-filter-fields {
+  display: grid;
+  gap: 7px;
+  padding: 0 8px 8px;
+}
+
+.history-active-filters,
+.history-bulk-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.history-active-filters {
+  margin-top: 9px;
+}
+
+.history-active-filters button,
+.history-bulk-toolbar button {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-strong);
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.history-active-filters button {
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.history-bulk-toolbar {
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.history-bulk-toolbar > span {
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.history-bulk-toolbar > span strong {
+  color: var(--ink);
+}
+
+.history-bulk-toolbar button:disabled {
+  opacity: 0.48;
+}
+
+.transaction-row--selectable {
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+}
+
+.transaction-select {
+  display: grid;
+  width: 44px;
+  min-height: 44px;
+  place-items: center;
+  cursor: pointer;
+}
+
+.transaction-select input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.account-item {
+  min-height: 60px;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.account-item:focus-visible,
+.history-active-filters button:focus-visible,
+.history-bulk-toolbar button:focus-visible,
+.history-advanced-filters > summary:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.account-history {
+  display: grid;
+  gap: 10px;
+}
+
+.account-history-current,
+.account-checkpoint {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-strong);
+}
+
+.account-history-current {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.account-history-current span,
+.account-checkpoint-detail,
+.account-checkpoint-flows > small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.account-history-current strong {
+  font-size: 18px;
+}
+
+.account-checkpoint-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.account-checkpoint-heading > div {
+  display: grid;
+  gap: 4px;
+}
+
+.account-checkpoint-heading > div > span {
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.account-checkpoint-heading > strong {
+  white-space: nowrap;
+}
+
+.account-checkpoint-detail {
+  margin: 8px 0 0;
+}
+
+.account-checkpoint-flows {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.account-checkpoint-flows > small {
+  display: block;
+  margin-bottom: 7px;
+}
+
+@media (min-width: 700px) {
+  .history-advanced-filter-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .history-advanced-filter-fields .history-subcategory-group {
+    grid-column: 1 / -1;
+  }
+}

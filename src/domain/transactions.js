@@ -106,7 +106,7 @@ function normalizeInvoiceNumber(value) {
   return /^[A-Z]{2}\d{8}$/.test(compact) ? compact : '';
 }
 
-function normalizeOptionalMetadata(input) {
+function normalizeOptionalMetadata(input, transactionId) {
   const metadata = {};
   const subcategory = cleanBoundedText(input?.subcategory, 60);
   const source = cleanBoundedText(input?.source, 16);
@@ -121,7 +121,17 @@ function normalizeOptionalMetadata(input) {
   const groupId = cleanBoundedText(input?.groupId, 80);
   const receiptId = cleanBoundedText(input?.receiptId, 160);
   const receiptName = cleanBoundedText(input?.receiptName, 160);
+  const refundOf = cleanBoundedText(input?.refundOf, MAX_ID_LENGTH);
   const ocrConfidence = Number(input?.ocrConfidence);
+
+  if (refundOf) {
+    if (refundOf === transactionId) throw new ValidationError('退款不能連結到自己');
+    if (input?.type !== 'income') throw new ValidationError('退款必須是收入交易');
+    if (input?.category === '帳務調整' && input?.source === 'manual') {
+      throw new ValidationError('帳務調整不能作為退款');
+    }
+    metadata.refundOf = refundOf;
+  }
 
   if ((input?.type !== 'transfer' || input?.category === '投資') && subcategory) metadata.subcategory = subcategory;
   if (VALID_SOURCES.has(source)) metadata.source = source;
@@ -174,7 +184,7 @@ export function normalizeStoredTransaction(input) {
     return {
       id,
       ...normalized,
-      ...normalizeOptionalMetadata(input),
+      ...normalizeOptionalMetadata(input, id),
       createdAt,
       updatedAt,
     };
@@ -189,7 +199,7 @@ export function createTransaction(input, options = {}) {
   return {
     id,
     ...normalizeInput(input),
-    ...normalizeOptionalMetadata(input),
+    ...normalizeOptionalMetadata(input, id),
     createdAt: now,
     updatedAt: now,
   };
@@ -200,22 +210,80 @@ export function updateTransaction(transactions, id, changes, options = {}) {
   if (index < 0) throw new ValidationError('找不到要更新的交易');
 
   const current = transactions[index];
-  const normalized = normalizeInput({ ...current, ...changes });
+  const updatedInput = { ...current, ...changes };
+  const normalized = normalizeInput(updatedInput);
   const updatedAt = options.now ?? new Date().toISOString();
   const currentWithoutFee = Object.fromEntries(
-    Object.entries(current).filter(([key]) => key !== 'fee' && key !== 'feeMode'),
+    Object.entries(current).filter(([key]) => !['fee', 'feeMode', 'subcategory', 'refundOf'].includes(key)),
   );
   const next = {
     ...currentWithoutFee,
     ...normalized,
-    ...normalizeOptionalMetadata({ ...current, ...changes }),
+    ...normalizeOptionalMetadata(updatedInput, current.id),
     ...(current.aiStatus === 'pending' ? { aiStatus: 'confirmed' } : {}),
     userEditedAt: updatedAt,
     id: current.id,
     createdAt: current.createdAt,
     updatedAt,
   };
-  return transactions.map((transaction, itemIndex) => (itemIndex === index ? next : transaction));
+
+  const linkedRefunds = transactions.filter(transaction => transaction.refundOf === current.id);
+  if (linkedRefunds.length) {
+    const linkedTotal = linkedRefunds.reduce((total, transaction) => {
+      if (transaction.type !== 'income' || !Number.isInteger(transaction.amount) || transaction.amount <= 0) {
+        throw new ValidationError('已有退款資料不正確');
+      }
+      if (transaction.date < next.date) throw new ValidationError('原支出日期不能晚於退款日期');
+      return total + transaction.amount;
+    }, 0);
+    if (next.type !== 'expense' || next.category === '帳務調整' && next.source === 'manual') {
+      throw new ValidationError('已有退款時，原交易必須維持一般支出');
+    }
+    if (next.amount < linkedTotal) throw new ValidationError('原支出金額不可低於已退款金額');
+  }
+
+  if (next.refundOf) {
+    const original = transactions.find(transaction => transaction.id === next.refundOf);
+    if (
+      !original || original.type !== 'expense' || !Number.isInteger(original.amount) ||
+      original.amount <= 0 || original.category === '帳務調整' && original.source === 'manual'
+    ) {
+      throw new ValidationError('找不到有效的原支出');
+    }
+    if (
+      next.category !== original.category ||
+      (next.subcategory || '') !== (original.subcategory || '')
+    ) {
+      throw new ValidationError('退款分類需與原支出一致');
+    }
+    if (original.date > next.date) throw new ValidationError('退款日期不能早於原支出日期');
+    const otherRefunds = transactions.filter(transaction =>
+      transaction.id !== current.id && transaction.refundOf === original.id,
+    );
+    const otherTotal = otherRefunds.reduce((total, transaction) => {
+      if (transaction.type !== 'income' || !Number.isInteger(transaction.amount) || transaction.amount <= 0) {
+        throw new ValidationError('已有退款資料不正確');
+      }
+      return total + transaction.amount;
+    }, 0);
+    if (next.amount > original.amount - otherTotal) {
+      throw new ValidationError('退款金額超過原支出剩餘金額');
+    }
+  }
+
+  let updated = transactions.map((transaction, itemIndex) => (itemIndex === index ? next : transaction));
+  if (
+    linkedRefunds.length &&
+    (next.category !== current.category || next.subcategory !== current.subcategory)
+  ) {
+    for (const refund of linkedRefunds) {
+      updated = updateTransaction(updated, refund.id, {
+        category: next.category,
+        subcategory: next.subcategory || null,
+      }, options);
+    }
+  }
+  return updated;
 }
 
 export function removeTransaction(transactions, id) {

@@ -77,6 +77,70 @@ describe('GAS spoken upload batching', () => {
     expect(lock.releaseLock).toHaveBeenCalledOnce();
   });
 
+  it('persists a linked refund and keeps its income classification through AI review', () => {
+    const { context } = harness();
+    const row = context.ledgerTransactionRow_({
+      id: 'refund-1', type: 'income', name: '消費退款', amount: 120,
+      category: '退款與理賠', subcategory: '消費退款', account: 'line',
+      date: '2026-10-01', source: 'manual', refundOf: 'purchase-1',
+    });
+    const stored = context.ledgerTransactionFromRow_(row);
+    const reviewed = context.validateSpokenReview_({
+      type: 'expense', amount: 1, date: '2026-10-02', account: 'cash', toAccount: '',
+      name: '咖啡', category: '飲食', subcategory: '咖啡', note: '', fee: 0, feeMode: 'additional',
+    }, stored, '退款通知');
+
+    expect(row[28]).toBe('purchase-1');
+    expect(stored).toMatchObject({ refundOf: 'purchase-1', category: '退款與理賠', subcategory: '消費退款' });
+    expect(reviewed).toMatchObject({
+      type: 'income', amount: 120, category: '退款與理賠', subcategory: '消費退款', refundOf: 'purchase-1',
+    });
+  });
+
+  it('rejects concurrent refunds above the original expense before writing any account or transaction changes', () => {
+    const { context, sheets, lock } = harness();
+    const transactions = sheet();
+    transactions.rows.push(Array.from(context.LEDGER_TRANSACTION_HEADERS));
+    transactions.rows.push(context.ledgerTransactionRow_({
+      id: 'purchase-1', type: 'expense', name: '便當', amount: 75,
+      category: '飲食', subcategory: '便當', account: 'cash', date: '2026-09-01', source: 'manual',
+    }));
+    transactions.rows.push(context.ledgerTransactionRow_({
+      id: 'refund-1', type: 'income', name: '部分退款', amount: 50,
+      category: '飲食', subcategory: '便當', account: 'cash', date: '2026-09-05',
+      source: 'manual', refundOf: 'purchase-1',
+    }));
+    sheets.set('小帳_交易', transactions);
+
+    expect(() => context.syncLedgerChanges_({
+      accounts: [{ id: 'cash', name: '現金', openingBalance: 100 }], accountDeletes: [],
+      transactions: [{
+        id: 'refund-2', type: 'income', name: '另一筆部分退款', amount: 50,
+        category: '飲食', subcategory: '便當', account: 'cash', date: '2026-10-01',
+        source: 'manual', refundOf: 'purchase-1',
+      }],
+      transactionDeletes: [], budgets: [], budgetDeletes: [],
+    })).toThrow('退款金額超過原支出');
+
+    expect(transactions.rows).toHaveLength(3);
+    expect(sheets.get('小帳_帳戶').rows).toHaveLength(1);
+    expect(lock.releaseLock).toHaveBeenCalledOnce();
+  });
+
+  it('writes and reads optional templates and category rules from the feature settings sheet', () => {
+    const { context } = harness();
+    const spreadsheet = context.SpreadsheetApp.openById('sheet-id');
+    const settings = {
+      recurringRules: [], monthlySnapshots: [], reconciliations: [],
+      templates: [{ id: 'template-1', label: '午餐', type: 'expense', amount: 120, account: 'cash' }],
+      categoryRules: [{ id: 'rule-1', match: '咖啡店', type: 'expense', category: '飲食', subcategory: '咖啡' }],
+    };
+
+    context.writeFeatureSettings_(spreadsheet, settings);
+
+    expect(context.readFeatureSettings_(spreadsheet)).toEqual(settings);
+  });
+
   it('preserves existing transactions and expands a full sheet for the new batch', () => {
     const { context, sheets } = harness();
     const existing = sheet();
@@ -93,7 +157,7 @@ describe('GAS spoken upload batching', () => {
     context.enqueueSpokenEntry_({ transcript: '午餐100飲料20', drafts: [{ amount: 100 }, { amount: 20 }] });
     expect(existing.rows[1]).toEqual(original);
     expect(existing.insertRowsAfter).toHaveBeenCalledWith(2, 2);
-    expect(existing.writes).toEqual([{ start: 3, count: 2, width: 28 }]);
+    expect(existing.writes).toEqual([{ start: 3, count: 2, width: 29 }]);
   });
 
   it('retains queue-only items while batching only positive drafts into transactions', () => {

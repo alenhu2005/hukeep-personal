@@ -27,7 +27,7 @@ test('可新增收支、重新整理仍保留並透過歷史搜尋', async ({ pa
     .getByRole('button', { name: '永豐' })
     .click();
   await transactionForm.getByLabel('金額').fill('120');
-  await transactionForm.getByLabel('名稱').fill('鼎王麻辣鍋午餐');
+  await transactionForm.getByLabel('名稱', { exact: true }).fill('鼎王麻辣鍋午餐');
   await transactionForm.getByLabel('備註').fill('和朋友聚餐');
   await page.getByRole('button', { name: '儲存這筆' }).click();
 
@@ -56,6 +56,7 @@ test('可新增收支、重新整理仍保留並透過歷史搜尋', async ({ pa
   await expect(page.getByTestId('summary-expense')).toContainText('120');
 
   await page.getByRole('button', { name: '紀錄', exact: true }).click();
+  await page.locator('.history-advanced-filters summary').click();
   await expect(page.locator('[data-history-filter="category"][data-history-value="飲食"]')).toContainText('100%');
   await page.locator('[data-history-filter="category"][data-history-value="飲食"]').click();
   await expect(page.locator('[data-history-filter="subcategory"][data-history-value="火鍋"]')).toContainText('100%');
@@ -143,7 +144,7 @@ test('收入也在背景分類，事後編輯才顯示分類', async ({ page }) 
     .getByRole('button', { name: '台銀' })
     .click();
   await form.getByLabel('金額').fill('1200');
-  await form.getByLabel('名稱').fill('週末家教費');
+  await form.getByLabel('名稱', { exact: true }).fill('週末家教費');
   await form.getByLabel('備註').fill('週六數學家教');
   await page.getByRole('button', { name: '儲存這筆' }).click();
 
@@ -173,7 +174,7 @@ test(`手動轉帳 ${feeMode} 預覽、離線儲存及餘額一致`, async ({ pa
   await page.getByText('手動記帳', { exact: true }).click();
   await page.getByRole('button', { name: '轉帳', exact: true }).click();
   const form = page.locator('#transaction-form');
-  await form.getByLabel('名稱').fill('轉入 LINE');
+  await form.getByLabel('名稱', { exact: true }).fill('轉入 LINE');
   await form.getByLabel('金額').fill('10000');
   await form.getByLabel('轉帳手續費', { exact: true }).fill('12');
   await expect(form.getByLabel('手續費方式')).toHaveValue('included');
@@ -225,7 +226,7 @@ test('內扣手續費不可等於金額，改成外加後可儲存', async ({ pa
   await page.getByText('手動記帳', { exact: true }).click();
   await page.getByRole('button', { name: '轉帳', exact: true }).click();
   const form = page.locator('#transaction-form');
-  await form.getByLabel('名稱').fill('測試轉帳');
+  await form.getByLabel('名稱', { exact: true }).fill('測試轉帳');
   await form.getByLabel('金額').fill('12');
   await form.getByLabel('轉帳手續費', { exact: true }).fill('12');
   await expect(page.locator('#transfer-preview')).toContainText('手續費必須小於轉帳金額');
@@ -286,7 +287,7 @@ test('舊 GAS 不會收到內扣轉帳，更新後同一筆待同步交易只寫
   await page.getByText('手動記帳', { exact: true }).click();
   await page.getByRole('button', { name: '轉帳', exact: true }).click();
   const form = page.locator('#transaction-form');
-  await form.getByLabel('名稱').fill('待同步內扣');
+  await form.getByLabel('名稱', { exact: true }).fill('待同步內扣');
   await form.getByLabel('金額').fill('10000');
   await form.getByLabel('轉帳手續費', { exact: true }).fill('12');
   await form.locator('[data-account-for="transaction-to-account"]').getByRole('button', { name: 'LINE' }).click();
@@ -1042,9 +1043,10 @@ test('刪除前會確認，確認後會實際刪除 Google Sheet 的交易與預
       return;
     }
     if (body.action === 'syncLedgerChanges') {
+      deleteRequests.push(body);
       await route.fulfill({
         contentType: 'application/json',
-        body: JSON.stringify({ ok: true, data: { accountCount: 5, transactionCount: 1, budgetCount: 1 } }),
+        body: JSON.stringify({ ok: true, data: { accountCount: 5, transactionCount: 1, budgetCount: 1, featureSettingsVersion: 1 } }),
       });
       return;
     }
@@ -1086,7 +1088,8 @@ test('刪除前會確認，確認後會實際刪除 Google Sheet 的交易與預
   await page.getByRole('button', { name: '刪除 要刪除的午餐' }).click();
   await expect(page.getByText('要刪除的午餐')).toHaveCount(0);
   await expect.poll(() => deleteRequests).toContainEqual(expect.objectContaining({
-    action: 'deleteLedgerTransaction', transactionId: 'delete-me', proxyToken: 'delete-token',
+    action: 'syncLedgerChanges', proxyToken: 'delete-token',
+    changes: expect.objectContaining({ transactionDeletes: ['delete-me'] }),
   }));
 
   await page.getByRole('button', { name: '預算', exact: true }).click();

@@ -6,6 +6,9 @@ import './styles/imports.css';
 import './styles/responsive.css';
 import './styles/motion.css';
 import './styles/analysis-workspace.css';
+import './styles/analysis-upgrades.css';
+import './styles/history-upgrades.css';
+import './styles/workspace-tools.css';
 import { createApp } from './app.js';
 
 createApp();

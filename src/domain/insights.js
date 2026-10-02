@@ -12,9 +12,16 @@ export function isAccountingAdjustment(transaction) {
   return transaction?.category === '帳務調整' && transaction?.source === 'manual';
 }
 
+export function incomeAmount(transaction) {
+  if (!validAmount(transaction) || transaction.type !== 'income') return 0;
+  if (isAccountingAdjustment(transaction) || transaction.refundOf) return 0;
+  return transaction.amount;
+}
+
 export function expenseAmount(transaction) {
   if (!validAmount(transaction) || isAccountingAdjustment(transaction)) return 0;
   if (transaction.type === 'expense') return transaction.amount;
+  if (transaction.type === 'income' && transaction.refundOf) return -transaction.amount;
   return transaction.type === 'transfer' ? transferAmounts(transaction).fee : 0;
 }
 
@@ -30,11 +37,12 @@ export function summarizeMonth(transactions, month) {
     (result, transaction) => {
       if (!inMonth(transaction, month) || !validAmount(transaction)) return result;
       if (isAccountingAdjustment(transaction)) return result;
-      if (transaction.type === 'income') {
+      const income = incomeAmount(transaction);
+      if (income) {
         return {
           ...result,
-          income: result.income + transaction.amount,
-          balance: result.balance + transaction.amount,
+          income: result.income + income,
+          balance: result.balance + income,
           count: result.count + 1,
         };
       }

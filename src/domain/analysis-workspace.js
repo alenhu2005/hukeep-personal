@@ -1,6 +1,22 @@
-import { expenseAmount, expenseCategory, isAccountingAdjustment } from './insights.js';
-import { investmentDirection, isInvestmentTransfer, summarizeInvestmentFlows } from './investment-accounting.js';
+import {
+  calculateAccountBalances,
+  expenseAmount,
+  expenseCategory,
+  incomeAmount,
+  isAccountingAdjustment,
+} from './insights.js';
+import { investmentDirection, isInvestmentTransfer, INVESTMENT_ACCOUNT_ID, summarizeInvestmentFlows } from './investment-accounting.js';
 import { transferAmounts } from './transfer-fees.js';
+import { transactionsAtReconciliation } from './reconciliation.js';
+
+export const ANALYSIS_HEAT_THRESHOLDS = Object.freeze([100, 500, 2000, 10000]);
+
+export function heatLevel(amount) {
+  const value = Math.abs(Number(amount) || 0);
+  return value ? ANALYSIS_HEAT_THRESHOLDS.findIndex(threshold => value <= threshold) + 1 || 5 : 0;
+}
+
+export const analysisHeatLevel = heatLevel;
 
 function dateFromText(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value ?? ''))
@@ -59,7 +75,7 @@ function inRange(transaction, range) {
 
 function totals(transactions) {
   return transactions.reduce((result, transaction) => ({
-    income: result.income + (transaction.type === 'income' && !isAccountingAdjustment(transaction) ? Number(transaction.amount) || 0 : 0),
+    income: result.income + incomeAmount(transaction),
     expense: result.expense + expenseAmount(transaction),
   }), { income: 0, expense: 0 });
 }
@@ -88,8 +104,8 @@ function comparisonRange(range, period, currentDate) {
 
 function amountFor(transaction, type) {
   if (isAccountingAdjustment(transaction)) return 0;
-  return type === 'income' && transaction.type === 'income'
-    ? Number(transaction.amount) || 0
+  return type === 'income'
+    ? incomeAmount(transaction)
     : type === 'expense'
       ? expenseAmount(transaction)
       : 0;
@@ -108,8 +124,8 @@ function subcategoryFor(transaction) {
 }
 
 function categoryGroups(transactions, type, previousTransactions = []) {
-  const rows = transactions.filter(row => amountFor(row, type) > 0);
-  const previousRows = previousTransactions.filter(row => amountFor(row, type) > 0);
+  const rows = transactions.filter(row => amountFor(row, type) !== 0);
+  const previousRows = previousTransactions.filter(row => amountFor(row, type) !== 0);
   const total = rows.reduce((sum, row) => sum + amountFor(row, type), 0);
   return [...new Set(rows.map(row => categoryFor(row, type)))].map(category => {
     const members = rows.filter(row => categoryFor(row, type) === category);
@@ -153,6 +169,185 @@ function rangeKeys(range, period) {
   return Array.from({ length: Math.max(0, daysBetween(range.from, range.to) + 1) }, (_, index) => addDays(range.from, index));
 }
 
+function observedRange(range, period, elapsedDays) {
+  const to = addDays(range.from, elapsedDays - 1);
+  return { from: range.from, to: period === 'year' && to > range.to ? range.to : to };
+}
+
+function keysFor(range, period) {
+  return rangeKeys(range, period).filter(key => period !== 'year' || key <= range.to.slice(0, 7));
+}
+
+function labelForKey(key, period) {
+  return period === 'year'
+    ? `${Number(key.slice(5))}月`
+    : `${Number(key.slice(5, 7))}/${Number(key.slice(8))}`;
+}
+
+function bucketFor(date, period) {
+  return period === 'year' ? date?.slice(0, 7) : date;
+}
+
+function seriesAmount(transactions, type, key, period) {
+  return transactions.reduce((sum, row) =>
+    bucketFor(row.date, period) === key ? sum + amountFor(row, type) : sum, 0);
+}
+
+function categoryAmounts(transactions, type) {
+  return transactions.reduce((result, row) => {
+    const amount = amountFor(row, type);
+    if (amount) result.set(categoryFor(row, type), (result.get(categoryFor(row, type)) || 0) + amount);
+    return result;
+  }, new Map());
+}
+
+function comparisonKeys(range, comparison, period) {
+  const current = keysFor(observedRange(range, period, comparison.elapsedDays), period);
+  const previous = keysFor({ from: comparison.from, to: comparison.to }, period);
+  return current.map((key, index) => ({
+    key,
+    label: labelForKey(key, period),
+    previousKey: previous[index] || '',
+  }));
+}
+
+function categoryComparisonSeries(transactions, previousTransactions, type, range, comparison, period) {
+  const names = new Set([
+    ...categoryAmounts(transactions, type).keys(),
+    ...categoryAmounts(previousTransactions, type).keys(),
+  ]);
+  return [...names].map(category => {
+    const series = comparisonKeys(range, comparison, period).map(({ key, label, previousKey }) => {
+      const currentRows = transactions.filter(row => categoryFor(row, type) === category && bucketFor(row.date, period) === key);
+      const previousRows = previousTransactions.filter(row => categoryFor(row, type) === category && bucketFor(row.date, period) === previousKey);
+      return {
+        key,
+        label,
+        previousKey,
+        amount: currentRows.reduce((sum, row) => sum + amountFor(row, type), 0),
+        previousAmount: previousRows.reduce((sum, row) => sum + amountFor(row, type), 0),
+      };
+    });
+    const currentAmount = series.reduce((sum, row) => sum + row.amount, 0);
+    const previousAmount = series.reduce((sum, row) => sum + row.previousAmount, 0);
+    return {
+      category,
+      amount: currentAmount,
+      previousAmount,
+      changeAmount: currentAmount - previousAmount,
+      changePercent: percentChange(currentAmount, previousAmount),
+      series,
+      children: [...new Set([
+        ...transactions.filter(row => categoryFor(row, type) === category).map(subcategoryFor),
+        ...previousTransactions.filter(row => categoryFor(row, type) === category).map(subcategoryFor),
+      ])].map(subcategory => ({
+        subcategory,
+        series: comparisonKeys(range, comparison, period).map(({ key, label, previousKey }) => ({
+          key,
+          label,
+          previousKey,
+          amount: transactions.reduce((sum, row) => sum + (
+            categoryFor(row, type) === category && subcategoryFor(row) === subcategory
+              && bucketFor(row.date, period) === key ? amountFor(row, type) : 0), 0),
+          previousAmount: previousTransactions.reduce((sum, row) => sum + (
+            categoryFor(row, type) === category && subcategoryFor(row) === subcategory
+              && bucketFor(row.date, period) === previousKey ? amountFor(row, type) : 0), 0),
+        })),
+      })),
+    };
+  }).toSorted((left, right) => right.amount - left.amount || left.category.localeCompare(right.category));
+}
+
+function expenseChanges(transactions, previousTransactions) {
+  const current = categoryAmounts(transactions, 'expense');
+  const previous = categoryAmounts(previousTransactions, 'expense');
+  return [...new Set([...current.keys(), ...previous.keys()])].map(category => {
+    const amount = current.get(category) || 0;
+    const previousAmount = previous.get(category) || 0;
+    return {
+      category,
+      amount,
+      previousAmount,
+      changeAmount: amount - previousAmount,
+      changePercent: percentChange(amount, previousAmount),
+    };
+  }).toSorted((left, right) => Math.abs(right.changeAmount) - Math.abs(left.changeAmount)
+    || left.category.localeCompare(right.category));
+}
+
+function merchantGroups(transactions) {
+  const groups = new Map();
+  transactions.forEach(transaction => {
+    const amount = expenseAmount(transaction);
+    const merchant = String(transaction.merchant || '').trim();
+    const name = String(transaction.itemName || transaction.name || '').trim();
+    if (!amount || (!merchant && !name)) return;
+    const key = merchant ? `merchant:${merchant}` : `item:${name}`;
+    const current = groups.get(key) || {
+      kind: merchant ? 'merchant' : 'item', merchant, name: merchant ? '' : name,
+      label: merchant || name, amount: 0, count: 0, transactions: [],
+    };
+    current.amount += amount;
+    current.count += 1;
+    current.transactions.push(transaction);
+    groups.set(key, current);
+  });
+  return [...groups.values()].toSorted((left, right) => right.amount - left.amount || left.label.localeCompare(right.label));
+}
+
+function budgetCumulativeSeries(transactions, budgets, range, period) {
+  if (period !== 'month' || !range.from) return [];
+  const [year, month] = range.from.split('-').map(Number);
+  const days = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const keys = rangeKeys(range, 'month');
+  return (budgets || []).map(budget => {
+    let cumulative = 0;
+    const series = keys.map(key => {
+      cumulative += transactions.reduce((sum, row) => row.date === key
+        && categoryFor(row, 'expense') === budget.category ? sum + amountFor(row, 'expense') : sum, 0);
+      const day = Number(key.slice(8));
+      return {
+        key,
+        label: `${day}日`,
+        amount: cumulative,
+        proratedBudget: Math.round((Number(budget.limit) || 0) * day / days),
+      };
+    });
+    return { category: budget.category, limit: Number(budget.limit) || 0, series };
+  });
+}
+
+function investmentHistory(state, transactions, accounts, range, period) {
+  const investmentAccount = (accounts || []).find(account => account.id === INVESTMENT_ACCOUNT_ID);
+  if (!investmentAccount) return { series: [], checkpoints: [] };
+  const keys = keysFor(range, period);
+  const series = keys.map(key => {
+    const monthCutoff = period === 'year' ? monthEnd(key) : key;
+    const through = monthCutoff > range.to ? range.to : monthCutoff;
+    const rows = transactions.filter(row => row.date <= through);
+    const balances = calculateAccountBalances(accounts, rows);
+    const investmentPrincipal = balances.find(account => account.id === INVESTMENT_ACCOUNT_ID)?.balance || 0;
+    const liquid = balances.filter(account => account.id !== INVESTMENT_ACCOUNT_ID)
+      .reduce((sum, account) => sum + account.balance, 0);
+    return { key, through, label: labelForKey(key, period), liquid, investmentPrincipal };
+  });
+  const checkpoints = (state.reconciliations || [])
+    .filter(item => item.accountId === INVESTMENT_ACCOUNT_ID && Number.isSafeInteger(item.actualBalance) && item.actualBalance >= 0)
+    .map(item => {
+      const atCheckpoint = transactionsAtReconciliation(transactions, item);
+      const principal = calculateAccountBalances(accounts, atCheckpoint)
+        .find(account => account.id === INVESTMENT_ACCOUNT_ID)?.balance || 0;
+      return {
+        date: item.date,
+        principal,
+        marketValue: item.actualBalance,
+      };
+    })
+    .filter(item => Number.isSafeInteger(item.marketValue))
+    .toSorted((left, right) => left.date.localeCompare(right.date));
+  return { series, checkpoints };
+}
+
 function timeSeries(transactions, type, range, period) {
   return rangeKeys(range, period).map(key => {
     const amount = transactions
@@ -169,7 +364,7 @@ function timeSeries(transactions, type, range, period) {
 }
 
 function accountGroups(transactions, type) {
-  const valid = transactions.filter(row => amountFor(row, type) > 0);
+  const valid = transactions.filter(row => amountFor(row, type) !== 0);
   const total = valid.reduce((sum, row) => sum + amountFor(row, type), 0);
   return [...new Set(valid.map(row => row.account || '未指定'))].map(account => {
     const members = valid.filter(row => (row.account || '未指定') === account);
@@ -224,14 +419,55 @@ export function buildAnalysisWorkspace(transactions, options = {}) {
   const period = ['week', 'month', 'year'].includes(options.period) ? options.period : 'month';
   const range = analysisRange(period, options.selectedMonth, options.today);
   const scoped = rows.filter(transaction => inRange(transaction, range));
-  const expenseTransactions = scoped.filter(transaction => expenseAmount(transaction) > 0);
+  const expenseTransactions = scoped.filter(transaction => expenseAmount(transaction) !== 0);
   const totalsNow = totals(scoped);
   const previousComparison = comparisonRange(range, period, options.currentDate);
   const previousRange = { from: previousComparison.from, to: previousComparison.to };
   const previousScoped = rows.filter(transaction => inRange(transaction, previousRange));
+  const currentObservedRange = observedRange(range, period, previousComparison.elapsedDays);
+  const currentObserved = rows.filter(transaction => inRange(transaction, currentObservedRange));
   const previousTotals = totals(previousScoped);
   const expenseGroups = categoryGroups(scoped, 'expense', previousScoped);
   const incomeGroups = categoryGroups(scoped, 'income', previousScoped);
+  const expenseComparisonSeries = categoryComparisonSeries(
+    currentObserved, previousScoped, 'expense', range, previousComparison, period,
+  );
+  const incomeComparisonSeries = categoryComparisonSeries(
+    currentObserved, previousScoped, 'income', range, previousComparison, period,
+  );
+  const expenseChangesRows = expenseChanges(currentObserved, previousScoped);
+  const compositionFor = series => {
+    const selected = options.category
+      ? series.find(row => row.category === options.category) || null
+      : series.find(row => row.amount !== 0) || series[0] || null;
+    return selected ? {
+      category: selected.category,
+      children: selected.children.map(row => row.subcategory),
+      series: comparisonKeys(range, previousComparison, period).map(({ key, label }) => ({
+        key,
+        label,
+        parts: selected.children.map(child => ({
+          subcategory: child.subcategory,
+          amount: child.series.find(row => row.key === key)?.amount || 0,
+        })).filter(part => part.amount !== 0),
+      })),
+      subcategorySeries: selected.children,
+    } : null;
+  };
+  const expenseComposition = compositionFor(expenseComparisonSeries);
+  const incomeComposition = compositionFor(incomeComparisonSeries);
+  const incomeExpenseSeries = keysFor(currentObservedRange, period).map(key => ({
+    key,
+    label: labelForKey(key, period),
+    income: seriesAmount(currentObserved, 'income', key, period),
+    expense: seriesAmount(currentObserved, 'expense', key, period),
+  }));
+  const incomeExpenseMax = Math.max(0, ...incomeExpenseSeries.flatMap(row => [Math.abs(row.income), Math.abs(row.expense)]));
+  const investmentHistoryData = investmentHistory({
+    transactions: rows,
+    accounts: options.accounts || [],
+    reconciliations: options.reconciliations || [],
+  }, rows, options.accounts || [], currentObservedRange, period);
   const categoryRows = expenseGroups.map(({ category, amount, percent }) => ({ category, amount, percent }));
   const dailyRows = Object.entries(
     expenseTransactions.reduce((result, transaction) => ({
@@ -248,7 +484,7 @@ export function buildAnalysisWorkspace(transactions, options = {}) {
         return { month, amount: monthTotals.expense, income: monthTotals.income, net: monthTotals.income - monthTotals.expense };
       })
     : [];
-  const largest = expenseTransactions
+  const largest = expenseTransactions.filter(transaction => expenseAmount(transaction) > 0)
     .map(transaction => ({ name: transaction.name, amount: expenseAmount(transaction), date: transaction.date }))
     .toSorted((left, right) => right.amount - left.amount)[0] || null;
   const top = categoryRows[0] || null;
@@ -302,6 +538,19 @@ export function buildAnalysisWorkspace(transactions, options = {}) {
   return {
     incomeGroups,
     expenseGroups,
+    incomeExpenseSeries,
+    incomeExpenseMax,
+    expenseComparisonSeries,
+    incomeComparisonSeries,
+    expenseChanges: expenseChangesRows,
+    expenseComposition,
+    expenseSubcategorySeries: expenseComposition?.subcategorySeries || [],
+    incomeComposition,
+    incomeSubcategorySeries: incomeComposition?.subcategorySeries || [],
+    budgetCumulativeSeries: budgetCumulativeSeries(currentObserved, options.budgets, currentObservedRange, period),
+    merchantGroups: merchantGroups(currentObserved),
+    liquidInvestmentSeries: investmentHistoryData.series,
+    investmentCheckpoints: investmentHistoryData.checkpoints,
     incomeInsights,
     investmentFlows,
     investmentGroups,
@@ -310,6 +559,9 @@ export function buildAnalysisWorkspace(transactions, options = {}) {
     investmentCost,
     investmentCostTransactions,
     range,
+    observedRange: currentObservedRange,
+    currentDate: options.currentDate || options.today,
+    period,
     scoped,
     expenseTransactions,
     totals: totalsNow,

@@ -30,7 +30,7 @@ var INCOME_TAXONOMY = {
 var LEDGER_TRANSACTION_HEADERS = [
   'ID', '類型', '名稱', '金額', '大分類', '小分類', '帳戶', '目的帳戶', '日期', '備註', '來源',
   '來源ID', '發票號碼', '商家', '發票品項', '建立時間', '更新時間', '使用者修改時間', '匯入時間',
-  'AI審查狀態', 'AI審查時間', '口語原文', '手續費', '群組ID', 'AI修正紀錄', '收據ID', '收據名稱', '手續費方式'
+  'AI審查狀態', 'AI審查時間', '口語原文', '手續費', '群組ID', 'AI修正紀錄', '收據ID', '收據名稱', '手續費方式', '退款來源ID'
 ];
 var SPOKEN_QUEUE_HEADERS = ['佇列ID', '口語原文', '送出時間', '狀態', '交易ID', '錯誤', '更新時間', '重試次數'];
 var ACCOUNT_IDS = ['cash', 'line', 'sinopac', 'bot', 'post', 'investment'];
@@ -108,7 +108,7 @@ function authorize_(providedToken) {
 }
 
 function getLedgerCapabilities_() {
-  return { transferFeeModeVersion: 1 };
+  return { transferFeeModeVersion: 1, enhancementsVersion: 1 };
 }
 
 
@@ -224,8 +224,10 @@ function syncLedgerState_(state) {
     var accountSheet = getOrCreateSheet_(spreadsheet, '小帳_帳戶');
     var transactionSheet = getOrCreateSheet_(spreadsheet, '小帳_交易');
     ensureLedgerTransactionSheet_(transactionSheet);
+    var mergedTransactionRows = mergeLedgerTransactionRows_(transactionSheet, transactionRows);
+    validateRefundRows_(transactionSheet, mergedTransactionRows.slice(1), mergedTransactionRows.slice(1).map(function (row) { return row[0]; }));
     replaceSheetContents_(accountSheet, accountRows);
-    replaceSheetContents_(transactionSheet, mergeLedgerTransactionRows_(transactionSheet, transactionRows));
+    replaceSheetContents_(transactionSheet, mergedTransactionRows);
     repairInvestmentAccountSheet_(accountSheet, transactionSheet);
     replaceSheetContents_(getOrCreateSheet_(spreadsheet, '小帳_設定'), settingsRows);
     writeFeatureSettings_(spreadsheet, mergeFeatureSettings_(readFeatureSettings_(spreadsheet), featureSettings, {}, true));
@@ -240,6 +242,7 @@ function syncLedgerState_(state) {
     budgetCount: budgets.length,
     syncedAt: syncedAt,
     transferFeeModeVersion: 1,
+    enhancementsVersion: 1,
   };
 }
 
@@ -284,8 +287,16 @@ function syncLedgerChanges_(changes) {
     ensureLedgerTransactionSheet_(transactionSheet);
     ensureSheetHeader_(settingsSheet, ['項目', '值']);
 
+    var transactionSheetRows = transactionRows.length || transactionDeletes.length
+      ? sheetRowsAfterChanges_(transactionSheet, transactionRows, transactionDeletes, true, LEDGER_TRANSACTION_HEADERS)
+      : null;
+    if (transactionSheetRows) {
+      var changedTransactionIds = transactionDeletes.concat(transactionRows.map(function (row) { return row[0]; }));
+      validateRefundRows_(transactionSheet, transactionSheetRows, changedTransactionIds);
+    }
+
     applySheetChanges_(accountSheet, accountRows, accountDeletes, false, ['帳戶ID', '帳戶名稱', '初始金額']);
-    applySheetChanges_(transactionSheet, transactionRows, transactionDeletes, true, LEDGER_TRANSACTION_HEADERS);
+    applySheetChanges_(transactionSheet, transactionRows, transactionDeletes, true, LEDGER_TRANSACTION_HEADERS, null, transactionSheetRows);
     repairInvestmentAccountSheet_(accountSheet, transactionSheet);
     applySheetChanges_(settingsSheet, budgetRows, budgetDeletes.map(function (category) { return '預算:' + category; }), false, ['項目', '值'], ['schemaVersion', 'syncedAt']);
     ensureVoiceQueueForTransactions_(spreadsheet, transactions);
@@ -302,14 +313,14 @@ function syncLedgerChanges_(changes) {
       syncedAt: syncedAt,
       featureSettingsVersion: 1,
       transferFeeModeVersion: 1,
+      enhancementsVersion: 1,
     };
   } finally {
     lock.releaseLock();
   }
 }
 
-function applySheetChanges_(sheet, upserts, deletes, preserveTransactions, headers, keepKeys) {
-  if (!upserts.length && !deletes.length) return;
+function sheetRowsAfterChanges_(sheet, upserts, deletes, preserveTransactions, headers, keepKeys) {
   var values = sheet.getLastRow() < 2
     ? []
     : sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues();
@@ -334,6 +345,12 @@ function applySheetChanges_(sheet, upserts, deletes, preserveTransactions, heade
       if (keep.has(boundedText_(row[0], 80)) && !rows.some(function (candidate) { return candidate[0] === row[0]; })) rows.push(row);
     });
   }
+  return rows;
+}
+
+function applySheetChanges_(sheet, upserts, deletes, preserveTransactions, headers, keepKeys, preparedRows) {
+  if (!upserts.length && !deletes.length) return;
+  var rows = preparedRows || sheetRowsAfterChanges_(sheet, upserts, deletes, preserveTransactions, headers, keepKeys);
   // Incremental sync rewrites one compact range; avoid expensive column
   // auto-resizing on every phone edit. Full syncs keep the readable layout.
   replaceSheetContents_(sheet, [headers].concat(rows), { resizeColumns: false });
@@ -517,6 +534,11 @@ function ledgerTransactionRow_(transaction) {
     ? normalizedTransferFeeMode_(transaction.feeMode, 'additional')
     : '';
   if (feeMode === 'included' && fee >= amount) throw new Error('含手續費時，手續費必須小於金額');
+  var refundOf = boundedText_(transaction.refundOf, 80);
+  if (refundOf && (refundOf === boundedText_(transaction.id, 80) || transaction.type !== 'income' ||
+    (transaction.category === '帳務調整' && transaction.source === 'manual'))) {
+    throw new Error('退款關聯資料格式不正確');
+  }
   return [
     safeSheetText_(transaction.id, 80),
     safeSheetText_(transaction.type, 16),
@@ -546,6 +568,7 @@ function ledgerTransactionRow_(transaction) {
     safeSheetText_(transaction.receiptId, 160),
     safeSheetText_(transaction.receiptName, 160),
     safeSheetText_(feeMode, 16),
+    safeSheetText_(refundOf, 80),
   ];
 }
 
@@ -577,6 +600,58 @@ function mergeLedgerTransactionRows_(sheet, incomingRows) {
     }
   });
   return [LEDGER_TRANSACTION_HEADERS.slice()].concat(incoming);
+}
+
+function validateRefundRows_(sheet, candidateRows, changedIds) {
+  var existingRows = sheet.getLastRow() < 2
+    ? []
+    : sheet.getRange(2, 1, sheet.getLastRow() - 1, LEDGER_TRANSACTION_HEADERS.length).getValues();
+  var existingById = new Map(existingRows.map(function (row) {
+    var transaction = ledgerTransactionFromRow_(row);
+    return [transaction.id, transaction];
+  }).filter(function (entry) { return entry[0]; }));
+  var candidateById = new Map(candidateRows.map(function (row) {
+    var transaction = ledgerTransactionFromRow_(row);
+    return [transaction.id, transaction];
+  }).filter(function (entry) { return entry[0]; }));
+  var affectedOriginalIds = new Set();
+  var affectedTransactionIds = new Set((changedIds || []).map(function (id) { return boundedText_(id, 80); }).filter(Boolean));
+  affectedTransactionIds.forEach(function (id) {
+    [existingById.get(id), candidateById.get(id)].forEach(function (transaction) {
+      if (!transaction) return;
+      if (transaction.refundOf) affectedOriginalIds.add(transaction.refundOf);
+      if (transaction.type === 'expense') affectedOriginalIds.add(transaction.id);
+    });
+  });
+  var refundsByOriginal = new Map();
+  candidateById.forEach(function (transaction) {
+    if (!transaction.refundOf) return;
+    var refunds = refundsByOriginal.get(transaction.refundOf) || [];
+    refunds.push(transaction);
+    refundsByOriginal.set(transaction.refundOf, refunds);
+  });
+  affectedOriginalIds.forEach(function (originalId) {
+    var refunds = refundsByOriginal.get(originalId) || [];
+    if (!refunds.length) return;
+    var original = candidateById.get(originalId);
+    if (!original || original.type !== 'expense' || !Number.isSafeInteger(original.amount) || original.amount <= 0 ||
+      original.category === '帳務調整' && original.source === 'manual' || !validLedgerDate_(original.date)) {
+      throw new Error('退款連結找不到有效的原支出');
+    }
+    var total = 0;
+    refunds.forEach(function (refund) {
+      if (refund.type !== 'income' || !Number.isSafeInteger(refund.amount) || refund.amount <= 0 ||
+        refund.category === '帳務調整' && refund.source === 'manual' || !validLedgerDate_(refund.date)) {
+        throw new Error('退款資料格式不正確');
+      }
+      if (original.date > refund.date) throw new Error('退款日期不能早於原支出日期');
+      if (refund.category !== original.category || (refund.subcategory || '') !== (original.subcategory || '')) {
+        throw new Error('退款分類必須與原支出相同');
+      }
+      total += refund.amount;
+      if (total > original.amount) throw new Error('退款金額超過原支出金額');
+    });
+  });
 }
 
 function preserveExistingLedgerTransactionRow_(existing, incoming) {
@@ -643,6 +718,8 @@ function normalizeFeatureSettings_(value) {
     monthlySnapshots: Array.isArray(source.monthlySnapshots) ? source.monthlySnapshots.slice(0, 120) : [],
     reconciliations: Array.isArray(source.reconciliations) ? source.reconciliations.slice(0, 200) : [],
   };
+  if (Array.isArray(source.templates) && source.templates.length) settings.templates = source.templates.slice(0, 100);
+  if (Array.isArray(source.categoryRules) && source.categoryRules.length) settings.categoryRules = source.categoryRules.slice(0, 100);
   var text = JSON.stringify(settings);
   if (text.length > 60000) throw new Error('功能設定資料過大');
   return settings;
@@ -656,6 +733,8 @@ function mergeFeatureSettings_(existing, incoming, deletes, mergeAll, supplied) 
     recurringRules: function (item) { return boundedText_(item && item.id, 80); },
     monthlySnapshots: function (item) { return boundedText_(item && item.month, 7); },
     reconciliations: function (item) { return boundedText_(item && item.id, 80); },
+    templates: function (item) { return boundedText_(item && item.id, 80); },
+    categoryRules: function (item) { return boundedText_(item && item.id, 80); },
   };
   Object.keys(keys).forEach(function (collection) {
     var base = new Map((current[collection] || []).map(function (item) { return [keys[collection](item), item]; }).filter(function (pair) { return pair[0]; }));
@@ -665,7 +744,8 @@ function mergeFeatureSettings_(existing, incoming, deletes, mergeAll, supplied) 
       changed.forEach(function (item, key) { base.set(key, item); });
     }
     removed.forEach(function (key) { base.delete(key); });
-    result[collection] = Array.from(base.values()).slice(-({ recurringRules: 100, monthlySnapshots: 120, reconciliations: 200 }[collection]));
+    var items = Array.from(base.values()).slice(-({ recurringRules: 100, monthlySnapshots: 120, reconciliations: 200, templates: 100, categoryRules: 100 }[collection]));
+    if (items.length || ['templates', 'categoryRules'].indexOf(collection) < 0) result[collection] = items;
   });
   return normalizeFeatureSettings_(result);
 }
@@ -1186,6 +1266,8 @@ function ledgerTransactionFromRow_(row) {
     receiptId: boundedText_(row[25], 160),
     receiptName: boundedText_(row[26], 160),
   };
+  var refundOf = boundedText_(row[28], 80);
+  if (refundOf) transaction.refundOf = refundOf;
   var fee = normalizedTransferFee_(row[22], 0);
   if (transaction.type === 'transfer') {
     transaction.feeMode = normalizedTransferFeeMode_(row[27], 'additional');
@@ -1280,33 +1362,35 @@ function taxonomyPrompt_(taxonomy) {
 
 function validateSpokenReview_(review, fallback, transcript) {
   var preserveMultiItem = boundedText_(fallback && fallback.sourceId, 160).indexOf('multi:') === 0;
+  var preserveRefundClassification = Boolean(boundedText_(fallback && fallback.refundOf, 80)) &&
+    boundedText_(fallback && fallback.type, 16) === 'income';
   var preserveInvestmentTransfer = boundedText_(fallback && fallback.type, 16) === 'transfer' &&
     boundedText_(fallback && fallback.category, 60) === '投資' &&
     (boundedText_(fallback && fallback.account, 40) === 'investment' ||
       boundedText_(fallback && fallback.toAccount, 40) === 'investment');
-  var type = preserveMultiItem || preserveInvestmentTransfer
+  var type = preserveMultiItem || preserveInvestmentTransfer || preserveRefundClassification
     ? boundedText_(fallback && fallback.type, 16)
     : ['expense', 'income', 'transfer'].indexOf(review && review.type) >= 0
     ? review.type
     : boundedText_(fallback && fallback.type, 16);
   if (['expense', 'income', 'transfer'].indexOf(type) < 0) throw new Error('AI 無法辨識交易類型');
-  var amount = preserveMultiItem
+  var amount = preserveMultiItem || preserveRefundClassification
     ? Math.round(Number(fallback && fallback.amount))
     : Math.round(Number(review && review.amount));
   if (!Number.isSafeInteger(amount) || amount <= 0 || amount > 1000000000000) {
     throw new Error('AI 無法辨識正確金額');
   }
-  var date = preserveMultiItem
+  var date = preserveMultiItem || preserveRefundClassification
     ? boundedText_(fallback && fallback.date, 10)
     : boundedText_(review && review.date, 10);
   if (!validLedgerDate_(date)) date = boundedText_(fallback && fallback.date, 10);
   if (!validLedgerDate_(date)) throw new Error('AI 無法辨識正確日期');
-  var account = preserveMultiItem || preserveInvestmentTransfer
+  var account = preserveMultiItem || preserveInvestmentTransfer || preserveRefundClassification
     ? boundedText_(fallback && fallback.account, 40)
     : boundedText_(review && review.account, 40);
   if (ACCOUNT_IDS.indexOf(account) < 0) account = boundedText_(fallback && fallback.account, 40);
   if (ACCOUNT_IDS.indexOf(account) < 0) account = 'cash';
-  var toAccount = preserveMultiItem || preserveInvestmentTransfer
+  var toAccount = preserveMultiItem || preserveInvestmentTransfer || preserveRefundClassification
     ? boundedText_(fallback && fallback.toAccount, 40)
     : boundedText_(review && review.toAccount, 40);
   if (type !== 'transfer') toAccount = '';
@@ -1328,8 +1412,8 @@ function validateSpokenReview_(review, fallback, transcript) {
   if (feeMode === 'included' && fee >= amount) throw new Error('含手續費時，手續費必須小於金額');
   var classification = normalizeSpokenClassification_(
     type,
-    preserveInvestmentTransfer ? fallback && fallback.category : review && review.category,
-    preserveInvestmentTransfer ? fallback && fallback.subcategory : review && review.subcategory,
+    preserveInvestmentTransfer || preserveRefundClassification ? fallback && fallback.category : review && review.category,
+    preserveInvestmentTransfer || preserveRefundClassification ? fallback && fallback.subcategory : review && review.subcategory,
     account,
     toAccount
   );
@@ -1361,6 +1445,7 @@ function validateSpokenReview_(review, fallback, transcript) {
     aiReviewedAt: now,
     rawTranscript: transcript,
   };
+  if (preserveRefundClassification) transaction.refundOf = boundedText_(fallback && fallback.refundOf, 80);
   if (type === 'transfer') {
     transaction.feeMode = feeMode;
     if (fee > 0) transaction.fee = fee;
