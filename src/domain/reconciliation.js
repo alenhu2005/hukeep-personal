@@ -2,9 +2,10 @@ import { calculateAccountBalances, isAccountingAdjustment } from './insights.js'
 
 export function transactionsAtReconciliation(transactions, item) {
   const cutoff = Date.parse(item.createdAt);
+  const included = new Set(item.includedTransactionIds || []);
   // ponytail: same-day boundary uses creation time; add occurrence times if backdated same-day entries need distinction.
-  return transactions.filter(transaction => transaction.date <= item.date
-    && (transaction.date !== item.date || !(Date.parse(transaction.createdAt) > cutoff)));
+  return transactions.filter(transaction => included.has(transaction.id) || (transaction.date <= item.date
+    && (transaction.date !== item.date || !(Date.parse(transaction.createdAt) > cutoff))));
 }
 
 export function reconciliationAdjustmentNote(item) {
@@ -25,6 +26,37 @@ export function reconciliationAdjustmentStatus(state, item) {
   const adjustment = matches[0];
   const applied = adjustment ? (adjustment.type === 'income' ? adjustment.amount : -adjustment.amount) : 0;
   return { estimatedBalance, difference, adjustment, corrected: matches.length === 1 && applied === difference };
+}
+
+export function resolveAlignedReconciliations(state) {
+  const items = state.featureSettings?.reconciliations || [];
+  if (!items.length) return state;
+  const balances = new Map(calculateAccountBalances(state.accounts, state.transactions).map(item => [item.id, item.balance]));
+  const latest = new Map();
+  items.toSorted((left, right) => String(right.date).localeCompare(String(left.date))
+    || String(right.createdAt).localeCompare(String(left.createdAt)))
+    .forEach(item => { if (!latest.has(item.accountId)) latest.set(item.accountId, item); });
+  let changed = false;
+  const reconciliations = items.map(item => {
+    if (latest.get(item.accountId) !== item || item.accountId === 'investment'
+      || balances.get(item.accountId) !== item.actualBalance) return item;
+    const status = reconciliationAdjustmentStatus(state, item);
+    if (status.difference === 0 || status.corrected) return item;
+    const before = new Set(transactionsAtReconciliation(state.transactions, item).map(transaction => transaction.id));
+    const supplements = state.transactions.filter(transaction => !before.has(transaction.id)
+      && (transaction.account === item.accountId || (transaction.type === 'transfer' && transaction.toAccount === item.accountId)))
+      .map(transaction => transaction.id);
+    if (!supplements.length) return item;
+    const includedTransactionIds = [...new Set([...(item.includedTransactionIds || []), ...supplements])].toSorted();
+    // ponytail: bound supplemental links to 1,000 per checkpoint; larger repairs need a fresh reconciliation.
+    if (includedTransactionIds.length > 1000) return item;
+    const resolved = { ...item, includedTransactionIds };
+    const next = reconciliationAdjustmentStatus(state, resolved);
+    if (next.difference !== 0 && !next.corrected) return item;
+    changed = true;
+    return resolved;
+  });
+  return changed ? { ...state, featureSettings: { ...state.featureSettings, reconciliations } } : state;
 }
 
 export async function reconciliationAdjustmentId(id) {

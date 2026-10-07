@@ -96,6 +96,10 @@ function normalizeReconciliation(value) {
     : safeInteger(value.estimatedBalance, -1_000_000_000_000);
   const date = cleanText(value?.date, 10);
   if (!id || !accountId || actualBalance == null || !validDate(date)) return null;
+  const includedTransactionIds = Array.isArray(value.includedTransactionIds)
+    ? [...new Set(value.includedTransactionIds.slice(0, 1000)
+      .filter(item => typeof item === 'string').map(item => cleanText(item, 80)).filter(Boolean))].toSorted()
+    : [];
   return {
     id,
     accountId,
@@ -104,6 +108,7 @@ function normalizeReconciliation(value) {
     date,
     note: cleanText(value?.note, 120),
     createdAt: cleanText(value?.createdAt, 40),
+    ...(includedTransactionIds.length ? { includedTransactionIds } : {}),
   };
 }
 

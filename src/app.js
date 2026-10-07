@@ -17,7 +17,7 @@ import {
 } from './domain/category-taxonomy.js';
 import { parseSpokenTransactions } from './domain/spoken-entry.js';
 import { detectSpokenReview } from './domain/spoken-review.js';
-import { reconciliationAdjustmentId, reconciliationAdjustmentNote, reconciliationAdjustmentStatus, transactionsAtReconciliation } from './domain/reconciliation.js';
+import { reconciliationAdjustmentId, reconciliationAdjustmentNote, reconciliationAdjustmentStatus, resolveAlignedReconciliations, transactionsAtReconciliation } from './domain/reconciliation.js';
 import { isInvestmentTransfer } from './domain/investment-accounting.js';
 import {
   acknowledgePendingSheetChanges,
@@ -438,11 +438,12 @@ export function createApp() {
     try {
       const latestState = repository.load();
       const merged = mergeConcurrentLedgerState(state, nextState, latestState);
-      const normalized = normalizeLedgerState(options.protectPending
+      const sourceNormalized = normalizeLedgerState(options.protectPending
         ? reconcileLedgerFromSheet(latestState, merged, previousPending)
         : merged);
-      if (!options.sheetSourced) {
-        const nextPending = updatePendingSheetChanges(previousPending, latestState, normalized);
+      const normalized = resolveAlignedReconciliations(sourceNormalized);
+      if (!options.sheetSourced || normalized !== sourceNormalized) {
+        const nextPending = updatePendingSheetChanges(previousPending, options.sheetSourced ? sourceNormalized : latestState, normalized);
         if (!writePendingSheetChanges(nextPending)) throw new Error('無法儲存同步佇列');
         journalWritten = true;
         if (JSON.stringify(previousPending) !== JSON.stringify(nextPending) && hasPendingSheetChanges(nextPending)) {
@@ -451,7 +452,7 @@ export function createApp() {
         }
       }
       state = repository.save(normalized);
-      if (!options.sheetSourced && hasPendingSheetChanges(readPendingSheetChanges())) {
+      if ((!options.sheetSourced || normalized !== sourceNormalized) && hasPendingSheetChanges(readPendingSheetChanges())) {
         setSyncStatus('local', { detail: '資料已儲存在本機，稍後自動上傳' });
       }
       updateSyncHealthStatus();
@@ -523,6 +524,10 @@ export function createApp() {
       renderRecurringRules();
       renderReconciliations();
       renderCategoryRules();
+    }
+    const workspaceDialog = document.querySelector('#workspace-dialog');
+    if (workspaceDialog.open && workspaceDialog.dataset.mode?.startsWith('account:')) {
+      document.querySelector('#workspace-dialog-content').innerHTML = renderAccountHistory(state, workspaceDialog.dataset.mode.slice(8));
     }
     document.querySelector('#month-title').textContent = monthLabel(selectedMonth);
     document.querySelectorAll('[data-nav-view]').forEach(button => {
@@ -1269,7 +1274,7 @@ export function createApp() {
     if (Object.hasOwn(target.dataset, 'bulkClear')) { historySelection.ids = []; render(); return; }
     if (Object.hasOwn(target.dataset, 'bulkEdit')) { openBulkEdit(); return; }
     if (target.dataset.accountHistory) {
-      openWorkspaceDialog('帳戶與對帳紀錄', renderAccountHistory(state, target.dataset.accountHistory));
+      openWorkspaceDialog('帳戶與對帳紀錄', renderAccountHistory(state, target.dataset.accountHistory), `account:${target.dataset.accountHistory}`);
       return;
     }
     if (Object.hasOwn(target.dataset, 'openInvestmentValuation')) {
@@ -2215,6 +2220,8 @@ export function createApp() {
   window.addEventListener('storage', event => {
     if (event.key !== STORAGE_KEY || !event.newValue) return;
     state = repository.load();
+    const aligned = resolveAlignedReconciliations(state);
+    if (aligned !== state) persist(aligned);
     applyTheme();
     render();
   });
@@ -2225,6 +2232,8 @@ export function createApp() {
   lastSheetPullAt = storedLastSyncAt();
   migrateLegacyBudgetChanges();
   discardLegacyInvestmentAccountUpload();
+  const aligned = resolveAlignedReconciliations(state);
+  if (aligned !== state) persist(aligned);
   applyDueRecurringTransactions();
   captureCompletedMonthSnapshot();
   setSyncStatus(lastSheetPullAt ? 'synced' : 'local', { lastAt: lastSheetPullAt });

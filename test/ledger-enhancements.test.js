@@ -20,7 +20,8 @@ describe('帳本補強功能', () => {
       }],
       monthlySnapshots: [{ month: '2026-07', assetTotal: 30000, income: 20000, expense: 12000 }],
       reconciliations: [
-        { id: 'r1', accountId: 'line', actualBalance: 500, estimatedBalance: 550, date: '2026-08-30' },
+        { id: 'r1', accountId: 'line', actualBalance: 500, estimatedBalance: 550, date: '2026-08-30',
+          includedTransactionIds: ['supplement-b', ' supplement-a ', 'supplement-b', null, {}] },
         { id: 'r2', accountId: 'line', actualBalance: 400, date: '2026-08-29' },
         { id: 'r3', accountId: 'line', actualBalance: 300, estimatedBalance: 'not-a-balance', date: '2026-08-28' },
       ],
@@ -28,7 +29,8 @@ describe('帳本補強功能', () => {
       recurringRules: [{ id: 'rent', cadence: 'monthly', day: 5, account: 'line' }],
       monthlySnapshots: [{ month: '2026-07', assetTotal: 30000 }],
       reconciliations: [
-        { id: 'r1', accountId: 'line', actualBalance: 500, estimatedBalance: 550 },
+        { id: 'r1', accountId: 'line', actualBalance: 500, estimatedBalance: 550,
+          includedTransactionIds: ['supplement-a', 'supplement-b'] },
         { id: 'r2', accountId: 'line', actualBalance: 400 },
         { id: 'r3', accountId: 'line', actualBalance: 300 },
       ],

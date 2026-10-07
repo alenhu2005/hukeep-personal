@@ -189,7 +189,7 @@ export function renderAccountHistory(state, accountId) {
       : adjustment.corrected
         ? '已調整'
         : comparison.status === 'matched'
-          ? '相符'
+          ? item.includedTransactionIds?.length ? '補記後相符' : '相符'
           : adjustment.adjustment
             ? '待重新調整'
             : '待調整';
@@ -206,7 +206,7 @@ export function renderAccountHistory(state, accountId) {
     ${checkpoints.length ? checkpoints.map(({ item, adjustment, comparison, following, flow, status, latest }) => `
       <section class="account-checkpoint">
         <div class="account-checkpoint-heading"><div><strong>${escapeHtml(formatDate(item.date))} 對帳</strong><span>${escapeHtml(status)}</span></div><strong>${formatMoney(item.actualBalance)}</strong></div>
-        ${accountId !== 'investment' ? `<p class="account-checkpoint-detail">對帳當時估算 ${formatMoney(adjustment.estimatedBalance)}${comparison.difference ? ` · 差 ${formatMoney(Math.abs(comparison.difference))}` : ''}</p>` : ''}
+        ${accountId !== 'investment' ? `<p class="account-checkpoint-detail">${item.includedTransactionIds?.length ? '補記後帳本' : '對帳當時估算'} ${formatMoney(adjustment.estimatedBalance)}${comparison.difference ? ` · 差 ${formatMoney(Math.abs(comparison.difference))}` : ''}</p>` : ''}
         ${latest ? `<p class="account-checkpoint-detail">對帳後淨流動 ${formatMoney(flow, { showPlus: true })} · 目前估算 ${formatMoney(currentValue)}${accountId !== 'investment' && comparison.status === 'mismatch' && !adjustment.corrected ? ` · ${adjustment.adjustment ? '對帳調整待更新' : '對帳差額尚未調整'}，依對帳實際值推算 ${formatMoney(item.actualBalance + flow)}` : ''}</p>` : ''}
         ${following.length ? `<div class="account-checkpoint-flows"><small>${latest ? '對帳後紀錄' : '至下次對帳前'}</small><div class="transaction-list compact">${rowsForState(state, following, { showTime: true })}</div></div>` : latest ? '<p class="account-checkpoint-detail">尚無對帳後交易</p>' : ''}
       </section>`).join('') : emptyState('尚無對帳紀錄')}

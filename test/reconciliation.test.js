@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { reconciliationAdjustmentId, reconciliationAdjustmentNote, reconciliationAdjustmentStatus, transactionsAtReconciliation } from '../src/domain/reconciliation.js';
+import { reconciliationAdjustmentId, reconciliationAdjustmentNote, reconciliationAdjustmentStatus, resolveAlignedReconciliations, transactionsAtReconciliation } from '../src/domain/reconciliation.js';
 import { calculateAccountBalances } from '../src/domain/insights.js';
+import { normalizeLedgerState } from '../src/storage/ledger-repository.js';
+import { reconcileLedgerFromSheet, updatePendingSheetChanges } from '../src/domain/ledger-sync.js';
+import { projectLedgerChangesForSheet } from '../src/services/import-proxy.js';
 
 describe('對帳調整', () => {
   const item = { id: 'statement', accountId: 'cash', actualBalance: 70, date: '2026-09-10' };
@@ -74,5 +77,71 @@ describe('對帳調整', () => {
   it('舊版重複調整不會被誤認為已正確調整', () => {
     expect(reconciliationAdjustmentStatus({ ...state, transactions: [correction, correction] }, item))
       .toMatchObject({ estimatedBalance: 80, difference: -10, corrected: false });
+  });
+
+  it.each([
+    [70, { type: 'expense', amount: 10, account: 'cash' }],
+    [90, { type: 'income', amount: 10, account: 'cash' }],
+    [60, { type: 'transfer', amount: 20, fee: 2, feeMode: 'included', account: 'cash', toAccount: 'line' }],
+    [58, { type: 'transfer', amount: 20, fee: 2, feeMode: 'additional', account: 'cash', toAccount: 'line' }],
+    [98, { type: 'transfer', amount: 20, fee: 2, feeMode: 'included', account: 'line', toAccount: 'cash' }],
+  ])('補記使餘額對齊 %s 時自動解除差額，只連結補記而不新增調整 %j', (actualBalance, entry) => {
+    const checkpoint = { ...item, actualBalance, createdAt: '2026-09-10T04:00:00.000Z' };
+    const before = { ...state, accounts: [...state.accounts, { id: 'line', openingBalance: 0 }],
+      featureSettings: { reconciliations: [checkpoint] }, transactions: [{ ...entry, id: 'supplement',
+        date: checkpoint.date, createdAt: '2026-09-10T04:01:00.000Z' }] };
+    const resolved = resolveAlignedReconciliations(before);
+    expect(resolved.featureSettings.reconciliations[0]).toMatchObject({ id: item.id, includedTransactionIds: ['supplement'] });
+    expect(reconciliationAdjustmentStatus(resolved, resolved.featureSettings.reconciliations[0])).toMatchObject({ difference: 0 });
+    expect(resolved.transactions).toBe(before.transactions);
+    expect(resolveAlignedReconciliations(resolved)).toBe(resolved);
+  });
+
+  it('補記未對齊或投資市值不同時不自動宣告相符，只處理每個帳戶最新的對帳', () => {
+    const checkpoint = { ...item, createdAt: '2026-09-10T04:00:00.000Z' };
+    const before = { ...state, featureSettings: { reconciliations: [checkpoint] }, transactions: [{
+      id: 'partial', type: 'expense', amount: 5, account: 'cash', date: item.date, createdAt: '2026-09-10T04:01:00.000Z',
+    }] };
+    expect(resolveAlignedReconciliations(before)).toBe(before);
+    const superseded = { ...before, transactions: [{ ...before.transactions[0], amount: 10 }],
+      featureSettings: { reconciliations: [checkpoint, { ...checkpoint, id: 'latest', date: '2026-09-11', actualBalance: 80 }] } };
+    expect(resolveAlignedReconciliations(superseded)).toBe(superseded);
+    const investment = { accounts: [{ id: 'investment', openingBalance: 80 }],
+      featureSettings: { reconciliations: [{ ...checkpoint, accountId: 'investment' }] },
+      transactions: [{ ...before.transactions[0], amount: 10, account: 'investment' }] };
+    expect(resolveAlignedReconciliations(investment)).toBe(investment);
+  });
+
+  it('補齊後的新支出不重開舊差額，但修改或刪除已連結的補記仍能檢查', () => {
+    const checkpoint = { ...item, createdAt: '2026-09-10T04:00:00.000Z' };
+    const supplement = { id: 'supplement', type: 'expense', amount: 10, account: 'cash', date: item.date,
+      createdAt: '2026-09-10T04:01:00.000Z' };
+    const resolved = resolveAlignedReconciliations({ ...state,
+      featureSettings: { reconciliations: [checkpoint] }, transactions: [supplement] });
+    const after = { ...resolved, transactions: [...resolved.transactions,
+      { ...supplement, id: 'new-expense', amount: 20, createdAt: '2026-09-10T04:02:00.000Z' }] };
+    const linked = resolved.featureSettings.reconciliations[0];
+    expect(resolveAlignedReconciliations(after)).toBe(after);
+    expect(reconciliationAdjustmentStatus(after, linked)).toMatchObject({ estimatedBalance: 70, difference: 0 });
+    expect(calculateAccountBalances(after.accounts, after.transactions)[0].balance).toBe(50);
+    expect(reconciliationAdjustmentStatus({ ...after, transactions: [{ ...supplement, amount: 15 }] }, linked)).toMatchObject({ difference: 5 });
+    expect(reconciliationAdjustmentStatus({ ...after, transactions: [] }, linked)).toMatchObject({ difference: -10 });
+  });
+
+  it('補記連結可重整、備份與跨裝置同步，只佇列原對帳 ID 的更新', () => {
+    const checkpoint = { ...item, createdAt: '2026-09-10T04:00:00.000Z' };
+    const before = normalizeLedgerState({ ...state, accounts: [{ ...state.accounts[0], name: '現金', icon: '現' }],
+      featureSettings: { reconciliations: [checkpoint] }, transactions: [{ id: 'supplement', type: 'expense',
+        name: '漏記午餐', amount: 10, category: '飲食', subcategory: '正餐', account: 'cash', date: item.date,
+        createdAt: '2026-09-10T04:01:00.000Z' }] });
+    const resolved = normalizeLedgerState(JSON.parse(JSON.stringify(resolveAlignedReconciliations(before))));
+    const pending = updatePendingSheetChanges({}, before, resolved);
+    expect(pending.upserts).toEqual([]);
+    expect(pending.featureUpserts.reconciliations).toEqual([item.id]);
+    const projected = projectLedgerChangesForSheet(resolved, pending);
+    expect(projected.transactions).toEqual([]);
+    expect(projected.featureSettingsDelta.reconciliations).toMatchObject([{ id: item.id, includedTransactionIds: ['supplement'] }]);
+    const anotherDevice = normalizeLedgerState(reconcileLedgerFromSheet(before, resolved, {}));
+    expect(reconciliationAdjustmentStatus(anotherDevice, anotherDevice.featureSettings.reconciliations[0])).toMatchObject({ difference: 0 });
   });
 });
