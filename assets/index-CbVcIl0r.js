@@ -301,7 +301,6 @@ ${ht("investment-flow-values",t.investmentSeries.map(o=>`<div><strong>${b(o.labe
         <strong>${A}</strong>
         <button type="button" data-insight-shift="1" aria-label="下一期">›</button>
         ${L}
-        <div class="analysis-calendar-footer"><p class="analysis-heat-legend"><span class="negative">支出較多</span><span class="positive">收入較多</span></p><small>${o==="year"?"點月份查看月曆":"點日期看當日明細"}</small></div>
       </div>
       ${zu(e,c.selectedDay)}
       <div class="analysis-section-tabs" role="group" aria-label="分析類型">${j}</div>
