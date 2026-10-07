@@ -291,6 +291,7 @@ describe('趨勢每日淨額', () => {
     expect(html).not.toContain('analysis-heat-2');
     expect(html).not.toContain('101–500');
     expect(html).not.toContain('顏色深淺說明');
+    expect(html).not.toContain('analysis-calendar-footer');
     expect(html).toContain('data-insight-section="overview"');
     expect(html).toContain('data-insight-section="expense"');
     expect(html).toContain('data-insight-section="income"');

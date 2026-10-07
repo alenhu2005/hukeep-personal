@@ -807,7 +807,6 @@ export function renderInsights(state, month, options = {}) {
         <strong>${periodLabel}</strong>
         <button type="button" data-insight-shift="1" aria-label="下一期">›</button>
         ${periodContent}
-        <div class="analysis-calendar-footer"><p class="analysis-heat-legend"><span class="negative">支出較多</span><span class="positive">收入較多</span></p><small>${period === 'year' ? '點月份查看月曆' : '點日期看當日明細'}</small></div>
       </div>
       ${renderSelectedDay(state, workspace.selectedDay)}
       <div class="analysis-section-tabs" role="group" aria-label="分析類型">${sectionTabs}</div>

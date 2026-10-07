@@ -51,7 +51,8 @@ for (const [width, theme] of [[360, 'dark'], [401, 'light'], [768, 'light'], [14
     await expect(page.locator('#trend-chart')).toBeVisible();
     await expect(page.locator('.analysis-history-section')).toHaveCount(0);
     await expect(shell.getByText('顏色深淺說明')).toHaveCount(0);
-    expect(await page.locator('.analysis-cal-cell').first().evaluate(el => el.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+    expect(await page.locator('.analysis-cal-cell').first().evaluate(el => el.getBoundingClientRect().height)).toBe(35);
+    await expect(page.locator('.analysis-calendar-footer')).toHaveCount(0);
     expect(await page.locator('.analysis-metric-strip strong').first().evaluate(el => parseFloat(getComputedStyle(el).fontSize))).toBeGreaterThanOrEqual(19);
     const contrast = await page.locator('.analysis-cal-cell').evaluateAll(cells => {
       const ctx = document.createElement('canvas').getContext('2d');
@@ -112,6 +113,7 @@ for (const [width, theme] of [[360, 'dark'], [401, 'light'], [768, 'light'], [14
 
     await page.locator('[data-insight-period="week"]').click();
     await expect(page.locator('.analysis-week-cell')).toHaveCount(7);
+    expect(await page.locator('.analysis-week-cell').first().evaluate(el => el.getBoundingClientRect().height)).toBe(49);
     await page.locator('[data-insight-date="2026-10-18"]').click();
     expect(await page.locator('#trend-chart').evaluate(el => el.nextElementSibling.classList.contains('analysis-history-section'))).toBe(true);
     await expect(page.locator('.analysis-history-section')).toContainText('拿鐵與下午茶');
@@ -120,6 +122,7 @@ for (const [width, theme] of [[360, 'dark'], [401, 'light'], [768, 'light'], [14
     await page.locator('[data-insight-period="year"]').click();
     await expect(page.locator('.analysis-history-section')).toHaveCount(0);
     await expect(page.locator('.analysis-year-mo')).toHaveCount(12);
+    expect(await page.locator('.analysis-year-months').evaluate(el => getComputedStyle(el).gridTemplateColumns.split(' ').length)).toBe(width <= 360 ? 3 : 4);
     await screenshot('year');
     await page.locator('[data-insight-month="2026-10"]').click();
     await expect(page.locator('.analysis-cal-cell')).toHaveCount(31);
