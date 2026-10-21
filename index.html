@@ -10,8 +10,8 @@
     <link rel="manifest" href="./manifest.json" />
     <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
     <title>小帳｜個人記帳</title>
-    <script type="module" crossorigin src="/hukeep-personal/assets/index-C_pHR9v7.js"></script>
-    <link rel="stylesheet" crossorigin href="/hukeep-personal/assets/index-D19NHkUR.css">
+    <script type="module" crossorigin src="/hukeep-personal/assets/index-DqCRy5-F.js"></script>
+    <link rel="stylesheet" crossorigin href="/hukeep-personal/assets/index-BZd4EwNL.css">
   </head>
   <body>
     <a class="skip-link" href="#app-main">跳到主要內容</a>
@@ -206,8 +206,8 @@
           <label><span>名稱</span><input name="name" maxlength="120" required /></label>
           <label><span>金額</span><input name="amount" type="number" min="1" step="1" inputmode="numeric" required /></label>
           <label><span>類型</span><select name="type"><option value="expense">支出</option><option value="income">收入</option><option value="transfer">轉帳</option></select></label>
-          <label><span>週期</span><select name="cadence"><option value="monthly">每月</option><option value="weekly">每週</option></select></label>
-          <label><span>每月日期</span><input name="day" type="number" min="1" max="31" value="1" inputmode="numeric" required /></label>
+          <label><span>週期</span><select name="cadence"><option value="monthly">每月</option><option value="weekly">每週</option><option value="daily">每日</option></select></label>
+          <label class="recurring-month-day"><span>每月日期</span><input name="day" type="number" min="1" max="31" value="1" inputmode="numeric" required /></label>
           <label><span>開始日期</span><input name="startDate" type="date" required /></label>
           <label><span>帳戶</span><select name="account" required></select></label>
           <label class="recurring-to-account" hidden><span>目的帳戶</span><select name="toAccount"></select></label>
