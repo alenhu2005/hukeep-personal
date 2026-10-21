@@ -213,6 +213,7 @@ function parseDate(text, today) {
 }
 
 function accountFromText(text, fallback = 'cash') {
+  if (/\bbito\b|幣託/i.test(text)) return 'bito';
   if (/(?:投資資產|投資帳戶|證券帳戶)/.test(text)) return 'investment';
   if (/line\s*(?:bank|pay)?/i.test(text)) return 'line';
   if (/(?:永豐|sinopac)/i.test(text)) return 'sinopac';
@@ -225,7 +226,7 @@ function accountFromText(text, fallback = 'cash') {
 
 function investmentAction(text) {
   if (/(?:投資|理財|股票|證券)?(?:課程|講座|工具|軟體)/.test(text)) return '';
-  const investmentSubject = /(?:\bETF\b|00\d{2,3}|股票|個股|基金|債券|公債|公司債|比特幣|以太幣|加密(?:資產|貨幣)|定期定額|證券)/i.test(text);
+  const investmentSubject = /(?:\b(?:ETF|BTC|ETH|USDT|bito)\b|00\d{2,3}|股票|個股|基金|債券|公債|公司債|比特幣|以太幣|虛擬貨幣|幣託|加密(?:資產|貨幣)|定期定額|證券)/i.test(text);
   if (!investmentSubject) return '';
   if (/(?:賣出|賣掉|出售|贖回|領回|出金)/.test(text)) return 'sell';
   if (/(?:買入|買進|買|申購|投入|加碼|定期定額|扣款)/.test(text)) return 'buy';
@@ -268,6 +269,7 @@ function transactionName(text, type, classification) {
 }
 
 function explicitAccountFromText(text) {
+  if (/\bbito\b|幣託/i.test(text)) return 'bito';
   if (/(?:投資資產|投資帳戶|證券帳戶)/.test(text)) return 'investment';
   if (/line\s*(?:bank|pay)?/i.test(text)) return 'line';
   if (/(?:永豐|sinopac)/i.test(text)) return 'sinopac';
@@ -340,13 +342,14 @@ function multiItemDrafts(transcript, options) {
         ? classifyIncomeLocally(item.nameText)
         : classifyLocally({ merchant: item.nameText, items: [item.nameText] });
     const resolvedType = action ? 'transfer' : type;
+    const assetAccount = /\bbito\b|幣託/i.test(transcript) ? 'bito' : 'investment';
     const sourceAccount = action === 'sell'
-      ? 'investment'
+      ? assetAccount
       : accountForMultiItem(transcript, item, index);
     const destinationAccount = action === 'buy'
-      ? 'investment'
+      ? assetAccount
       : action === 'sell'
-        ? (explicitAccountFromText(transcript) || 'sinopac')
+        ? (explicitAccountFromText(transcript.replace(/\bbito\b|幣託/ig, '')) || 'sinopac')
         : null;
     const name = action
       ? item.nameText.replace(/^(?:買入|買進|買|申購|賣出|賣掉|贖回)\s*/g, '').trim()
@@ -357,10 +360,10 @@ function multiItemDrafts(transcript, options) {
       amount: item.amount,
       ...(resolvedType === 'transfer' ? { feeMode: spokenTransferFeeMode(transcript) } : {}),
       date,
-      account: sourceAccount,
+      account: action === 'buy' && sourceAccount === assetAccount ? 'sinopac' : sourceAccount,
       toAccount: destinationAccount,
       category: action ? '投資' : classification.topCategory,
-      subcategory: action && classification.topCategory !== '投資' ? '其他投資' : classification.subcategory,
+      subcategory: action && assetAccount === 'bito' ? '加密資產' : action && classification.topCategory !== '投資' ? '其他投資' : classification.subcategory,
       name: name || classification.subcategory || '投資',
       note: conciseSpokenNote(transcript, name),
       classificationText: item.nameText,
@@ -396,12 +399,13 @@ function parseSingleSpokenTransaction(value, options = {}) {
     const classificationResult = classification.topCategory === '投資'
       ? classification
       : { topCategory: '投資', subcategory: '其他投資', confidence: 0.55 };
-    const namedAccount = explicitAccountFromText(transcript);
+    const assetAccount = /\bbito\b|幣託/i.test(transcript) ? 'bito' : 'investment';
+    const namedAccount = explicitAccountFromText(transcript.replace(/\bbito\b|幣託/ig, ''));
     const sourceAccount = action === 'buy'
       ? (namedAccount && namedAccount !== 'investment' ? namedAccount : 'sinopac')
-      : 'investment';
+      : assetAccount;
     const destinationAccount = action === 'buy'
-      ? 'investment'
+      ? assetAccount
       : (namedAccount && namedAccount !== 'investment' ? namedAccount : 'sinopac');
     const cleanedName = classificationText(withoutTransferFee(transcript))
       .replace(/^(?:我)?(?:買入|買進|買|申購|投入|加碼|賣出|賣掉|出售|贖回|領回|出金)\s*/g, '')
@@ -417,7 +421,7 @@ function parseSingleSpokenTransaction(value, options = {}) {
       account: sourceAccount,
       toAccount: destinationAccount,
       category: '投資',
-      subcategory: classificationResult.subcategory,
+      subcategory: assetAccount === 'bito' ? '加密資產' : classificationResult.subcategory,
       name: cleanedName || classificationResult.subcategory,
       note: conciseSpokenNote(transcript, cleanedName),
       classificationText: classificationText(transcript),

@@ -3,8 +3,8 @@ import {
   calculateTotalAssets,
   summarizeMonth,
 } from './insights.js';
-import { investmentMarketValue } from './investment-valuation.js';
-import { INVESTMENT_ACCOUNT_ID } from './investment-accounting.js';
+import { investmentAccountValues } from './investment-valuation.js';
+import { isInvestmentAccount } from './investment-accounting.js';
 import { normalizeCategoryRule, normalizeEntryTemplate } from './entry-tools.js';
 
 const MAX_RECURRING_RULES = 100;
@@ -13,7 +13,7 @@ const MAX_RECONCILIATIONS = 200;
 const MAX_ENTRY_TEMPLATES = 100;
 const MAX_CATEGORY_RULES = 100;
 const VALID_TYPES = new Set(['expense', 'income', 'transfer']);
-const VALID_CADENCES = new Set(['monthly', 'weekly']);
+const VALID_CADENCES = new Set(['monthly', 'weekly', 'daily']);
 const VALID_TRANSFER_FEE_MODES = new Set(['included', 'additional']);
 
 function cleanText(value, maxLength) {
@@ -46,6 +46,7 @@ function normalizeRule(value) {
   const toAccount = cleanText(value?.toAccount, 40);
   if (type === 'transfer' && (!toAccount || toAccount === account)) return null;
   const category = cleanText(value?.category, 60);
+  const investmentTransfer = type === 'transfer' && (isInvestmentAccount(account) || isInvestmentAccount(toAccount));
   if (type !== 'transfer' && !category) return null;
   const feeMode = value?.feeMode;
   if (type === 'transfer' && feeMode != null && feeMode !== '' && !VALID_TRANSFER_FEE_MODES.has(feeMode)) return null;
@@ -56,8 +57,8 @@ function normalizeRule(value) {
     name,
     type,
     amount,
-    category: type === 'transfer' ? null : category,
-    subcategory: type === 'transfer' ? null : cleanText(value?.subcategory, 60),
+    category: investmentTransfer ? '投資' : type === 'transfer' ? null : category,
+    subcategory: investmentTransfer ? (account === 'bito' || toAccount === 'bito' ? '加密資產' : cleanText(value?.subcategory, 60) || '定期定額') : type === 'transfer' ? null : cleanText(value?.subcategory, 60),
     account,
     toAccount: type === 'transfer' ? toAccount : null,
     fee,
@@ -174,15 +175,17 @@ function dateText(year, month, day) {
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
-function dueDates(rule, today) {
+function dueDates(rule, today, existing) {
   if (!rule.enabled || !validDate(today)) return [];
   const dates = [];
-  if (rule.cadence === 'weekly') {
+  // shortcut: backfill at most 104 missing occurrences per pass; later passes continue the backlog.
+  if (rule.cadence === 'weekly' || rule.cadence === 'daily') {
     const cursor = new Date(`${rule.startDate}T00:00:00Z`);
     const end = new Date(`${today}T00:00:00Z`);
     while (cursor <= end && dates.length < 104) {
-      dates.push(cursor.toISOString().slice(0, 10));
-      cursor.setUTCDate(cursor.getUTCDate() + 7);
+      const date = cursor.toISOString().slice(0, 10);
+      if (!existing.has(`${rule.id}:${date}`)) dates.push(date);
+      cursor.setUTCDate(cursor.getUTCDate() + (rule.cadence === 'daily' ? 1 : 7));
     }
     return dates;
   }
@@ -194,7 +197,7 @@ function dueDates(rule, today) {
       month = 1;
     }
     const date = dateText(year, month, Math.min(rule.day, lastDayOfMonth(year, month)));
-    if (date >= rule.startDate && date <= today) dates.push(date);
+    if (date >= rule.startDate && date <= today && !existing.has(`${rule.id}:${date}`)) dates.push(date);
   }
   return dates.slice(0, 104);
 }
@@ -221,9 +224,8 @@ function recurringTransaction(rule, date) {
 }
 
 export function applyRecurringRules(rules, transactions, today) {
-  const existing = new Set((transactions || []).map(transaction => transaction?.source === 'recurring' ? transaction.sourceId : ''));
-  const created = (rules || []).flatMap(rule => dueDates(rule, today)
-    .filter(date => !existing.has(`${rule.id}:${date}`))
+  const existing = new Set((transactions || []).flatMap(transaction => [transaction.sourceId, String(transaction.id || '').replace(/^recurring:/, '')]));
+  const created = (rules || []).flatMap(rule => dueDates(rule, today, existing)
     .map(date => recurringTransaction(rule, date)));
   return { created };
 }
@@ -273,24 +275,9 @@ export function createMonthlySnapshot(state, month, createdAt = new Date().toISO
   const monthEnd = dateText(year, monthNumber, lastDayOfMonth(year, monthNumber));
   const transactions = (state.transactions || []).filter(transaction => transaction.date <= monthEnd);
   const summary = summarizeMonth(transactions, month);
-  let accountBalances = calculateAccountBalances(state.accounts || [], transactions);
-  const principal = accountBalances.find(account => account.id === INVESTMENT_ACCOUNT_ID)?.balance;
-  const reconciliation = (state.featureSettings?.reconciliations || [])
-    .filter(item => item?.accountId === INVESTMENT_ACCOUNT_ID
-      && validDate(item.date)
-      && item.date <= monthEnd
-      && Number.isSafeInteger(item.actualBalance)
-      && item.actualBalance >= 0)
-    .toSorted((left, right) => right.date.localeCompare(left.date)
-      || String(right.createdAt).localeCompare(String(left.createdAt)))[0];
-  const marketValue = reconciliation
-    ? investmentMarketValue({ ...state, transactions }, reconciliation, principal)
-    : undefined;
-  if (marketValue !== undefined) {
-    accountBalances = accountBalances.map(account => account.id === INVESTMENT_ACCOUNT_ID
-      ? { ...account, balance: marketValue }
-      : account);
-  }
+  const valuations = new Map(investmentAccountValues(state, monthEnd).map(account => [account.id, account.balance]));
+  const accountBalances = calculateAccountBalances(state.accounts || [], transactions)
+    .map(account => valuations.has(account.id) ? { ...account, balance: valuations.get(account.id) } : account);
   return {
     month,
     assetTotal: calculateTotalAssets(accountBalances),

@@ -1,4 +1,5 @@
 import { calculateAccountBalances, isAccountingAdjustment } from './insights.js';
+import { isInvestmentAccount } from './investment-accounting.js';
 
 export function transactionsAtReconciliation(transactions, item) {
   const cutoff = Date.parse(item.createdAt);
@@ -38,7 +39,7 @@ export function resolveAlignedReconciliations(state) {
     .forEach(item => { if (!latest.has(item.accountId)) latest.set(item.accountId, item); });
   let changed = false;
   const reconciliations = items.map(item => {
-    if (latest.get(item.accountId) !== item || item.accountId === 'investment'
+    if (latest.get(item.accountId) !== item || isInvestmentAccount(item.accountId)
       || balances.get(item.accountId) !== item.actualBalance) return item;
     const status = reconciliationAdjustmentStatus(state, item);
     if (status.difference === 0 || status.corrected) return item;

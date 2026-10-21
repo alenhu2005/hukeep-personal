@@ -336,6 +336,7 @@ async function ensureEnhancementsVersion(endpoint, proxyToken, options = {}) {
       if (data?.enhancementsVersion !== 1) {
         throw new Error('新增的模板、分類規則或退款關聯尚未同步，請先更新 GAS 程式後再試；本機資料仍待同步。');
       }
+      return data;
     })
     .catch(error => {
       if (/不支援的操作/.test(error.message)) {
@@ -345,10 +346,20 @@ async function ensureEnhancementsVersion(endpoint, proxyToken, options = {}) {
     });
   enhancementsCapabilityCheck = { key, promise };
   try {
-    await promise;
+    return await promise;
   } catch (error) {
     if (enhancementsCapabilityCheck?.promise === promise) enhancementsCapabilityCheck = null;
     throw error;
+  }
+}
+
+async function ensureBitoAccountCapability(input, transactions, options, spoken = false) {
+  if (!transactions.some(row => (row.account === 'bito' || row.toAccount === 'bito')
+    && (spoken || row.source === 'voice' && row.aiStatus === 'pending'))) return;
+  const data = await ensureEnhancementsVersion(input?.endpoint, input?.proxyToken, options);
+  if (data?.bitoAccountVersion !== 1) {
+    enhancementsCapabilityCheck = null;
+    throw new Error('Bito 口語記帳已保留本機；請更新 GAS 後自動續傳，避免舊版寫錯帳戶。');
   }
 }
 
@@ -405,6 +416,7 @@ export function projectLedgerChangesForSheet(state, changes) {
 
 export async function syncLedgerStateToSheet(input, options = {}) {
   const state = projectLedgerForSheet(input?.state);
+  await ensureBitoAccountCapability(input, state.transactions, options);
   if (needsEnhancementsVersion(state.transactions, state.featureSettings)) {
     await ensureEnhancementsVersion(input?.endpoint, input?.proxyToken, options);
   }
@@ -437,6 +449,7 @@ export async function syncLedgerStateToSheet(input, options = {}) {
 
 export async function syncLedgerChangesToSheet(input, options = {}) {
   const changes = projectLedgerChangesForSheet(input?.state, input?.changes);
+  await ensureBitoAccountCapability(input, changes.transactions, options);
   if (needsEnhancementsVersion(
     changes.transactions,
     changes.featureSettingsDelta || changes.featureSettings,
@@ -588,6 +601,7 @@ export async function enqueueSpokenEntry(input, options = {}) {
   if (!transcript) throw new Error('請輸入口語內容');
   const draft = projectSpokenDraft(input?.draft);
   const drafts = projectSpokenDrafts(input?.drafts, input?.draft);
+  await ensureBitoAccountCapability(input, drafts, options, true);
   if (needsTransferFeeModeVersion(drafts)) {
     await ensureTransferFeeModeCapability(input?.endpoint, input?.proxyToken, options);
   }

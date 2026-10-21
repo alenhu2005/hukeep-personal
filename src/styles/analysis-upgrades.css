@@ -1,3 +1,27 @@
+.investment-accounts, .investment-asset-analysis { display: grid; gap: 18px; min-width: 0; }
+.investment-asset-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.investment-asset-card { display: grid; align-content: start; gap: 8px; padding: 16px; border: 1px solid var(--line); border-radius: 16px; min-width: 0; }
+.investment-asset-card > strong { font-size: 14px; border-left: 4px solid var(--primary); padding-left: 8px; }
+.investment-asset-card.crypto > strong { border-color: var(--amber, #a37724); }
+.investment-asset-card b { font-size: clamp(18px, 4.5vw, 26px); letter-spacing: -.04em; overflow-wrap: anywhere; }
+.investment-asset-card small, .investment-value-changes small { color: var(--ink-soft); font-size: 12px; line-height: 1.5; }
+.investment-asset-card.crypto .progress-track i { background: var(--amber, #a37724); }
+.investment-account-actions { display: flex; gap: 10px; margin-top: 12px; }
+.investment-account-actions button, .investment-asset-card button { min-height: 44px; border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; background: var(--surface); color: var(--primary); font-size: 13px; font-weight: 700; }
+.investment-value-chart { width: 100%; height: auto; display: block; overflow: visible; }
+.investment-value-chart text { fill: var(--ink-soft); font-size: 16px; }
+.investment-value-chart .chart-axis { fill: none; stroke: var(--line); }
+.investment-value-chart polyline { fill: none; stroke: var(--primary); stroke-width: 3; }
+.investment-value-chart circle { fill: var(--primary); }
+.investment-value-chart .crypto polyline { stroke: var(--amber, #a37724); stroke-dasharray: 6 4; }
+.investment-value-chart .crypto circle { fill: var(--amber, #a37724); }
+.investment-value-changes { display: grid; gap: 10px; }
+.investment-value-changes p { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; margin: 0; font-size: 13px; }
+.investment-value-changes span { text-align: right; }
+.investment-value-changes small { grid-column: 1 / -1; text-align: right; }
+.investment-asset-analysis .analysis-chart-table > div { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); font-size: 12px; }
+.investment-asset-analysis .analysis-chart-table b { text-align: right; }
+.budget-daily-average { display: block; color: var(--ink-soft); font-size: 12px; margin-top: 4px; }
 .analysis-upgrades { display: grid; gap: 14px; min-width: 0; }
 .analysis-upgrade-block { display: grid; gap: 16px; min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 20px; background: var(--surface); }
 .analysis-disclosure-content > .analysis-upgrade-block { padding: 0; border: 0; border-radius: 0; background: transparent; }

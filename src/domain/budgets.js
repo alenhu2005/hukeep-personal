@@ -23,7 +23,7 @@ export function forecastBudgetProgress(budgets, transactions, month, today) {
   const [year, monthNumber] = canForecast ? month.split('-').map(Number) : [];
   const daysInMonth = canForecast ? new Date(Date.UTC(year, monthNumber, 0)).getUTCDate() : 0;
   const daysObserved = canForecast ? Number(today.slice(8, 10)) : 0;
-  const { expense, byCategory } = summarizeMonth(transactions || [], month);
+  const { expense, byCategory } = summarizeMonth((transactions || []).filter(row => !canForecast || row.date <= today), month);
   const enoughData = canForecast && daysObserved >= 7 && expense > 0;
 
   return (budgets || []).map(budget => {
@@ -39,6 +39,16 @@ export function forecastBudgetProgress(budgets, transactions, month, today) {
       expectedOverage: expectedExpense == null ? null : Math.max(0, expectedExpense - budget.limit),
     };
   });
+}
+
+export function budgetDailyAverages(budgets, transactions, month, today) {
+  if (!validMonth(month) || !validDate(today)) return [];
+  const monthEnd = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 0)).toISOString().slice(0, 10);
+  const through = today < monthEnd ? today : monthEnd;
+  const days = through < `${month}-01` ? 0 : Number(through.slice(8));
+  const { byCategory } = summarizeMonth((transactions || []).filter(row => row.date <= through), month);
+  return (budgets || []).map(budget => ({ category: budget.category, days,
+    dailyAverage: days ? Math.round((byCategory[budget.category] || 0) / days) : null }));
 }
 
 export function upsertBudget(budgets, input) {

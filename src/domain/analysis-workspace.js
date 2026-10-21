@@ -5,7 +5,7 @@ import {
   incomeAmount,
   isAccountingAdjustment,
 } from './insights.js';
-import { investmentDirection, isInvestmentTransfer, INVESTMENT_ACCOUNT_ID, summarizeInvestmentFlows } from './investment-accounting.js';
+import { investmentDirection, isInvestmentAccount, isInvestmentTransfer, summarizeInvestmentFlows } from './investment-accounting.js';
 import { transferAmounts } from './transfer-fees.js';
 import { transactionsAtReconciliation } from './reconciliation.js';
 
@@ -314,7 +314,7 @@ function budgetCumulativeSeries(transactions, budgets, range, period) {
 }
 
 function investmentHistory(state, transactions, accounts, range, period) {
-  const investmentAccount = (accounts || []).find(account => account.id === INVESTMENT_ACCOUNT_ID);
+  const investmentAccount = (accounts || []).find(account => isInvestmentAccount(account.id));
   if (!investmentAccount) return { series: [], checkpoints: [] };
   const keys = keysFor(range, period);
   const series = keys.map(key => {
@@ -322,17 +322,17 @@ function investmentHistory(state, transactions, accounts, range, period) {
     const through = monthCutoff > range.to ? range.to : monthCutoff;
     const rows = transactions.filter(row => row.date <= through);
     const balances = calculateAccountBalances(accounts, rows);
-    const investmentPrincipal = balances.find(account => account.id === INVESTMENT_ACCOUNT_ID)?.balance || 0;
-    const liquid = balances.filter(account => account.id !== INVESTMENT_ACCOUNT_ID)
+    const investmentPrincipal = balances.filter(account => isInvestmentAccount(account.id)).reduce((sum, account) => sum + account.balance, 0);
+    const liquid = balances.filter(account => !isInvestmentAccount(account.id))
       .reduce((sum, account) => sum + account.balance, 0);
     return { key, through, label: labelForKey(key, period), liquid, investmentPrincipal };
   });
   const checkpoints = (state.reconciliations || [])
-    .filter(item => item.accountId === INVESTMENT_ACCOUNT_ID && Number.isSafeInteger(item.actualBalance) && item.actualBalance >= 0)
+    .filter(item => isInvestmentAccount(item.accountId) && Number.isSafeInteger(item.actualBalance) && item.actualBalance >= 0)
     .map(item => {
       const atCheckpoint = transactionsAtReconciliation(transactions, item);
       const principal = calculateAccountBalances(accounts, atCheckpoint)
-        .find(account => account.id === INVESTMENT_ACCOUNT_ID)?.balance || 0;
+        .find(account => account.id === item.accountId)?.balance || 0;
       return {
         date: item.date,
         principal,

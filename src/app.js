@@ -18,7 +18,7 @@ import {
 import { parseSpokenTransactions } from './domain/spoken-entry.js';
 import { detectSpokenReview } from './domain/spoken-review.js';
 import { reconciliationAdjustmentId, reconciliationAdjustmentNote, reconciliationAdjustmentStatus, resolveAlignedReconciliations, transactionsAtReconciliation } from './domain/reconciliation.js';
-import { isInvestmentTransfer } from './domain/investment-accounting.js';
+import { isInvestmentAccount, isInvestmentTransfer } from './domain/investment-accounting.js';
 import {
   acknowledgePendingSheetChanges,
   hasPendingSheetChanges,
@@ -59,7 +59,7 @@ import {
   createDeviceBindingStore,
   parseDeviceBindingHash,
 } from './services/device-binding.js';
-import { renderView, renderAccountHistory } from './views.js';
+import { renderView, renderAccountHistory, renderInvestmentAccounts } from './views.js';
 
 const LAST_SHEET_SYNC_KEY = 'hukeep_last_sheet_sync_at';
 const PENDING_SHEET_CHANGES_KEY = 'hukeep_pending_sheet_changes_v1';
@@ -368,21 +368,17 @@ export function createApp() {
           remoteTransaction.toAccount !== transaction.toAccount;
       })
       .map(transaction => transaction.id);
-    const remoteInvestment = (remote?.accounts || []).find(account => account.id === 'investment');
-    const localInvestment = state.accounts.find(account => account.id === 'investment');
-    const accountChanged = localInvestment && (
-      !remoteInvestment ||
-      remoteInvestment.name !== localInvestment.name ||
-      Number(remoteInvestment.openingBalance) !== Number(localInvestment.openingBalance)
-    );
-    if (!transactionIds.length && !accountChanged) return;
+    const changedAccounts = state.accounts.filter(account => isInvestmentAccount(account.id)).filter(account => {
+      const remoteAccount = (remote?.accounts || []).find(item => item.id === account.id);
+      return !remoteAccount || remoteAccount.name !== account.name
+        || Number(remoteAccount.openingBalance) !== Number(account.openingBalance);
+    }).map(account => account.id);
+    if (!transactionIds.length && !changedAccounts.length) return;
     const pending = readPendingSheetChanges();
     writePendingSheetChanges({
       ...pending,
       upserts: [...new Set([...pending.upserts, ...transactionIds])],
-      accountUpserts: accountChanged
-        ? [...new Set([...pending.accountUpserts, 'investment'])]
-        : pending.accountUpserts,
+      accountUpserts: [...new Set([...pending.accountUpserts, ...changedAccounts])],
     });
     schedulePendingSheetSync();
   }
@@ -528,6 +524,9 @@ export function createApp() {
     const workspaceDialog = document.querySelector('#workspace-dialog');
     if (workspaceDialog.open && workspaceDialog.dataset.mode?.startsWith('account:')) {
       document.querySelector('#workspace-dialog-content').innerHTML = renderAccountHistory(state, workspaceDialog.dataset.mode.slice(8));
+    }
+    if (workspaceDialog.open && workspaceDialog.dataset.mode === 'investments') {
+      document.querySelector('#workspace-dialog-content').innerHTML = renderInvestmentAccounts(state);
     }
     document.querySelector('#month-title').textContent = monthLabel(selectedMonth);
     document.querySelectorAll('[data-nav-view]').forEach(button => {
@@ -1188,8 +1187,8 @@ export function createApp() {
       if (filters.category && (kind === 'expense' || kind === 'merchant' ? expenseCategory(item) : item.category) !== filters.category) return false;
       if (filters.subcategory && (kind === 'expense' && item.type === 'transfer' ? '轉帳手續費' : item.subcategory || '未細分') !== filters.subcategory) return false;
       if (filters.account && item.account !== filters.account && item.toAccount !== filters.account) return false;
-      if (filters.accountGroup === 'liquid' && item.account === 'investment' && (item.type !== 'transfer' || item.toAccount === 'investment')) return false;
-      if (filters.accountGroup === 'investment' && item.account !== 'investment' && (item.type !== 'transfer' || item.toAccount !== 'investment')) return false;
+      if (filters.accountGroup === 'liquid' && isInvestmentAccount(item.account) && (item.type !== 'transfer' || isInvestmentAccount(item.toAccount))) return false;
+      if (filters.accountGroup === 'investment' && !isInvestmentAccount(item.account) && (item.type !== 'transfer' || !isInvestmentAccount(item.toAccount))) return false;
       if (filters.merchant && item.merchant !== filters.merchant) return false;
       if (filters.name && (item.merchant || item.itemName || item.name || '未命名') !== filters.name) return false;
       if ((kind === 'expense' || kind === 'merchant') && !expenseAmount(item)) return false;
@@ -1277,11 +1276,22 @@ export function createApp() {
       openWorkspaceDialog('帳戶與對帳紀錄', renderAccountHistory(state, target.dataset.accountHistory), `account:${target.dataset.accountHistory}`);
       return;
     }
+    if (Object.hasOwn(target.dataset, 'openInvestments')) {
+      openWorkspaceDialog('投資資產', renderInvestmentAccounts(state), 'investments');
+      return;
+    }
+    if (Object.hasOwn(target.dataset, 'openInvestmentAnalysis')) {
+      document.querySelector('#workspace-dialog').close();
+      insightFilters = { ...insightFilters, section: 'investment', category: '', subcategory: '' };
+      navigate('insights');
+      return;
+    }
     if (Object.hasOwn(target.dataset, 'openInvestmentValuation')) {
+      document.querySelector('#workspace-dialog').close();
       configureToolsForms();
       toolsDialog.showModal();
       const form = document.querySelector('#reconciliation-form');
-      form.elements.accountId.value = 'investment';
+      form.elements.accountId.value = target.dataset.openInvestmentValuation || 'investment';
       form.scrollIntoView({ block: 'center' });
       form.elements.actualBalance.focus();
       return;
@@ -1529,6 +1539,8 @@ export function createApp() {
   function configureRecurringFields() {
     const form = document.querySelector('#recurring-rule-form');
     const type = form.elements.type.value;
+    form.querySelector('.recurring-month-day').hidden = form.elements.cadence.value !== 'monthly';
+    form.elements.day.required = form.elements.cadence.value === 'monthly';
     const transfer = type === 'transfer';
     const categories = type === 'income' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
     form.querySelector('.recurring-category').hidden = transfer;
@@ -1555,7 +1567,7 @@ export function createApp() {
     const list = document.querySelector('#recurring-rule-list');
     const rules = normalizeFeatureSettings(state.featureSettings).recurringRules;
     list.innerHTML = rules.length
-      ? rules.map(rule => `<article><div><strong>${escapeHtml(rule.name)}</strong><span>${escapeHtml(rule.cadence === 'weekly' ? '每週' : `每月 ${rule.day} 日`)} · ${formatMoney(rule.amount)} · ${rule.enabled ? '啟用' : '暫停'}</span></div><button type="button" data-edit-recurring="${escapeHtml(rule.id)}">編輯</button><button type="button" data-toggle-recurring="${escapeHtml(rule.id)}">${rule.enabled ? '暫停' : '啟用'}</button><button type="button" data-remove-recurring="${escapeHtml(rule.id)}" aria-label="刪除 ${escapeHtml(rule.name)}">×</button></article>`).join('')
+      ? rules.map(rule => `<article><div><strong>${escapeHtml(rule.name)}</strong><span>${escapeHtml(rule.cadence === 'daily' ? '每日' : rule.cadence === 'weekly' ? '每週' : `每月 ${rule.day} 日`)} · ${formatMoney(rule.amount)} · ${rule.enabled ? '啟用' : '暫停'}</span></div><button type="button" data-edit-recurring="${escapeHtml(rule.id)}">編輯</button><button type="button" data-toggle-recurring="${escapeHtml(rule.id)}">${rule.enabled ? '暫停' : '啟用'}</button><button type="button" data-remove-recurring="${escapeHtml(rule.id)}" aria-label="刪除 ${escapeHtml(rule.name)}">×</button></article>`).join('')
       : '<p class="settings-empty">尚未設定固定流水。</p>';
   }
 
@@ -1567,10 +1579,10 @@ export function createApp() {
     list.innerHTML = reconciliations.length
       ? reconciliations.slice(0, 10).map(item => {
         const { estimatedBalance: estimated, difference, adjustment, corrected } = reconciliationAdjustmentStatus(state, item);
-        const detail = item.accountId === 'investment'
+        const detail = isInvestmentAccount(item.accountId)
           ? `市值 ${formatMoney(item.actualBalance)}`
           : `帳本 ${formatMoney(estimated ?? 0)} · 實際 ${formatMoney(item.actualBalance)} · ${difference === 0 ? '一致' : `差額 ${formatMoney(difference)}`}`;
-        return `<article><div><strong>${escapeHtml(accounts[item.accountId]?.name || item.accountId)} · ${escapeHtml(item.date)} 已對帳</strong><span>${detail}${item.note ? ` · ${escapeHtml(item.note)}` : ''}</span></div>${(difference !== 0 || adjustment) && item.accountId !== 'investment' ? `<button type="button" data-adjust-reconciliation="${escapeHtml(item.id)}" ${corrected ? 'disabled' : ''}>${corrected ? '已調整' : adjustment ? '更新差額調整' : '建立差額調整'}</button>` : ''}</article>`;
+        return `<article><div><strong>${escapeHtml(accounts[item.accountId]?.name || item.accountId)} · ${escapeHtml(item.date)} 已對帳</strong><span>${detail}${item.note ? ` · ${escapeHtml(item.note)}` : ''}</span></div>${(difference !== 0 || adjustment) && !isInvestmentAccount(item.accountId) ? `<button type="button" data-adjust-reconciliation="${escapeHtml(item.id)}" ${corrected ? 'disabled' : ''}>${corrected ? '已調整' : adjustment ? '更新差額調整' : '建立差額調整'}</button>` : ''}</article>`;
       }).join('')
       : '<p class="settings-empty">尚未儲存對帳結果。</p>';
   }
@@ -1701,7 +1713,7 @@ export function createApp() {
 
   async function createReconciliationAdjustment(id) {
     const item = normalizeFeatureSettings(state.featureSettings).reconciliations.find(entry => entry.id === id);
-    if (!item || item.accountId === 'investment') return;
+    if (!item || isInvestmentAccount(item.accountId)) return;
     const { difference, adjustment, corrected } = reconciliationAdjustmentStatus(state, item);
     if (corrected || (!difference && !adjustment)) return;
     if (!confirm(difference
@@ -1825,6 +1837,7 @@ export function createApp() {
 
   function syncOnViewChange() {
     if (document.hidden) return;
+    if (applyDueRecurringTransactions()) render();
     if (hasPendingSheetChanges(readPendingSheetChanges())) {
       void syncPendingSheetChanges().then(completed => {
         if (completed) void refreshSheetInBackground({ force: true });
@@ -2023,6 +2036,11 @@ export function createApp() {
   document.querySelector('#recurring-rule-form').addEventListener('submit', saveRecurringRule);
   document.querySelector('#recurring-edit-cancel').addEventListener('click', cancelRecurringEdit);
   document.querySelector('#recurring-rule-form').elements.type.addEventListener('change', configureRecurringFields);
+  document.querySelector('#recurring-rule-form').elements.cadence.addEventListener('change', () => {
+    const form = document.querySelector('#recurring-rule-form');
+    form.querySelector('.recurring-month-day').hidden = form.elements.cadence.value !== 'monthly';
+    form.elements.day.required = form.elements.cadence.value === 'monthly';
+  });
   document.querySelector('#recurring-rule-form').elements.account.addEventListener('change', configureRecurringFields);
   document.querySelector('#reconciliation-form').addEventListener('submit', saveReconciliation);
   toolsDialog.addEventListener('click', event => {
@@ -2072,6 +2090,11 @@ export function createApp() {
   });
   document.querySelector('#workspace-dialog').addEventListener('click', event => {
     const target = event.target.closest('button');
+    if (target?.dataset.accountHistory || Object.hasOwn(target?.dataset || {}, 'openInvestmentValuation')
+      || Object.hasOwn(target?.dataset || {}, 'openInvestmentAnalysis')) {
+      handleMainClick(event);
+      return;
+    }
     if (target?.dataset.detailId) openTransactionDetail(target.dataset.detailId);
     if (Object.hasOwn(target?.dataset || {}, 'syncRetry')) {
       pendingSheetRetryCount = 0;
@@ -2202,6 +2225,7 @@ export function createApp() {
   });
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
+      if (applyDueRecurringTransactions()) render();
       if (hasPendingSheetChanges(readPendingSheetChanges())) {
         void syncPendingSheetChanges();
       } else if (Date.now() - lastSheetPullAt >= RESUME_PULL_THRESHOLD_MS) {

@@ -1,6 +1,6 @@
 import { normalizeStoredTransaction } from '../domain/transactions.js';
 import { normalizeFeatureSettings } from '../domain/ledger-enhancements.js';
-import { INVESTMENT_ACCOUNT, migrateInvestmentAccounting } from '../domain/investment-accounting.js';
+import { BITO_ACCOUNT, INVESTMENT_ACCOUNT, migrateInvestmentAccounting } from '../domain/investment-accounting.js';
 
 export const STORAGE_KEY = 'hukeep_personal_state_v1';
 const VALID_THEMES = new Set(['system', 'light', 'dark']);
@@ -13,6 +13,7 @@ const DEFAULT_ACCOUNTS = [
   { id: 'bot', name: '台銀', icon: '台', openingBalance: 0 },
   { id: 'post', name: '郵局', icon: '郵', openingBalance: 0 },
   { ...INVESTMENT_ACCOUNT },
+  { ...BITO_ACCOUNT },
 ];
 const LEGACY_ACCOUNT_IDS = new Set(['cash', 'bank', 'card']);
 

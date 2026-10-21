@@ -104,7 +104,7 @@ describe('總覽', () => {
     expect(html).toContain('data-testid="total-assets">NT$ 1,020</strong>');
     expect(html).toContain('data-open-investment-valuation');
     expect(html).toContain('已對帳 · 9/10');
-    expect(html).toContain('市值更新 · 9/15');
+    expect(html).toContain('data-open-investments');
     expect(html).not.toContain('差 NT$ 30');
   });
 

@@ -33,7 +33,7 @@ var LEDGER_TRANSACTION_HEADERS = [
   'AI審查狀態', 'AI審查時間', '口語原文', '手續費', '群組ID', 'AI修正紀錄', '收據ID', '收據名稱', '手續費方式', '退款來源ID'
 ];
 var SPOKEN_QUEUE_HEADERS = ['佇列ID', '口語原文', '送出時間', '狀態', '交易ID', '錯誤', '更新時間', '重試次數'];
-var ACCOUNT_IDS = ['cash', 'line', 'sinopac', 'bot', 'post', 'investment'];
+var ACCOUNT_IDS = ['cash', 'line', 'sinopac', 'bot', 'post', 'investment', 'bito'];
 var INVESTMENT_SNAPSHOT_DATE = '2026-09-18';
 var INVESTMENT_SNAPSHOT_ASSET = 12891;
 
@@ -108,7 +108,7 @@ function authorize_(providedToken) {
 }
 
 function getLedgerCapabilities_() {
-  return { transferFeeModeVersion: 1, enhancementsVersion: 1 };
+  return { transferFeeModeVersion: 1, enhancementsVersion: 1, bitoAccountVersion: 1 };
 }
 
 
@@ -455,7 +455,7 @@ function loadLedgerState_() {
 }
 
 function accountIcon_(id, name) {
-  var icons = { cash: '現', line: 'L', sinopac: '永', bot: '台', post: '郵', investment: '投' };
+  var icons = { cash: '現', line: 'L', sinopac: '永', bot: '台', post: '郵', investment: '投', bito: '₿' };
   return icons[id] || name.slice(0, 1) || '帳';
 }
 
@@ -1059,7 +1059,7 @@ function trustedReviewedNote_(value, transcript, name, type) {
 
 function normalizeSpokenClassification_(type, categoryValue, subcategoryValue, account, toAccount) {
   var investmentTransfer = type === 'transfer' &&
-    (account === 'investment' || toAccount === 'investment');
+    (account === 'investment' || toAccount === 'investment' || account === 'bito' || toAccount === 'bito');
   if (type === 'transfer' && !investmentTransfer) return { category: '', subcategory: '' };
   var taxonomy = type === 'income' ? INCOME_TAXONOMY : EXPENSE_TAXONOMY;
   var fallback = type === 'income'
@@ -1067,6 +1067,7 @@ function normalizeSpokenClassification_(type, categoryValue, subcategoryValue, a
     : { category: '其他', subcategory: '其他支出' };
   var category = investmentTransfer ? '投資' : boundedText_(categoryValue, 60);
   var subcategory = boundedText_(subcategoryValue, 60);
+  if (investmentTransfer && (account === 'bito' || toAccount === 'bito')) subcategory = '加密資產';
   if (investmentTransfer && taxonomy[category].indexOf(subcategory) < 0) subcategory = '其他投資';
   if (!taxonomy[category] || taxonomy[category].indexOf(subcategory) < 0) return fallback;
   return { category: category, subcategory: subcategory };
@@ -1293,7 +1294,7 @@ function reviewSpokenEntry_(transcript, fallback) {
     '投資本金不是支出：買入、申購、加碼、定期定額必須是轉帳到 investment；賣出、贖回、領回必須從 investment 轉回收款帳戶，沒指定時回 sinopac。這些轉帳保留大分類「投資」與股票／ETF／基金／債券／加密資產／定期定額小分類。',
     '股息、配息、利息是投資收入；證券手續費、交易稅、投資課程、看盤工具仍是支出。',
     '今天（Asia/Taipei）：' + Utilities.formatDate(new Date(), 'Asia/Taipei', 'yyyy-MM-dd'),
-    '帳戶只能用 cash、line、sinopac、bot、post、investment。轉帳必須有不同的 account 與 toAccount；非轉帳的 toAccount 請填與 account 相同。',
+    '帳戶只能用 cash、line、sinopac、bot、post、investment、bito。Bito／幣託虛擬貨幣投資使用 bito 帳戶，買入轉入 bito、賣出從 bito 轉回指定銀行，未指定時回 sinopac；小分類使用加密資產。轉帳必須有不同的 account 與 toAccount；非轉帳的 toAccount 請填與 account 相同。',
     '轉帳手續費只會用在轉帳；未提及時 fee 請填 0。若提到「內扣」或「含手續費」，feeMode 填 included；若提到「外加」、「另扣」或「額外收」，feeMode 填 additional。草稿已有明確 feeMode 時必須保留。',
     taxonomyText,
     '本機草稿（僅供交叉檢查）：' + JSON.stringify(fallback || {}),
@@ -1366,8 +1367,8 @@ function validateSpokenReview_(review, fallback, transcript) {
     boundedText_(fallback && fallback.type, 16) === 'income';
   var preserveInvestmentTransfer = boundedText_(fallback && fallback.type, 16) === 'transfer' &&
     boundedText_(fallback && fallback.category, 60) === '投資' &&
-    (boundedText_(fallback && fallback.account, 40) === 'investment' ||
-      boundedText_(fallback && fallback.toAccount, 40) === 'investment');
+    (['investment', 'bito'].indexOf(boundedText_(fallback && fallback.account, 40)) >= 0 ||
+      ['investment', 'bito'].indexOf(boundedText_(fallback && fallback.toAccount, 40)) >= 0);
   var type = preserveMultiItem || preserveInvestmentTransfer || preserveRefundClassification
     ? boundedText_(fallback && fallback.type, 16)
     : ['expense', 'income', 'transfer'].indexOf(review && review.type) >= 0

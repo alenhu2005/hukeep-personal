@@ -1,5 +1,5 @@
 import { calculateAccountBalances, calculateTotalAssets } from './insights.js';
-import { INVESTMENT_ACCOUNT_ID } from './investment-accounting.js';
+import { INVESTMENT_ACCOUNT_ID, isInvestmentAccount } from './investment-accounting.js';
 import { transactionsAtReconciliation } from './reconciliation.js';
 
 function validDate(value) {
@@ -19,9 +19,36 @@ export function investmentMarketValue(state, reconciliation, principal) {
   const basis = calculateAccountBalances(
     state.accounts || [],
     transactionsAtReconciliation(state.transactions || [], reconciliation),
-  ).find(account => account.id === INVESTMENT_ACCOUNT_ID)?.balance;
+  ).find(account => account.id === (reconciliation.accountId || INVESTMENT_ACCOUNT_ID))?.balance;
   const value = actualBalance + principal - basis;
   return Number.isSafeInteger(basis) && Number.isSafeInteger(value) ? Math.max(0, value) : undefined;
+}
+
+export function investmentAccountValues(state, through) {
+  const transactions = (state.transactions || []).filter(row => !through || row.date <= through);
+  const balances = calculateAccountBalances(state.accounts || [], transactions);
+  return balances.filter(account => isInvestmentAccount(account.id)).map(account => {
+    const checkpoint = (state.featureSettings?.reconciliations || [])
+      .filter(item => item.accountId === account.id && (!through || item.date <= through)
+        && Number.isSafeInteger(item.actualBalance) && item.actualBalance >= 0 && validDate(item.date))
+      .toSorted((a, b) => b.date.localeCompare(a.date) || String(b.createdAt).localeCompare(String(a.createdAt)))[0];
+    const marketValue = investmentMarketValue({ ...state, transactions }, checkpoint, account.balance);
+    return { ...account, principal: account.balance, balance: marketValue ?? account.balance, checkpoint };
+  });
+}
+
+export function investmentAssetHistory(state, range) {
+  return investmentAccountValues(state).map(account => {
+    const byDate = new Map();
+    (state.featureSettings?.reconciliations || [])
+      .filter(item => item.accountId === account.id && validDate(item.date)
+        && item.date >= range.from && item.date <= range.to
+        && Number.isSafeInteger(item.actualBalance) && item.actualBalance >= 0)
+      .toSorted((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
+      .forEach(item => byDate.set(item.date, { date: item.date, value: item.actualBalance }));
+    const points = [...byDate.values()].toSorted((a, b) => a.date.localeCompare(b.date));
+    return { ...account, points, change: points.length >= 2 ? points.at(-1).value - points[0].value : null };
+  });
 }
 
 export function calculateInvestmentValuation(accounts, transactions, marketValue) {

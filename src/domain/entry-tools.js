@@ -1,4 +1,5 @@
 import { getSubcategories } from './category-taxonomy.js';
+import { isInvestmentAccount } from './investment-accounting.js';
 
 const VALID_TYPES = new Set(['expense', 'income', 'transfer']);
 const VALID_CLASSIFICATION_TYPES = new Set(['expense', 'income']);
@@ -72,7 +73,7 @@ export function normalizeEntryTemplate(input, options = {}) {
       !VALID_FEE_MODES.has(feeMode) || (feeMode === 'included' && fee >= amount)
     ) return null;
 
-    const investmentTransfer = account === 'investment' || toAccount === 'investment';
+    const investmentTransfer = isInvestmentAccount(account) || isInvestmentAccount(toAccount);
     const category = investmentTransfer ? '投資' : null;
     const subcategory = category && getSubcategories(category).includes(cleanText(input.subcategory, 60))
       ? cleanText(input.subcategory, 60)

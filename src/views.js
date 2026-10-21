@@ -7,8 +7,8 @@ import {
   incomeAmount,
   summarizeMonth,
 } from './domain/insights.js';
-import { forecastBudgetProgress } from './domain/budgets.js';
-import { calculateInvestmentValuation, investmentMarketValue } from './domain/investment-valuation.js';
+import { budgetDailyAverages, forecastBudgetProgress } from './domain/budgets.js';
+import { investmentAccountValues, investmentAssetHistory, investmentMarketValue } from './domain/investment-valuation.js';
 import { filterTransactions } from './domain/transactions.js';
 import { findTransactionSignals, reconciliationStatus } from './domain/ledger-enhancements.js';
 import { reconciliationAdjustmentStatus, transactionsAtReconciliation } from './domain/reconciliation.js';
@@ -17,6 +17,7 @@ import { analysisChartValues, analysisDisclosure, renderAnalysisUpgrades } from 
 import {
   investmentDirection,
   isInvestmentTransfer,
+  isInvestmentAccount,
   summarizeInvestmentFlows,
 } from './domain/investment-accounting.js';
 import { escapeHtml, formatCompactMoney, formatDate, formatMoney, monthLabel, todayInTaipei } from './format.js';
@@ -94,7 +95,7 @@ export function transactionRows(transactions, accounts, options = {}) {
             </span>
             <span class="transaction-amount ${transaction.type}">
               <strong>${sign}${formatMoney(transaction.amount).replace('NT$ ', '')}</strong>
-              <span>${isInvestmentTransfer(transaction) ? (investmentDirection(transaction) === 'contributed' ? '投入' : '領回') : escapeHtml(accountNames[transaction.account] || transaction.account)}</span>
+              <span>${isInvestmentTransfer(transaction) ? (investmentDirection(transaction) === 'contributed' ? '投入' : investmentDirection(transaction) === 'withdrawn' ? '領回' : '投資內轉') : escapeHtml(accountNames[transaction.account] || transaction.account)}</span>
             </span>
           </button>
           <div class="row-actions">
@@ -184,7 +185,7 @@ export function renderAccountHistory(state, accountId) {
     ).filter(transaction => transactionInAccount(transaction, accountId)
       && transaction.id !== adjustment.adjustment?.id);
     const flow = accountFlow(account, following);
-    const status = accountId === 'investment'
+    const status = isInvestmentAccount(accountId)
       ? '市值更新'
       : adjustment.corrected
         ? '已調整'
@@ -198,18 +199,28 @@ export function renderAccountHistory(state, accountId) {
   const latest = checkpoints[0];
   const currentValue = !latest
     ? currentBalance
-    : accountId === 'investment'
+    : isInvestmentAccount(accountId)
       ? investmentMarketValue(state, latest.item, currentBalance) ?? latest.item.actualBalance + latest.flow
       : currentBalance;
   return `<section class="account-history" aria-label="${escapeHtml(account.name)} 對帳紀錄">
-    <div class="account-history-current"><span>${accountId === 'investment' ? '目前估算市值' : '目前估算餘額'}</span><strong>${formatMoney(currentValue)}</strong></div>
+    <div class="account-history-current"><span>${isInvestmentAccount(accountId) ? '目前估算市值' : '目前估算餘額'}</span><strong>${formatMoney(currentValue)}</strong></div>
     ${checkpoints.length ? checkpoints.map(({ item, adjustment, comparison, following, flow, status, latest }) => `
       <section class="account-checkpoint">
         <div class="account-checkpoint-heading"><div><strong>${escapeHtml(formatDate(item.date))} 對帳</strong><span>${escapeHtml(status)}</span></div><strong>${formatMoney(item.actualBalance)}</strong></div>
-        ${accountId !== 'investment' ? `<p class="account-checkpoint-detail">${item.includedTransactionIds?.length ? '補記後帳本' : '對帳當時估算'} ${formatMoney(adjustment.estimatedBalance)}${comparison.difference ? ` · 差 ${formatMoney(Math.abs(comparison.difference))}` : ''}</p>` : ''}
-        ${latest ? `<p class="account-checkpoint-detail">對帳後淨流動 ${formatMoney(flow, { showPlus: true })} · 目前估算 ${formatMoney(currentValue)}${accountId !== 'investment' && comparison.status === 'mismatch' && !adjustment.corrected ? ` · ${adjustment.adjustment ? '對帳調整待更新' : '對帳差額尚未調整'}，依對帳實際值推算 ${formatMoney(item.actualBalance + flow)}` : ''}</p>` : ''}
+        ${!isInvestmentAccount(accountId) ? `<p class="account-checkpoint-detail">${item.includedTransactionIds?.length ? '補記後帳本' : '對帳當時估算'} ${formatMoney(adjustment.estimatedBalance)}${comparison.difference ? ` · 差 ${formatMoney(Math.abs(comparison.difference))}` : ''}</p>` : ''}
+        ${latest ? `<p class="account-checkpoint-detail">對帳後淨流動 ${formatMoney(flow, { showPlus: true })} · 目前估算 ${formatMoney(currentValue)}${!isInvestmentAccount(accountId) && comparison.status === 'mismatch' && !adjustment.corrected ? ` · ${adjustment.adjustment ? '對帳調整待更新' : '對帳差額尚未調整'}，依對帳實際值推算 ${formatMoney(item.actualBalance + flow)}` : ''}</p>` : ''}
         ${following.length ? `<div class="account-checkpoint-flows"><small>${latest ? '對帳後紀錄' : '至下次對帳前'}</small><div class="transaction-list compact">${rowsForState(state, following, { showTime: true })}</div></div>` : latest ? '<p class="account-checkpoint-detail">尚無對帳後交易</p>' : ''}
       </section>`).join('') : emptyState('尚無對帳紀錄')}
+  </section>`;
+}
+
+export function renderInvestmentAccounts(state) {
+  return `<section class="investment-accounts" aria-label="投資帳戶明細">
+    ${investmentAccountValues(state).map(account => `<section class="account-checkpoint">
+      <div class="account-checkpoint-heading"><div><strong>${account.id === 'bito' ? '虛擬貨幣 · Bito' : '股票與其他證券'}</strong><span>${account.checkpoint ? `市值更新 ${escapeHtml(formatDate(account.checkpoint.date))}` : '依帳面本金估算'}</span></div><strong>${formatMoney(account.balance)}</strong></div>
+      <div class="investment-account-actions"><button type="button" data-open-investment-valuation="${account.id}">更新市值</button><button type="button" data-account-history="${account.id}">查看紀錄</button></div>
+    </section>`).join('')}
+    <button type="button" class="primary-button" data-open-investment-analysis>查看資產分析</button>
   </section>`;
 }
 
@@ -254,13 +265,10 @@ export function renderOverview(state, month) {
       if (!result.has(item.accountId)) result.set(item.accountId, item);
       return result;
     }, new Map());
-  const investmentReconciliation = latestReconciliations.get('investment');
-  const marketValue = investmentReconciliation
-    ? investmentMarketValue(state, investmentReconciliation, accountById.investment)
-    : undefined;
-  const investmentValuation = calculateInvestmentValuation(state.accounts, state.transactions, marketValue);
-  const totalAssets = investmentValuation.totalAssets;
-  const liquidAssets = calculateTotalAssets(accountBalances.filter(item => item.id !== 'investment'));
+  const investments = investmentAccountValues(state);
+  const investmentTotal = investments.reduce((sum, account) => sum + account.balance, 0);
+  const liquidAssets = calculateTotalAssets(accountBalances.filter(item => !isInvestmentAccount(item.id)));
+  const totalAssets = liquidAssets + investmentTotal;
   const budgetProgress = calculateBudgetProgress(state.budgets, state.transactions, month);
   const totalBudget = budgetProgress.reduce((sum, item) => sum + item.limit, 0);
   const budgetSpent = budgetProgress.reduce((sum, item) => sum + item.spent, 0);
@@ -317,26 +325,24 @@ export function renderOverview(state, month) {
         </div>
         <div class="account-list">
           ${state.accounts
+            .filter(account => !isInvestmentAccount(account.id))
             .map(account => {
               const latest = latestReconciliations.get(account.id);
               const adjustmentStatus = latest && reconciliationAdjustmentStatus(state, latest);
               const estimatedBalance = adjustmentStatus?.estimatedBalance ?? 0;
-              const reconciliation = latest && account.id !== 'investment'
+              const reconciliation = latest
                 ? reconciliationStatus(estimatedBalance, latest.actualBalance)
                 : null;
               const corrected = adjustmentStatus?.corrected;
-              const reconciliationLabel = account.id === 'investment' && latest
-                ? `市值更新 · ${formatDate(latest.date)}`
-                : reconciliation
+              const reconciliationLabel = reconciliation
                   ? `已對帳 · ${formatDate(latest.date)}${corrected ? ' · 已調整' : reconciliation.status === 'matched' ? '' : `${adjustmentStatus.adjustment ? ' · 待重新調整' : ''} · 差 ${formatMoney(Math.abs(reconciliation.difference))}`}`
                   : '';
               const reconciliationTone = reconciliation?.status === 'mismatch' && !corrected ? ' mismatch' : '';
-              const balance = account.id === 'investment'
-                ? investmentValuation.marketValue ?? investmentValuation.principal
-                : accountById[account.id] || 0;
+              const balance = accountById[account.id] || 0;
               return `<button class="account-item" type="button" data-account-history="${escapeHtml(account.id)}" aria-label="查看 ${escapeHtml(account.name)} 對帳紀錄"><span class="account-glyph">${escapeHtml(account.icon)}</span><span><small>${escapeHtml(account.name)}</small>${reconciliationLabel ? `<small class="account-reconciliation${reconciliationTone}">${escapeHtml(reconciliationLabel)}</small>` : ''}<strong>${formatMoney(balance)}</strong></span></button>`;
             })
             .join('')}
+          <button class="account-item investment-group" type="button" data-open-investments aria-label="查看投資資產：股票與虛擬貨幣"><span class="account-glyph">投</span><span><small>投資資產</small><small class="account-reconciliation">股票・Bito 虛擬貨幣 ›</small><strong>${formatMoney(investmentTotal)}</strong></span></button>
         </div>
       </section>
 
@@ -491,6 +497,7 @@ export function renderBudgets(state, month) {
   const forecasts = new Map(forecastBudgetProgress(state.budgets, state.transactions, month, todayInTaipei())
     .map(item => [item.category, item]));
   const today = todayInTaipei();
+  const averages = new Map(budgetDailyAverages(state.budgets, state.transactions, month, today).map(item => [item.category, item.dailyAverage]));
   const monthEnd = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5)), 0)).getUTCDate();
   const isCurrentMonth = today.slice(0, 7) === month;
   const daysLeft = isCurrentMonth ? Math.max(1, monthEnd - Number(today.slice(8)) + 1) : monthEnd;
@@ -510,12 +517,13 @@ export function renderBudgets(state, month) {
             ? progress
                 .map(item => {
                   const forecast = forecasts.get(item.category);
+                  const average = averages.get(item.category);
                   const forecastLabel = forecast?.expectedExpense == null
                     ? ''
                     : `月底預估（本月日均）${formatMoney(forecast.expectedExpense)}${forecast.expectedOverage > 0 ? ` · 可能超出 ${formatMoney(forecast.expectedOverage)}` : ''}`;
                   return `<article class="budget-row ${item.status}">
                   ${categoryMark(item.category)}
-<div class="budget-row-main"><span><strong>${escapeHtml(item.category)}預算</strong><small>${formatMoney(item.spent)} / ${formatMoney(item.limit)}</small></span><div class="progress-track"><i style="width:${Math.max(0, Math.min(100, item.ratio * 100))}%"></i></div><p>${item.remaining >= 0 ? `還剩 ${formatMoney(item.remaining)}` : `已超出 ${formatMoney(Math.abs(item.remaining))}`}</p><small class="budget-daily-limit">${item.remaining >= 0 ? `每天還能用 ${formatMoney(Math.floor(item.remaining / daysLeft))}` : `每天需少用 ${formatMoney(Math.ceil(Math.abs(item.remaining) / daysLeft))}`} · ${isCurrentMonth ? `剩 ${daysLeft} 天` : '按整月計算'}</small>${forecastLabel ? `<small class="budget-forecast${forecast.expectedOverage > 0 ? ' over' : ''}">${forecastLabel}</small>` : ''}</div>
+<div class="budget-row-main"><span><strong>${escapeHtml(item.category)}預算</strong><small>${formatMoney(item.spent)} / ${formatMoney(item.limit)}</small></span><div class="progress-track"><i style="width:${Math.max(0, Math.min(100, item.ratio * 100))}%"></i></div><p>${item.remaining >= 0 ? `還剩 ${formatMoney(item.remaining)}` : `已超出 ${formatMoney(Math.abs(item.remaining))}`}</p><small class="budget-daily-average">${isCurrentMonth ? '本月至今日平均' : '當月日平均'} ${average == null ? '—' : formatMoney(average)}</small><small class="budget-daily-limit">${item.remaining >= 0 ? `每天還能用 ${formatMoney(Math.floor(item.remaining / daysLeft))}` : `每天需少用 ${formatMoney(Math.ceil(Math.abs(item.remaining) / daysLeft))}`} · ${isCurrentMonth ? `剩 ${daysLeft} 天` : '按整月計算'}</small>${forecastLabel ? `<small class="budget-forecast${forecast.expectedOverage > 0 ? ' over' : ''}">${forecastLabel}</small>` : ''}</div>
                   <button type="button" data-remove-budget="${escapeHtml(item.category)}" aria-label="移除 ${escapeHtml(item.category)} 預算">×</button>
                 </article>`;
                 })
@@ -666,7 +674,34 @@ function renderCategoryAnalysis(state, workspace, type, filters, accountNames, b
   </section>`;
 }
 
-function renderInvestmentAnalysis(state, workspace, investmentAsset) {
+function renderInvestmentAssetAnalysis(state, range) {
+  const accounts = investmentAssetHistory(state, range);
+  const points = accounts.flatMap(account => account.points);
+  const max = Math.max(1, ...points.map(point => point.value));
+  const start = Date.parse(`${range.from}T00:00:00Z`);
+  const span = Math.max(86400000, Date.parse(`${range.to}T00:00:00Z`) - start);
+  const x = point => 36 + (Date.parse(`${point.date}T00:00:00Z`) - start) / span * 548;
+  const y = point => 150 - point.value / max * 128;
+  const total = accounts.reduce((sum, account) => sum + Math.max(0, account.balance), 0);
+  return `<section class="investment-asset-analysis" aria-label="投資資產變化">
+    <div class="analysis-block-head"><div><h2>投資資產</h2><small>以新臺幣分開記錄股票與虛擬貨幣市值</small></div></div>
+    <div class="investment-asset-cards">${accounts.map(account => `<div class="investment-asset-card ${account.id === 'bito' ? 'crypto' : 'securities'}">
+      <strong>${account.id === 'bito' ? '虛擬貨幣 · Bito' : '股票與其他證券'}</strong><b>${formatMoney(account.balance)}</b>
+      <small>${account.checkpoint ? `市值更新 ${escapeHtml(formatDate(account.checkpoint.date))}` : '尚未更新市值 · 依帳面本金'}</small>
+      <div class="progress-track"><i style="width:${total ? Math.max(0, account.balance) / total * 100 : 0}%"></i></div>
+      <small>投資占比 ${total ? Math.round(Math.max(0, account.balance) / total * 100) : 0}%</small>
+      <button type="button" data-open-investment-valuation="${account.id}">更新市值</button>
+    </div>`).join('')}</div>
+    <div class="analysis-focus-block"><div class="analysis-block-head"><div><strong>市值紀錄走勢</strong><small>僅連接實際更新點；資產增減不等於投資損益</small></div></div>
+    ${points.length ? `<svg class="investment-value-chart" viewBox="0 0 620 190" role="img" aria-label="股票與虛擬貨幣市值紀錄折線圖"><text x="4" y="16">${escapeHtml(formatCompactMoney(max))}</text><text x="10" y="154">0</text><path class="chart-axis" d="M36 20 V150 H584"/>${accounts.map(account => `<g class="${account.id === 'bito' ? 'crypto' : 'securities'}"><polyline points="${account.points.map(point => `${x(point)},${y(point)}`).join(' ')}"/>${account.points.map(point => `<circle cx="${x(point)}" cy="${y(point)}" r="4"><title>${escapeHtml(account.name)} ${escapeHtml(point.date)} ${formatMoney(point.value)}</title></circle>`).join('')}</g>`).join('')}<text x="36" y="182">${escapeHtml(range.from.slice(5).replace('-', '/'))}</text><text x="584" y="182" text-anchor="end">${escapeHtml(range.to.slice(5).replace('-', '/'))}</text></svg>` : emptyState('本期尚無市值紀錄', '更新股票或 Bito 市值後，就會在這裡累積走勢。')}
+    <div class="investment-value-changes">${accounts.map(account => `<p><strong>${account.id === 'bito' ? 'Bito' : '證券'}</strong><span>紀錄間增減 ${account.change == null ? '—' : formatMoney(account.change, { showPlus: true })}</span><small>${account.points.length >= 2 ? `${escapeHtml(formatDate(account.points[0].date))} → ${escapeHtml(formatDate(account.points.at(-1).date))}` : '至少需兩次市值紀錄'}</small></p>`).join('')}</div>
+    ${points.length ? analysisDisclosure('investment-valuations', '查看市值紀錄', `${points.length} 個更新點`, `<div class="analysis-chart-table">${accounts.flatMap(account => account.points.map(point => `<div><strong>${escapeHtml(point.date)}</strong><span>${account.id === 'bito' ? 'Bito' : '證券'}</span><b>${formatMoney(point.value)}</b></div>`)).join('')}</div>`) : ''}
+    </div>
+  </section>`;
+}
+
+function renderInvestmentAnalysis(state, workspace) {
+  const investmentAsset = investmentAccountValues(state).reduce((sum, account) => sum + account.balance, 0);
   const maxFlow = Math.max(1, ...workspace.investmentGroups.flatMap(group => [group.contributed, group.withdrawn]));
   const maxSeries = Math.max(1, ...workspace.investmentSeries.flatMap(row => [row.contributed, row.withdrawn]));
   const costGroups = Object.values(workspace.investmentCostTransactions.reduce((result, row) => {
@@ -676,6 +711,7 @@ function renderInvestmentAnalysis(state, workspace, investmentAsset) {
   }, {})).map(group => ({ ...group, percent: workspace.investmentCost ? Math.round(group.amount / workspace.investmentCost * 100) : 0 }))
     .toSorted((left, right) => right.amount - left.amount);
   return `<section class="analysis-section-panel investment-analysis" aria-label="投資分析">
+    ${renderInvestmentAssetAnalysis(state, workspace.observedRange || workspace.range)}
     <div class="analysis-block-head"><div><h2>投資資金</h2><small>本金流向與投資收支分開查看</small></div></div>
     ${analysisMetricStrip([
       { label: '目前投資資產', value: formatMoney(investmentAsset) },
@@ -779,12 +815,6 @@ export function renderInsights(state, month, options = {}) {
       ? `<div class="analysis-cal-weekdays" aria-hidden="true"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div><div class="analysis-cal-grid" role="group" aria-label="月曆，點選單日">${calendarCells}</div>`
       : `<div class="analysis-year-months" role="group" aria-label="各月收支">${yearMonths}</div>`;
   const accountNames = Object.fromEntries((state.accounts || []).map(account => [account.id, account.name]));
-  const investmentPrincipal = calculateAccountBalances(state.accounts || [], state.transactions || [])
-    .find(account => account.id === 'investment')?.balance || 0;
-  const investmentReconciliation = (state.featureSettings?.reconciliations || [])
-    .filter(item => item.accountId === 'investment')
-    .toSorted((left, right) => String(right.date).localeCompare(String(left.date)) || String(right.createdAt).localeCompare(String(left.createdAt)))[0];
-  const investmentAsset = investmentMarketValue(state, investmentReconciliation, investmentPrincipal) ?? investmentPrincipal;
   const currentBudgetProgress = period === 'month' && month === today.slice(0, 7)
     ? calculateBudgetProgress(state.budgets || [], state.transactions || [], month)
     : [];
@@ -796,7 +826,7 @@ export function renderInsights(state, month, options = {}) {
     : filters.section === 'income'
       ? renderCategoryAnalysis(state, workspace, 'income', filters, accountNames, [])
       : filters.section === 'investment'
-        ? renderInvestmentAnalysis(state, workspace, investmentAsset)
+        ? renderInvestmentAnalysis(state, workspace)
         : renderOverviewAnalysis(workspace, periodLabel);
   return `<section class="view insights-view" aria-labelledby="insights-title">
     <h1 id="insights-title" class="visually-hidden">趨勢</h1>

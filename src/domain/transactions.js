@@ -1,3 +1,5 @@
+import { isInvestmentAccount } from './investment-accounting.js';
+
 export class ValidationError extends Error {
   constructor(message) {
     super(message);
@@ -73,11 +75,12 @@ function normalizeInput(input) {
     if (feeMode === 'included' && fee >= amount) {
       throw new ValidationError('含手續費時，手續費必須小於金額');
     }
-    const investmentTransfer = account === 'investment' || toAccount === 'investment';
+    const investmentTransfer = isInvestmentAccount(account) || isInvestmentAccount(toAccount);
     return {
       type,
       amount,
       category: investmentTransfer ? '投資' : null,
+      ...(account === 'bito' || toAccount === 'bito' ? { subcategory: '加密資產' } : {}),
       account,
       toAccount,
       date,
@@ -133,7 +136,10 @@ function normalizeOptionalMetadata(input, transactionId) {
     metadata.refundOf = refundOf;
   }
 
-  if ((input?.type !== 'transfer' || input?.category === '投資') && subcategory) metadata.subcategory = subcategory;
+  if ((input?.type !== 'transfer' || input?.category === '投資') && subcategory) {
+    metadata.subcategory = input?.type === 'transfer' && (input.account === 'bito' || input.toAccount === 'bito')
+      ? '加密資產' : subcategory;
+  }
   if (VALID_SOURCES.has(source)) metadata.source = source;
   if (sourceId) metadata.sourceId = sourceId;
   if (invoiceNumber) metadata.invoiceNumber = invoiceNumber;
