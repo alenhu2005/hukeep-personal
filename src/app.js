@@ -8,6 +8,7 @@ import { calculateAccountBalances, expenseAmount, expenseCategory, incomeAmount 
 import { bulkUpdateTransactions, linkRefund } from './domain/transaction-tools.js';
 import { applyCategoryRules, normalizeEntryTemplate, normalizeCategoryRule, readEntryDraft, saveEntryDraft, clearEntryDraft } from './domain/entry-tools.js';
 import { renderSyncInspector } from './views/sync-inspector.js';
+import { updateAnalysisChartPoint } from './views/analysis-workbench.js';
 import { transferAmounts } from './domain/transfer-fees.js';
 import { buildAnalysisWorkspace } from './domain/analysis-workspace.js';
 import {
@@ -31,6 +32,7 @@ import {
   createMonthlySnapshot,
   findTransactionSignals,
   normalizeFeatureSettings,
+  nextRecurringDate,
   setRecurringRuleEnabled,
   upsertRecurringRule,
 } from './domain/ledger-enhancements.js';
@@ -157,8 +159,9 @@ export function createApp() {
   const deletedDuringSession = new Set();
   let insightFilters = {
     period: 'month', section: 'overview', category: '', subcategory: '', selectedDate: '',
-    anchorDate: todayInTaipei(), compareSubcategories: [],
+    anchorDate: todayInTaipei(), compareSubcategories: [], chartMode: '', tool: '', assetAccount: 'all',
   };
+  const insightSelections = {};
   let toastTimer = null;
   let classificationReady = false;
   let manualCategoryChosen = false;
@@ -176,6 +179,7 @@ export function createApp() {
   let backgroundPullRetryCount = 0;
   let deviceBindingLink = '';
   let pendingBackup = null;
+  let pendingBackupBaseline = '';
   let spokenReviewDrafts = null;
   let nextSheetRetryAt = 0;
   let sheetConfigurationNotice = '';
@@ -509,6 +513,7 @@ export function createApp() {
   }
 
   function render(options = {}) {
+    const scrollPosition = scrollY;
     historySelection.ids = historySelection.ids.filter(id => state.transactions.some(item => item.id === id));
     const disclosures = new Map([...main.querySelectorAll('[data-analysis-disclosure]')]
       .map(element => [element.dataset.analysisDisclosure, element.open]));
@@ -535,6 +540,7 @@ export function createApp() {
       button.setAttribute('aria-current', active ? 'page' : 'false');
     });
     if (options.focusMain) main.focus({ preventScroll: true });
+    if (view === 'insights' && !options.focusMain) scrollTo({ top: scrollPosition, behavior: 'instant' });
   }
 
   function navigate(nextView) {
@@ -570,6 +576,7 @@ export function createApp() {
     const category = transactionForm.elements.category.value;
     const refundEditing = state.transactions.find(item => item.id === transactionForm.elements.id.value)?.refundOf;
     const subcategories = getSubcategories(category, refundEditing ? 'expense' : type);
+    if (selectedSubcategory && !subcategories.includes(selectedSubcategory)) subcategories.unshift(selectedSubcategory);
     transactionForm.elements.subcategory.innerHTML = subcategories
       .map(
         subcategory =>
@@ -605,7 +612,8 @@ export function createApp() {
     transactionForm.elements.subcategory.required = !transfer;
     transactionForm.elements.toAccount.required = transfer;
     const refundEditing = state.transactions.find(item => item.id === transactionForm.elements.id.value)?.refundOf;
-    const categories = type === 'income' && !refundEditing ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+    const categories = [...(type === 'income' && !refundEditing ? INCOME_CATEGORIES : EXPENSE_CATEGORIES)];
+    if (selectedCategory && !categories.includes(selectedCategory)) categories.unshift(selectedCategory);
     transactionForm.elements.category.innerHTML = categories
       .map(
         category =>
@@ -759,7 +767,7 @@ export function createApp() {
     const local =
       type === 'income'
         ? classifyIncomeLocally(classificationInput)
-        : classifyLocally({ merchant: name, items: [note] });
+        : classifyLocally({ merchant: name, items: [name || note] });
     const classificationText =
       parseSpokenTransactions(classificationInput, { today: todayInTaipei() })[0].classificationText || classificationInput;
     let classification = local;
@@ -1176,7 +1184,7 @@ export function createApp() {
   function openChartDrill(target) {
     const filters = target.dataset;
     const workspace = buildAnalysisWorkspace(state.transactions, { period: insightFilters.period, selectedMonth, today: insightFilters.anchorDate, currentDate: todayInTaipei(), category: insightFilters.category, subcategory: insightFilters.subcategory });
-    const range = workspace.range;
+    const range = workspace.observedRange;
     const kind = filters.analysisDrill || insightFilters.section;
     const start = filters.start || range.from;
     const end = filters.end || range.to;
@@ -1253,12 +1261,60 @@ export function createApp() {
   }
 
   function handleMainClick(event) {
+    const chart = event.target.closest('.workbench-time-chart');
+    if (chart && event.clientX) {
+      const container = chart.closest('.workbench-chart');
+      const bounds = chart.getBoundingClientRect();
+      const model = JSON.parse(container.dataset.chartModel);
+      const count = model.rows.length;
+      const ratio = ((event.clientX - bounds.left) / bounds.width * 640 - 96) / 532;
+      const index = model.style === 'line' ? Math.round(ratio * (count - 1)) : Math.floor(ratio * count);
+      updateAnalysisChartPoint(container, index);
+      return;
+    }
     const target = event.target.closest('button');
     if (!target) return;
+    if (target.dataset.insightChartMode) {
+      insightFilters = { ...insightFilters, chartMode: target.dataset.insightChartMode, tool: '' };
+      render();
+      main.querySelector(`[data-insight-chart-mode="${target.dataset.insightChartMode}"]`)?.focus({ preventScroll: true });
+      return;
+    }
+    if (target.dataset.insightTool) {
+      insightFilters = { ...insightFilters, tool: insightFilters.tool === target.dataset.insightTool ? '' : target.dataset.insightTool };
+      render();
+      main.querySelector(`[data-insight-tool="${target.dataset.insightTool}"]`)?.focus({ preventScroll: true });
+      return;
+    }
+    if (target.dataset.insightAsset) {
+      insightFilters = { ...insightFilters, assetAccount: target.dataset.insightAsset };
+      render();
+      main.querySelector(`[data-insight-asset="${target.dataset.insightAsset}"]`)?.focus({ preventScroll: true });
+      return;
+    }
+    if (target.dataset.insightJumpCategory) {
+      insightFilters = { ...insightFilters, section: 'expense', category: target.dataset.insightJumpCategory, subcategory: '', chartMode: 'current', tool: '' };
+      render();
+      main.querySelector('.analysis-focus h2')?.focus({ preventScroll: true });
+      return;
+    }
+    if (Object.hasOwn(target.dataset, 'historyClearAll')) {
+      historyFilters = { ...historyFilters, query: '', type: '', category: '', subcategory: '', account: '', preset: 'all' };
+      render();
+      return;
+    }
+    if (target.dataset.recurringHistory) {
+      const rule = normalizeFeatureSettings(state.featureSettings).recurringRules.find(item => item.id === target.dataset.recurringHistory);
+      const prefix = `${target.dataset.recurringHistory}:`;
+      const transactions = state.transactions.filter(item => item.sourceId?.startsWith(prefix) || String(item.id || '').startsWith(`recurring:${prefix}`));
+      openWorkspaceDialog(`${rule?.name || '固定流水'} · 已建立紀錄`, transactionDrillRows(transactions, 'all'));
+      return;
+    }
     if (Object.hasOwn(target.dataset, 'analysisDrill')) { openChartDrill(target); return; }
     if (Object.hasOwn(target.dataset, 'insightCompareSubcategory')) {
       const value = target.dataset.insightCompareSubcategory;
       const selected = insightFilters.compareSubcategories || [];
+      if (!selected.includes(value) && selected.length >= 3) { showToast('最多比較三個小分類，先取消其中一項。'); return; }
       insightFilters = { ...insightFilters, compareSubcategories: selected.includes(value) ? selected.filter(item => item !== value) : [...selected, value] };
       render();
       [...main.querySelectorAll('[data-insight-compare-subcategory]')]
@@ -1282,7 +1338,7 @@ export function createApp() {
     }
     if (Object.hasOwn(target.dataset, 'openInvestmentAnalysis')) {
       document.querySelector('#workspace-dialog').close();
-      insightFilters = { ...insightFilters, section: 'investment', category: '', subcategory: '' };
+      insightFilters = { ...insightFilters, section: 'investment', category: '', subcategory: '', chartMode: 'current', tool: '' };
       navigate('insights');
       return;
     }
@@ -1307,15 +1363,20 @@ export function createApp() {
       return;
     }
     if (target.dataset.insightSection) {
+      insightSelections[insightFilters.section] = { ...insightFilters, scrollTop: scrollY };
+      const saved = insightSelections[target.dataset.insightSection];
       insightFilters = {
         ...insightFilters,
         section: target.dataset.insightSection,
-        category: '',
-        subcategory: '',
-        compareSubcategories: [],
+        category: saved?.category || '',
+        subcategory: saved?.subcategory || '',
+        compareSubcategories: saved?.compareSubcategories || [],
+        chartMode: saved?.chartMode || '',
+        tool: '',
       };
       render();
-      requestAnimationFrame(() => main.querySelector(`[data-insight-section="${target.dataset.insightSection}"]`)?.focus());
+      if (saved?.scrollTop != null) scrollTo({ top: saved.scrollTop, behavior: 'instant' });
+      main.querySelector(`[data-insight-section="${target.dataset.insightSection}"]`)?.focus({ preventScroll: true });
       return;
     }
     if (Object.hasOwn(target.dataset, 'insightCategory')) {
@@ -1325,6 +1386,7 @@ export function createApp() {
         category: insightFilters.category === category ? '' : category,
         subcategory: '',
         compareSubcategories: [],
+        chartMode: 'current', tool: '',
       };
       render();
       (main.querySelector('.analysis-focus h2') || main.querySelector('[data-insight-category]'))?.focus({ preventScroll: true });
@@ -1335,6 +1397,7 @@ export function createApp() {
       insightFilters = {
         ...insightFilters,
         subcategory: insightFilters.subcategory === subcategory ? '' : subcategory,
+        chartMode: 'current', tool: '',
       };
       render();
       main.querySelector('.analysis-focus h2')?.focus({ preventScroll: true });
@@ -1381,7 +1444,7 @@ export function createApp() {
     }
     if (target.dataset.historyFilter) {
       const key = target.dataset.historyFilter;
-      if (!['type', 'category', 'subcategory', 'account', 'query'].includes(key)) return;
+      if (!['type', 'category', 'subcategory', 'account', 'query', 'preset'].includes(key)) return;
       const value = target.dataset.historyValue || '';
       historyFilters = {
         ...historyFilters,
@@ -1480,10 +1543,11 @@ export function createApp() {
       const imported = parseBackup(await file.text());
       const difference = previewBackupRestore(state, imported);
       pendingBackup = imported;
+      pendingBackupBaseline = JSON.stringify(state);
       document.querySelector('#backup-preview-content').innerHTML = Object.entries({
         transactions: '交易', accounts: '帳戶', budgets: '預算',
         recurringRules: '固定流水', monthlySnapshots: '月結', reconciliations: '對帳', preferences: '偏好設定',
-      }).map(([key, label]) => `<article><strong>${label}</strong><span>新增 ${difference[key].added} · 修改 ${difference[key].changed} · 移除 ${difference[key].removed}</span></article>`).join('');
+      }).map(([key, label]) => `<article><strong>${label}</strong><span>新增 ${difference[key].added} · 修改 ${difference[key].changed} · 移除 ${difference[key].removed}</span></article>`).join('') + (difference.conflicts.length ? `<p class="backup-conflicts">有 ${difference.conflicts.length} 筆較新的本機交易將被較舊備份取代。請確認這是你要還原的版本。</p>` : '');
       document.querySelector('#backup-preview-confirm').disabled = !difference.hasChanges;
       document.querySelector('#backup-preview-dialog').showModal();
     } catch (error) {
@@ -1493,6 +1557,12 @@ export function createApp() {
 
   function confirmBackupRestore() {
     if (!pendingBackup) return;
+    if (pendingBackupBaseline !== JSON.stringify(state)) {
+      pendingBackupBaseline = JSON.stringify(state);
+      const difference = previewBackupRestore(state, pendingBackup);
+      document.querySelector('#backup-preview-content').innerHTML = `<p>預覽期間帳本有更新，請重新確認。</p><p>交易新增 ${difference.transactions.added} · 修改 ${difference.transactions.changed} · 移除 ${difference.transactions.removed} · 較舊版本 ${difference.conflicts.length} 筆</p>`;
+      return;
+    }
     downloadText(`hukeep-personal-before-import-${todayInTaipei()}.json`, serializeBackup(state), 'application/json');
     if (!persist(pendingBackup)) return;
     const count = pendingBackup.transactions.length;
@@ -1505,6 +1575,7 @@ export function createApp() {
 
 
   function configureToolsForms() {
+    document.querySelector('#app-version').textContent = `程式版本 ${import.meta.env.DEV ? '開發預覽' : import.meta.env.VITE_APP_VERSION || '開發版'}`;
     renderCategoryRules();
     const fields = document.querySelector('#opening-balance-fields');
     fields.innerHTML = state.accounts
@@ -1567,7 +1638,11 @@ export function createApp() {
     const list = document.querySelector('#recurring-rule-list');
     const rules = normalizeFeatureSettings(state.featureSettings).recurringRules;
     list.innerHTML = rules.length
-      ? rules.map(rule => `<article><div><strong>${escapeHtml(rule.name)}</strong><span>${escapeHtml(rule.cadence === 'daily' ? '每日' : rule.cadence === 'weekly' ? '每週' : `每月 ${rule.day} 日`)} · ${formatMoney(rule.amount)} · ${rule.enabled ? '啟用' : '暫停'}</span></div><button type="button" data-edit-recurring="${escapeHtml(rule.id)}">編輯</button><button type="button" data-toggle-recurring="${escapeHtml(rule.id)}">${rule.enabled ? '暫停' : '啟用'}</button><button type="button" data-remove-recurring="${escapeHtml(rule.id)}" aria-label="刪除 ${escapeHtml(rule.name)}">×</button></article>`).join('')
+      ? rules.map(rule => {
+        const next = nextRecurringDate(rule, todayInTaipei(), state.transactions);
+        const account = state.accounts.find(item => item.id === rule.account)?.name || rule.account;
+        return `<article><div><strong>${escapeHtml(rule.name)}</strong><span>${escapeHtml(rule.cadence === 'daily' ? '每日' : rule.cadence === 'weekly' ? '每週' : `每月 ${rule.day} 日`)} · ${formatMoney(rule.amount)} · ${escapeHtml(account)} · ${rule.enabled ? '啟用' : '暫停'}</span><small>${next ? `下次 ${escapeHtml(next)} · 開啟 App 時補登` : '已暫停'}</small><button type="button" data-recurring-history="${escapeHtml(rule.id)}">查看已建立紀錄</button></div><button type="button" data-edit-recurring="${escapeHtml(rule.id)}">編輯</button><button type="button" data-toggle-recurring="${escapeHtml(rule.id)}">${rule.enabled ? '暫停' : '啟用'}</button><button type="button" data-remove-recurring="${escapeHtml(rule.id)}" aria-label="刪除 ${escapeHtml(rule.name)}">×</button></article>`;
+      }).join('')
       : '<p class="settings-empty">尚未設定固定流水。</p>';
   }
 
@@ -1582,7 +1657,7 @@ export function createApp() {
         const detail = isInvestmentAccount(item.accountId)
           ? `市值 ${formatMoney(item.actualBalance)}`
           : `帳本 ${formatMoney(estimated ?? 0)} · 實際 ${formatMoney(item.actualBalance)} · ${difference === 0 ? '一致' : `差額 ${formatMoney(difference)}`}`;
-        return `<article><div><strong>${escapeHtml(accounts[item.accountId]?.name || item.accountId)} · ${escapeHtml(item.date)} 已對帳</strong><span>${detail}${item.note ? ` · ${escapeHtml(item.note)}` : ''}</span></div>${(difference !== 0 || adjustment) && !isInvestmentAccount(item.accountId) ? `<button type="button" data-adjust-reconciliation="${escapeHtml(item.id)}" ${corrected ? 'disabled' : ''}>${corrected ? '已調整' : adjustment ? '更新差額調整' : '建立差額調整'}</button>` : ''}</article>`;
+        return `<article><div><strong>${escapeHtml(accounts[item.accountId]?.name || item.accountId)} · ${escapeHtml(item.date)} 已對帳</strong><span>${detail}${item.note ? ` · ${escapeHtml(item.note)}` : ''}</span><small>建立時間 ${escapeHtml(formatDetailTimestamp(item.createdAt))}</small></div>${(difference !== 0 || adjustment) && !isInvestmentAccount(item.accountId) ? `<button type="button" data-adjust-reconciliation="${escapeHtml(item.id)}" ${corrected ? 'disabled' : ''}>${corrected ? '已調整' : adjustment ? '更新差額調整' : '建立差額調整'}</button>` : ''}</article>`;
       }).join('')
       : '<p class="settings-empty">尚未儲存對帳結果。</p>';
   }
@@ -2029,6 +2104,25 @@ export function createApp() {
       input.value = '';
     });
   });
+  document.querySelector('#check-app-update').addEventListener('click', async event => {
+    const button = event.currentTarget;
+    if (button.dataset.reload === 'true') { location.reload(); return; }
+    button.disabled = true;
+    const output = document.querySelector('#app-update-status');
+    try {
+      const registration = await navigator.serviceWorker?.getRegistration();
+      await registration?.update();
+      const response = await fetch(`${import.meta.env.BASE_URL}version.json?t=${Date.now()}`, { cache: 'no-store' });
+      if (!response.ok) throw new Error('unavailable');
+      const release = await response.json();
+      if (!/^[a-zA-Z0-9._-]{1,64}$/.test(release.version || '')) throw new Error('invalid');
+      const available = release.version !== import.meta.env.VITE_APP_VERSION;
+      output.textContent = available ? `新版 ${release.version} 已可使用，本機紀錄已保留。` : '目前已是最新版本。';
+      button.dataset.reload = String(available);
+      button.textContent = available ? '重新載入新版' : '檢查更新';
+    } catch { output.textContent = '目前無法檢查更新，稍後再試。'; }
+    finally { button.disabled = false; }
+  });
   document.querySelector('#backup-preview-confirm').addEventListener('click', confirmBackupRestore);
   document.querySelector('#backup-preview-cancel').addEventListener('click', () => document.querySelector('#backup-preview-dialog').close());
   document.querySelector('#backup-preview-dialog').addEventListener('close', () => { pendingBackup = null; });
@@ -2044,6 +2138,7 @@ export function createApp() {
   document.querySelector('#recurring-rule-form').elements.account.addEventListener('change', configureRecurringFields);
   document.querySelector('#reconciliation-form').addEventListener('submit', saveReconciliation);
   toolsDialog.addEventListener('click', event => {
+    if (event.target.closest('[data-recurring-history]')) { handleMainClick(event); return; }
     const removeRule = event.target.closest('[data-remove-category-rule]');
     if (removeRule && confirm('確定移除這個分類規則？')) {
       const features = normalizeFeatureSettings(state.featureSettings);
@@ -2209,6 +2304,9 @@ export function createApp() {
   });
   main.addEventListener('click', handleMainClick);
   main.addEventListener('input', handleHistoryFilters);
+  main.addEventListener('input', event => {
+    if (event.target.matches('[data-chart-point]')) updateAnalysisChartPoint(event.target.closest('.workbench-chart'), event.target.value);
+  });
   main.addEventListener('change', handleHistoryFilters);
   main.addEventListener('change', event => {
     const id = event.target.dataset.selectTransaction;

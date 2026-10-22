@@ -127,7 +127,7 @@ export async function classifyExpenseWithAi(input, options = {}) {
     },
     options,
   );
-  if (Number(data?.confidence) <= 0 && fallback) {
+  if ((Number(data?.confidence) <= 0 || ['其他', '其他收入'].includes(data?.topCategory)) && fallback?.confidence > 0) {
     return validateClassification(fallback, { fallback, type });
   }
   return validateClassification(data, { fallback, type });
@@ -182,7 +182,7 @@ function projectTransaction(transaction) {
     importedAt: 40,
     aiStatus: 24,
     aiReviewedAt: 40,
-    rawTranscript: 240,
+    rawTranscript: 2048,
     groupId: 80,
     receiptId: 160,
     receiptName: 160,
@@ -354,12 +354,19 @@ async function ensureEnhancementsVersion(endpoint, proxyToken, options = {}) {
 }
 
 async function ensureBitoAccountCapability(input, transactions, options, spoken = false) {
-  if (!transactions.some(row => (row.account === 'bito' || row.toAccount === 'bito')
-    && (spoken || row.source === 'voice' && row.aiStatus === 'pending'))) return;
+  const spokenRows = transactions.filter(row => spoken || row.source === 'voice' && row.aiStatus === 'pending');
+  const needsBito = spokenRows.some(row => row.account === 'bito' || row.toAccount === 'bito');
+  const needsTaxonomy = spokenRows.some(row => ['個人照護', '運動健身', '旅遊', '家庭育兒', '工作', '訂閱服務', '行政規費'].includes(row.category)
+    || ['早午餐', '鍋貼水餃', '湯品', '外送', '共享單車', '機車用品', '文具', '學雜費', '語言學習', '設計收入', '程式開發', '攝影收入', '外送收入'].includes(row.subcategory));
+  if (!needsBito && !needsTaxonomy) return;
   const data = await ensureEnhancementsVersion(input?.endpoint, input?.proxyToken, options);
-  if (data?.bitoAccountVersion !== 1) {
+  if (needsBito && data?.bitoAccountVersion !== 1) {
     enhancementsCapabilityCheck = null;
     throw new Error('Bito 口語記帳已保留本機；請更新 GAS 後自動續傳，避免舊版寫錯帳戶。');
+  }
+  if (needsTaxonomy && data?.categoryTaxonomyVersion !== 2) {
+    enhancementsCapabilityCheck = null;
+    throw new Error('新分類口語記帳已保留本機；更新 GAS 後會自動續傳。');
   }
 }
 
@@ -597,7 +604,8 @@ function projectSpokenDrafts(drafts, fallback) {
 }
 
 export async function enqueueSpokenEntry(input, options = {}) {
-  const transcript = cleanText(input?.transcript, 240).normalize('NFKC');
+  const transcript = String(input?.transcript ?? '').normalize('NFKC').trim();
+  if (transcript.length > 2048) throw new Error('記帳原文最多 2048 字，請分段送出');
   if (!transcript) throw new Error('請輸入口語內容');
   const draft = projectSpokenDraft(input?.draft);
   const drafts = projectSpokenDrafts(input?.drafts, input?.draft);

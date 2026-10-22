@@ -88,6 +88,7 @@ export function previewBackupRestore(currentState, importedState) {
   const imported = normalizeLedgerState(importedState);
   const currentFeatures = current.featureSettings;
   const importedFeatures = imported.featureSettings;
+  const currentTransactions = new Map(current.transactions.map(row => [row.id, row]));
   const counts = {
     transactions: compareByKey(current.transactions, imported.transactions, 'id'),
     accounts: compareByKey(current.accounts, imported.accounts, 'id'),
@@ -103,6 +104,11 @@ export function previewBackupRestore(currentState, importedState) {
   };
   return {
     ...counts,
+    conflicts: imported.transactions.filter(incoming => {
+      const existing = currentTransactions.get(incoming.id);
+      return existing && Date.parse(existing.updatedAt) > Date.parse(incoming.updatedAt)
+        && JSON.stringify(existing) !== JSON.stringify(incoming);
+    }).map(row => row.id),
     hasChanges: Object.values(counts).some(({ added, changed, removed }) => added + changed + removed > 0),
   };
 }

@@ -52,57 +52,6 @@ function currentRangeFields(workspace) {
   };
 }
 
-function renderIncomeExpense(workspace) {
-  const rows = workspace.incomeExpenseSeries || [];
-  const max = Math.max(1, workspace.incomeExpenseMax || 0);
-  if (!rows.length) return empty('這段期間沒有可顯示的收支。');
-  return `<section class="analysis-upgrade-block" aria-label="收入與生活支出趨勢">
-    <header><strong>收支走勢</strong><small>收入與生活支出使用相同比例尺</small></header>
-    <div class="analysis-upgrade-legend"><span class="income">收入</span><span class="expense">生活支出</span></div>
-    <div class="analysis-upgrade-paired${rows.length > 7 ? ' is-dense' : ''}" style="--points:${rows.length}">
-      ${rows.map((row, index) => `<div class="analysis-upgrade-pair">
-        <strong>${chartLabel(row, index, rows.length)}</strong>
-        <button type="button" class="analysis-upgrade-value income" ${drill('income', row.key)} aria-label="${escapeHtml(row.label)}收入 ${formatMoney(row.income)}">
-          <i style="--bar-size:${amountBar(row.income, max)}%"><b></b></i><span>${formatCompactMoney(row.income)}</span>
-        </button>
-        <button type="button" class="analysis-upgrade-value expense${row.expense < 0 ? ' is-negative' : ''}" ${drill('expense', row.key)} aria-label="${escapeHtml(row.label)}生活支出 ${formatMoney(row.expense, { showPlus: true })}">
-          <i style="--bar-size:${amountBar(row.expense, max)}%"><b></b></i><span>${formatCompactMoney(row.expense)}</span>
-        </button>
-      </div>`).join('')}
-    </div>
-    ${analysisChartValues('overview-series-values', rows.map(row => `<div><strong>${escapeHtml(row.label)}</strong><button type="button" ${drill('income', row.key)}>收入 ${formatMoney(row.income)}</button><button type="button" ${drill('expense', row.key)}>生活支出 ${formatMoney(row.expense)}</button></div>`).join(''))}
-  </section>`;
-}
-
-function renderCategorySeries(workspace, filters, type) {
-  const seriesList = workspace[`${type}ComparisonSeries`] || [];
-  const selected = filters.category
-    ? seriesList.find(row => row.category === filters.category)
-    : seriesList.find(row => row.amount !== 0) || seriesList[0];
-  if (!selected?.series?.length) return empty('本期和對照期都沒有分類資料。');
-  const subcategory = (workspace[`${type}SubcategorySeries`] || []).find(row => row.subcategory === filters.subcategory);
-  if (filters.subcategory && !subcategory) return empty('這段期間沒有該小分類資料。');
-  const series = subcategory?.series || selected.series;
-  const title = subcategory ? `${selected.category} · ${subcategory.subcategory}` : selected.category;
-  const max = Math.max(1, ...series.flatMap(row => [Math.abs(row.amount), Math.abs(row.previousAmount)]));
-  return `<section class="analysis-upgrade-block" aria-label="${escapeHtml(selected.category)}本期與前期趨勢">
-    <header><strong>${escapeHtml(title)}本期與前期</strong><small>前期使用相同經過天數</small></header>
-    <div class="analysis-upgrade-legend"><span class="current">本期</span><span class="previous">前期</span></div>
-    <div class="analysis-upgrade-paired${series.length > 7 ? ' is-dense' : ''}" style="--points:${series.length}">
-      ${series.map((row, index) => `<div class="analysis-upgrade-pair">
-        <strong>${chartLabel(row, index, series.length)}</strong>
-        <button type="button" class="analysis-upgrade-value current${row.amount < 0 ? ' is-negative' : ''}" ${drill(type, row.key, { category: selected.category, ...(subcategory ? { subcategory: subcategory.subcategory } : {}) })} aria-label="本期 ${escapeHtml(title)} ${escapeHtml(row.label)} ${formatMoney(row.amount, { showPlus: true })}">
-          <i style="--bar-size:${amountBar(row.amount, max)}%"><b></b></i><span>${formatCompactMoney(row.amount)}</span>
-        </button>
-        <button type="button" class="analysis-upgrade-value previous${row.previousAmount < 0 ? ' is-negative' : ''}" ${drill(type, row.previousKey, { category: selected.category, ...(subcategory ? { subcategory: subcategory.subcategory } : {}) })} aria-label="前期 ${escapeHtml(title)} ${escapeHtml(row.label)} ${formatMoney(row.previousAmount, { showPlus: true })}">
-          <i style="--bar-size:${amountBar(row.previousAmount, max)}%"><b></b></i><span>${formatCompactMoney(row.previousAmount)}</span>
-        </button>
-      </div>`).join('')}
-    </div>
-    ${analysisChartValues(`${type}-${title}-comparison-values`, series.map(row => `<div><strong>${escapeHtml(row.label)}</strong><button type="button" ${drill(type, row.key, { category: selected.category, subcategory: subcategory?.subcategory })}>本期 ${formatMoney(row.amount)}</button><button type="button" ${drill(type, row.previousKey, { category: selected.category, subcategory: subcategory?.subcategory })}>前期 ${formatMoney(row.previousAmount)}</button></div>`).join(''))}
-  </section>`;
-}
-
 function renderComposition(workspace, filters, type) {
   const composition = workspace[`${type}Composition`];
   if (!composition?.series?.length) return empty('選取一個有支出的分類後，這裡會顯示小分類構成。');
@@ -129,26 +78,6 @@ function renderComposition(workspace, filters, type) {
   </section>`;
 }
 
-function renderSubcategoryPicker(workspace, filters, type) {
-  const children = workspace[`${type}SubcategorySeries`] || [];
-  const selected = Array.isArray(filters.compareSubcategories) ? filters.compareSubcategories : [];
-  const chosen = selected.filter(value => children.some(child => child.subcategory === value));
-  const max = Math.max(1, ...children.filter(child => chosen.includes(child.subcategory))
-    .flatMap(child => child.series.map(row => Math.abs(row.amount))));
-  const labels = children.map(child => `<button type="button" class="analysis-upgrade-chip${chosen.includes(child.subcategory) ? ' is-selected' : ''}" data-insight-compare-subcategory="${escapeHtml(child.subcategory)}" aria-pressed="${chosen.includes(child.subcategory)}">${escapeHtml(child.subcategory)}</button>`).join('');
-  const chart = chosen.length < 2
-    ? empty('請選擇至少兩個小分類進行同尺度比較。')
-    : `<div class="analysis-upgrade-stacks">${(children.find(child => chosen.includes(child.subcategory))?.series || []).map((row, index) => `<div class="analysis-upgrade-compare-row"><strong>${escapeHtml(row.label)}</strong><div>${children.filter(child => chosen.includes(child.subcategory)).map((child, partIndex) => {
-        const point = child.series[index];
-        return point ? `<button type="button" class="analysis-upgrade-compare-value part-${partIndex % 6}${point.amount < 0 ? ' is-negative' : ''}" ${drill(type, point.key, { category: workspace[`${type}Composition`]?.category, subcategory: child.subcategory })} aria-label="${escapeHtml(child.subcategory)} ${escapeHtml(row.label)} ${formatMoney(point.amount, { showPlus: true })}"><i><b style="width:${amountBar(point.amount, max)}%"></b></i><span>${escapeHtml(child.subcategory)} ${formatMoney(point.amount, { showPlus: true })}</span></button>` : '';
-      }).join('')}</div></div>`).join('')}</div>`;
-  return `<section class="analysis-upgrade-block" aria-label="小分類多選比較">
-    <header><strong>小分類多選比較</strong><small>選取項目使用同一金額比例尺</small></header>
-    <div class="analysis-upgrade-chips">${labels || empty('這個分類還沒有小分類資料。')}</div>
-    ${chart}
-  </section>`;
-}
-
 function renderBudgetHistory(workspace, filters) {
   if (filters.period !== 'month') return empty('切換到本月查看累計支出與月預算。');
   const groups = workspace.budgetCumulativeSeries || [];
@@ -170,21 +99,6 @@ function renderBudgetHistory(workspace, filters) {
   </section>`;
 }
 
-function renderExpenseChanges(workspace) {
-  const rows = workspace.expenseChanges || [];
-  if (!rows.length) return empty('沒有可比較的支出分類。');
-  const max = Math.max(1, ...rows.map(row => Math.abs(row.changeAmount)));
-  return `<section class="analysis-upgrade-block" aria-label="支出分類變化絕對金額排序">
-    <header><strong>支出變化</strong><small>依變化金額絕對值排序</small></header>
-    <div class="analysis-upgrade-changes">${rows.map(row => {
-      const percent = row.changePercent == null ? '前期無可比較基期' : `較前期 ${row.changePercent > 0 ? '+' : ''}${row.changePercent}%`;
-      return `<button type="button" class="analysis-upgrade-change${row.changeAmount < 0 ? ' is-negative' : ''}" ${drill('expense', '', { category: row.category, ...currentRangeFields(workspace) })} aria-label="${escapeHtml(row.category)}變化 ${formatMoney(row.changeAmount, { showPlus: true })}，${percent}">
-        <span><strong>${escapeHtml(row.category)}</strong><small>${percent}</small></span><i><b style="width:${amountBar(row.changeAmount, max)}%"></b></i><strong>${formatMoney(row.changeAmount, { showPlus: true })}</strong>
-      </button>`;
-    }).join('')}</div>
-  </section>`;
-}
-
 function renderMerchants(workspace) {
   const rows = workspace.merchantGroups || [];
   if (!rows.length) return empty('沒有可辨識的商家或品項。');
@@ -194,25 +108,6 @@ function renderMerchants(workspace) {
     <div class="analysis-upgrade-changes">${rows.map(row => `<button type="button" class="analysis-upgrade-change${row.amount < 0 ? ' is-negative' : ''}" ${drill('expense', '', { ...(row.kind === 'merchant' ? { merchant: row.merchant } : { name: row.name }), ...currentRangeFields(workspace) })} aria-label="${row.kind === 'merchant' ? '商家' : '品項'} ${escapeHtml(row.label)} ${formatMoney(row.amount, { showPlus: true })}">
       <span><strong>${escapeHtml(row.label)}</strong><small>${row.kind === 'merchant' ? '商家' : '品項'} · ${row.count} 筆</small></span><i><b style="width:${amountBar(row.amount, max)}%"></b></i><strong>${formatMoney(row.amount, { showPlus: true })}</strong>
     </button>`).join('')}</div>
-  </section>`;
-}
-
-function renderCategoryUpgrades(workspace, filters, type) {
-  if (!filters.category) return '';
-  const scope = `${type}-${filters.category}-${filters.subcategory || ''}`;
-  return `<section class="analysis-upgrades analysis-upgrades-${type}">
-    ${analysisDisclosure(`${scope}-comparison`, '與前期比較', '相同經過天數，逐日核對金額', renderCategorySeries(workspace, filters, type))}
-    ${analysisDisclosure(`${scope}-composition`, '小分類構成走勢', '看每一天由哪些小分類組成', renderComposition(workspace, filters, type))}
-    ${analysisDisclosure(`${type}-${filters.category}-multi`, '比較多個小分類', '選擇兩項以上，使用相同比例尺', renderSubcategoryPicker(workspace, filters, type), filters.compareSubcategories?.length > 0)}
-  </section>`;
-}
-
-function renderExpenseUpgrades(workspace, filters) {
-  return `${renderCategoryUpgrades(workspace, filters, 'expense')}
-    <section class="analysis-upgrades analysis-upgrades-expense">
-    ${analysisDisclosure('expense-budget-history', '預算使用走勢', '累計生活支出與按日攤提預算', renderBudgetHistory(workspace, filters))}
-    ${analysisDisclosure('expense-changes', '哪些分類增減最多', '依與前期差額排序', renderExpenseChanges(workspace))}
-    ${analysisDisclosure('expense-merchants', '商家與品項排行', '查看花在哪裡、買了什麼', renderMerchants(workspace))}
   </section>`;
 }
 
@@ -238,14 +133,10 @@ function renderInvestmentHistory(workspace) {
   </section>`;
 }
 
-export function renderAnalysisUpgrades(_state, workspace, filters = {}) {
-  if (filters.section === 'overview') {
-    return `<section class="analysis-upgrades analysis-upgrades-overview">${renderIncomeExpense(workspace)}</section>`;
-  }
-  if (filters.section === 'expense') return renderExpenseUpgrades(workspace, filters);
-  if (filters.section === 'income') return renderCategoryUpgrades(workspace, filters, 'income');
-  if (filters.section === 'investment') {
-    return `<section class="analysis-upgrades analysis-upgrades-investment">${analysisDisclosure('investment-history', '資產與本金歷史', '流動帳戶、投資本金與市值對帳點', renderInvestmentHistory(workspace))}</section>`;
-  }
+export function renderAnalysisTool(workspace, filters) {
+  if (filters.tool === 'budget') return renderBudgetHistory(workspace, filters);
+  if (filters.tool === 'merchants') return renderMerchants(workspace);
+  if (filters.tool === 'composition') return renderComposition(workspace, filters, filters.section === 'income' ? 'income' : 'expense');
+  if (filters.tool === 'principal') return renderInvestmentHistory(workspace);
   return '';
 }

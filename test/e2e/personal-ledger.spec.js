@@ -21,7 +21,7 @@ test('可新增收支、重新整理仍保留並透過歷史搜尋', async ({ pa
   await expect(page.locator('#subcategory-field')).toBeHidden();
   await expect(
     page.locator('[data-account-for="transaction-account"] button'),
-  ).toHaveCount(6);
+  ).toHaveCount(7);
   await page
     .locator('[data-account-for="transaction-account"]')
     .getByRole('button', { name: '永豐' })
@@ -84,6 +84,7 @@ test('移除發票與銀行整合，但保留帳戶、備份與 Sheet 同步', a
   await expect(page.locator('#smart-import-dialog, #einvoice-preview-form, #invoice-file-input')).toHaveCount(0);
   await expect(tools.getByText(/發票|銀行登入|網銀/)).toHaveCount(0);
   await expect(tools.locator('#opening-balance-fields input')).toHaveCount(7);
+  await tools.locator('.settings-maintenance > summary').click();
   await expect(tools.locator('#export-json')).toBeVisible();
   await expect(tools.locator('#sheet-sync-form')).toBeVisible();
 });
@@ -484,6 +485,10 @@ test('多品項背景上傳失敗仍保留本機交易，之後自動續傳', as
   let saved = [];
   await page.route('https://proxy.example/partial', async route => {
     const body = route.request().postDataJSON();
+    if (body.action === 'getLedgerCapabilities') {
+      await route.fulfill({ json: { ok: true, data: { enhancementsVersion: 1, categoryTaxonomyVersion: 2 } } });
+      return;
+    }
     if (body.action !== 'enqueueSpokenEntry') {
       await route.fulfill({ json: { ok: true, data: { schemaVersion: 1, accounts: [], transactions: saved, budgets: [] } } });
       return;
@@ -514,6 +519,10 @@ test('口語多品項會自動拆單並把各自帳戶直接上傳 Sheet', async
   const receivedBodies = [];
   await page.route('https://proxy.example/multi-voice', async route => {
     const body = route.request().postDataJSON();
+    if (body.action === 'getLedgerCapabilities') {
+      await route.fulfill({ json: { ok: true, data: { enhancementsVersion: 1, categoryTaxonomyVersion: 2 } } });
+      return;
+    }
     if (body.action === 'loadLedgerState') {
       await route.fulfill({
         contentType: 'application/json',
@@ -610,7 +619,7 @@ test('可設定分類預算、查看趨勢並在手機使用', async ({ page }) 
   await expect(page.locator('#trend-chart')).toBeVisible();
   await expect(page.getByRole('button', { name: '本週' })).toBeVisible();
   await page.getByRole('button', { name: '支出分析', exact: true }).click();
-  await expect(page.getByRole('region', { name: '支出大分類排行', exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: '支出分類分析', exact: true })).toBeVisible();
   await expect(page.locator('body')).not.toHaveCSS('overflow-x', 'scroll');
 });
 
@@ -627,7 +636,7 @@ test('趨勢收支分類可下鑽小分類圖表及交易明細', async ({ page 
   await page.reload();
   await page.getByRole('button', { name: '趨勢', exact: true }).click();
   await page.getByRole('button', { name: '收入分析', exact: true }).click();
-  const income = page.getByRole('region', { name: '收入大分類排行', exact: true });
+  const income = page.getByRole('region', { name: '收入分類分析', exact: true });
   await income.getByRole('button', { name: /接案/ }).click();
   const incomeChildren = page.getByRole('region', { name: '接案小分類圖表', exact: true });
   await incomeChildren.getByRole('button', { name: /家教/ }).click();
@@ -635,7 +644,7 @@ test('趨勢收支分類可下鑽小分類圖表及交易明細', async ({ page 
   await expect(page.locator('#transaction-detail-dialog')).toContainText('接案 · 家教');
   await page.locator('#transaction-detail-dialog').getByRole('button', { name: '關閉' }).click();
   await page.getByRole('button', { name: '支出分析', exact: true }).click();
-  const expense = page.getByRole('region', { name: '支出大分類排行', exact: true });
+  const expense = page.getByRole('region', { name: '支出分類分析', exact: true });
   await expense.getByRole('button', { name: /飲食/ }).click();
   const expenseChildren = page.getByRole('region', { name: '飲食小分類圖表', exact: true });
   await expenseChildren.getByRole('button', { name: /火鍋/ }).click();
@@ -896,6 +905,7 @@ test('可設定帳戶初始金額並安全同步到 Google Sheet', async ({ page
   await page.reload();
 
   await page.getByRole('button', { name: '備份與設定' }).click();
+  await page.locator('.settings-maintenance > summary').click();
   await page.getByLabel('現金初始金額').fill('15000');
   await page.getByLabel('永豐初始金額').fill('-1200');
   await page.getByRole('button', { name: '儲存初始金額' }).click();

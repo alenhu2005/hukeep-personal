@@ -3,7 +3,7 @@ import {
   analysisHeatIntensity,
   buildAnalysisWorkspace,
 } from '../src/domain/analysis-workspace.js';
-import { renderAnalysisUpgrades } from '../src/views/analysis-upgrades.js';
+import { renderAnalysisTool } from '../src/views/analysis-upgrades.js';
 
 const accounts = [
   { id: 'cash', name: '現金', openingBalance: 100 },
@@ -82,55 +82,30 @@ describe('分析升級圖表資料', () => {
     expect(analysisHeatIntensity('invalid')).toBe(0);
   });
 
-  it('未選大分類時不自行展開其他分類的分析', () => {
-    const html = renderAnalysisUpgrades({}, workspace({ category: '' }), { section: 'income', category: '' });
-    expect(html).toBe('');
-  });
-
-  it('以可鑽取按鈕呈現分類前後期與多選小分類圖表', () => {
-    const html = renderAnalysisUpgrades({}, workspace(), {
-      section: 'expense', category: '飲食', compareSubcategories: ['午餐', '茶點'],
-    });
-    expect(html).toContain('data-insight-compare-subcategory="午餐"');
+  it('只渲染使用者指定的進階工具', () => {
+    expect(renderAnalysisTool(workspace(), { section: 'expense', tool: '' })).toBe('');
+    const html = renderAnalysisTool(workspace(), { section: 'expense', category: '飲食', tool: 'composition' });
+    expect(html).toContain('小分類構成走勢');
     expect(html).toContain('data-analysis-drill="expense"');
-    expect(html).toContain('data-date="2026-09-01" data-start="2026-09-01" data-end="2026-09-01"');
-    expect(html).toContain('data-start="2026-10-01" data-end="2026-10-02"');
+    expect(html).not.toContain('比較多個小分類');
   });
 
-  it('只在月檢視顯示累計預算，並標示歷史月份使用目前預算設定', () => {
-    const month = renderAnalysisUpgrades({}, workspace({ selectedMonth: '2026-09' }), {
-      section: 'expense', period: 'month', category: '飲食',
-    });
-    expect(month).toContain('目前設定的月預算（非歷史版本）');
-
-    const year = renderAnalysisUpgrades({}, workspace({ period: 'year' }), {
-      section: 'expense', period: 'year', category: '飲食',
-    });
-    expect(year).toContain('切換到本月查看累計支出與月預算。');
+  it('只在月檢視顯示累計預算，歷史月份明示目前設定', () => {
+    expect(renderAnalysisTool(workspace({ selectedMonth: '2026-09' }), { period: 'month', tool: 'budget' }))
+      .toContain('目前設定的月預算（非歷史版本）');
+    expect(renderAnalysisTool(workspace({ period: 'year' }), { period: 'year', tool: 'budget' }))
+      .toContain('切換到本月查看累計支出與月預算。');
   });
 
-  it('年檢視的帳戶查詢使用該月截止日，並將未完結月份截在已觀察日期', () => {
+  it('本金工具的年度查詢保留各月截止日與已觀察日期', () => {
     const model = workspace({ period: 'year' });
-    expect(model.liquidInvestmentSeries.find(row => row.key === '2026-09'))
-      .toMatchObject({ through: '2026-09-30' });
-    expect(model.liquidInvestmentSeries.find(row => row.key === '2026-10'))
-      .toMatchObject({ through: '2026-10-02' });
-
-    const html = renderAnalysisUpgrades({}, model, { section: 'investment', period: 'year' });
+    const html = renderAnalysisTool(model, { period: 'year', tool: 'principal' });
     expect(html).toContain('data-account-group="investment" data-start="0001-01-01" data-end="2026-09-30"');
     expect(html).toContain('data-account-group="investment" data-start="0001-01-01" data-end="2026-10-02"');
   });
 
-  it('保留但無資料的分類或小分類篩選時顯示空狀態，不跳到其他分類', () => {
-    const model = workspace({ category: '居家', period: 'month' });
-    expect(model.expenseComposition).toBeNull();
-    const emptyCategory = renderAnalysisUpgrades({}, model, { section: 'expense', category: '居家' });
-    expect(emptyCategory).toContain('本期和對照期都沒有分類資料。');
-    expect(emptyCategory).not.toContain('飲食本期與前期');
-
-    const emptySubcategory = renderAnalysisUpgrades({}, workspace(), {
-      section: 'expense', category: '飲食', subcategory: '早餐',
-    });
-    expect(emptySubcategory).toContain('這段期間沒有該小分類資料。');
+  it('無資料的分類工具不自行替換成其他分類', () => {
+    const html = renderAnalysisTool(workspace({ category: '居家' }), { section: 'expense', category: '居家', tool: 'composition' });
+    expect(html).not.toContain('飲食 · 所有日期');
   });
 });

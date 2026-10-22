@@ -18,6 +18,10 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const request = event.request;
   if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
+  if (new URL(request.url).pathname.endsWith('/version.json')) {
+    event.respondWith(fetch(request, { cache: 'no-store' }));
+    return;
+  }
 
   if (request.mode === 'navigate') {
     event.respondWith(fetch(request).then(async response => {
@@ -27,6 +31,24 @@ self.addEventListener('fetch', event => {
       }
       return response;
     }).catch(() => caches.match('./')));
+    return;
+  }
+
+  const url = new URL(request.url);
+  if (url.pathname.endsWith('/sw.js')) {
+    event.respondWith(fetch(request, { cache: 'no-store' }));
+    return;
+  }
+  if (!url.pathname.includes('/assets/')) {
+    event.respondWith(
+      fetch(request).then(response => {
+        if (response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
+        }
+        return response;
+      }).catch(() => caches.match(request)),
+    );
     return;
   }
 

@@ -8,6 +8,7 @@ import {
 import { investmentDirection, isInvestmentAccount, isInvestmentTransfer, summarizeInvestmentFlows } from './investment-accounting.js';
 import { transferAmounts } from './transfer-fees.js';
 import { transactionsAtReconciliation } from './reconciliation.js';
+import { buildCategoryMovers, buildPace, buildTrendSeries } from './analysis-trends.js';
 
 export function analysisHeatIntensity(amount) {
   const value = Math.abs(Number(amount) || 0);
@@ -15,9 +16,9 @@ export function analysisHeatIntensity(amount) {
 }
 
 function dateFromText(value) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(String(value ?? ''))
-    ? new Date(`${value}T00:00:00Z`)
-    : null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value ?? ''))) return null;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(date.valueOf()) && date.toISOString().slice(0, 10) === value ? date : null;
 }
 
 function dateText(date) {
@@ -85,6 +86,9 @@ function fullPreviousRange(range, period) {
 
 function comparisonRange(range, period, currentDate) {
   const previous = fullPreviousRange(range, period);
+  if (dateFromText(currentDate) && currentDate < range.from) {
+    return { from: previous.from, to: addDays(previous.from, -1), elapsedDays: 0 };
+  }
   const currentIsIncomplete = dateFromText(currentDate) && currentDate >= range.from && currentDate < range.to;
   if (!currentIsIncomplete) {
     return { ...previous, elapsedDays: daysBetween(range.from, range.to) + 1 };
@@ -159,6 +163,7 @@ function categoryGroups(transactions, type, previousTransactions = []) {
 }
 
 function rangeKeys(range, period) {
+  if (range.from > range.to) return [];
   if (period === 'year') {
     return Array.from({ length: 12 }, (_, index) => `${range.from.slice(0, 4)}-${String(index + 1).padStart(2, '0')}`);
   }
@@ -378,6 +383,7 @@ function buildFocus(groups, type, category, subcategory, range, period) {
   const group = groups.find(row => row.category === category);
   if (!group) return null;
   const child = subcategory ? group.children.find(row => row.subcategory === subcategory) : null;
+  if (subcategory && !child) return null;
   const selected = child || group;
   return {
     type,
@@ -414,23 +420,25 @@ export function buildAnalysisWorkspace(transactions, options = {}) {
   const rows = Array.isArray(transactions) ? transactions : [];
   const period = ['week', 'month', 'year'].includes(options.period) ? options.period : 'month';
   const range = analysisRange(period, options.selectedMonth, options.today);
-  const scoped = rows.filter(transaction => inRange(transaction, range));
-  const expenseTransactions = scoped.filter(transaction => expenseAmount(transaction) !== 0);
-  const totalsNow = totals(scoped);
+  const periodRows = rows.filter(transaction => inRange(transaction, range));
   const previousComparison = comparisonRange(range, period, options.currentDate);
   const previousRange = { from: previousComparison.from, to: previousComparison.to };
   const previousScoped = rows.filter(transaction => inRange(transaction, previousRange));
   const currentObservedRange = observedRange(range, period, previousComparison.elapsedDays);
   const currentObserved = rows.filter(transaction => inRange(transaction, currentObservedRange));
+  const scoped = currentObserved;
+  const expenseTransactions = scoped.filter(transaction => expenseAmount(transaction) !== 0);
+  const totalsNow = totals(scoped);
   const previousTotals = totals(previousScoped);
   const expenseGroups = categoryGroups(scoped, 'expense', previousScoped);
   const incomeGroups = categoryGroups(scoped, 'income', previousScoped);
-  const expenseComparisonSeries = categoryComparisonSeries(
+  const advanced = options.includeAdvanced !== false;
+  const expenseComparisonSeries = advanced ? categoryComparisonSeries(
     currentObserved, previousScoped, 'expense', range, previousComparison, period,
-  );
-  const incomeComparisonSeries = categoryComparisonSeries(
+  ) : [];
+  const incomeComparisonSeries = advanced ? categoryComparisonSeries(
     currentObserved, previousScoped, 'income', range, previousComparison, period,
-  );
+  ) : [];
   const expenseChangesRows = expenseChanges(currentObserved, previousScoped);
   const compositionFor = series => {
     const selected = options.category
@@ -459,11 +467,11 @@ export function buildAnalysisWorkspace(transactions, options = {}) {
     expense: seriesAmount(currentObserved, 'expense', key, period),
   }));
   const incomeExpenseMax = Math.max(0, ...incomeExpenseSeries.flatMap(row => [Math.abs(row.income), Math.abs(row.expense)]));
-  const investmentHistoryData = investmentHistory({
+  const investmentHistoryData = advanced ? investmentHistory({
     transactions: rows,
     accounts: options.accounts || [],
     reconciliations: options.reconciliations || [],
-  }, rows, options.accounts || [], currentObservedRange, period);
+  }, rows, options.accounts || [], currentObservedRange, period) : { series: [], checkpoints: [] };
   const categoryRows = expenseGroups.map(({ category, amount, percent }) => ({ category, amount, percent }));
   const dailyRows = Object.entries(
     expenseTransactions.reduce((result, transaction) => ({
@@ -475,7 +483,7 @@ export function buildAnalysisWorkspace(transactions, options = {}) {
     .toSorted((left, right) => left.date.localeCompare(right.date));
   const monthRows = period === 'year'
     ? rangeKeys(range, period).map(month => {
-        const members = scoped.filter(transaction => transaction.date?.slice(0, 7) === month);
+        const members = periodRows.filter(transaction => transaction.date?.slice(0, 7) === month);
         const monthTotals = totals(members);
         return { month, amount: monthTotals.expense, income: monthTotals.income, net: monthTotals.income - monthTotals.expense };
       })
@@ -514,7 +522,7 @@ export function buildAnalysisWorkspace(transactions, options = {}) {
   const selectedDate = options.selectedDate >= range.from && options.selectedDate <= range.to
     ? options.selectedDate
     : '';
-  const selectedDayTransactions = selectedDate ? scoped.filter(transaction => transaction.date === selectedDate) : [];
+  const selectedDayTransactions = selectedDate ? periodRows.filter(transaction => transaction.date === selectedDate) : [];
   const selectedDayTotals = totals(selectedDayTransactions);
   const selectedDay = selectedDate
     ? {
@@ -527,7 +535,23 @@ export function buildAnalysisWorkspace(transactions, options = {}) {
     : null;
   const focusType = options.section === 'income' ? 'income' : 'expense';
   const focusGroups = focusType === 'income' ? incomeGroups : expenseGroups;
-  const focus = buildFocus(focusGroups, focusType, options.category, options.subcategory, range, period);
+  const focus = buildFocus(focusGroups, focusType, options.category, options.subcategory, currentObservedRange, period);
+  const currentDate = options.currentDate || options.today;
+  const trendOptions = { period, range, currentDate };
+  const overviewTrend = buildTrendSeries(rows, trendOptions);
+  const overviewPace = buildPace(rows, { ...trendOptions, type: 'expense' });
+  const expenseMovers = buildCategoryMovers(rows, { ...trendOptions, type: 'expense' });
+  const sectionTrend = (options.section === 'expense' || options.section === 'income') && !focus
+    ? buildTrendSeries(rows, { ...trendOptions, type: focusType })
+    : null;
+  const sectionPace = (options.section === 'expense' || options.section === 'income') && !focus
+    ? buildPace(rows, { ...trendOptions, type: focusType })
+    : null;
+  if (focus) {
+    const filter = { category: focus.category, subcategory: focus.subcategory };
+    focus.trend = buildTrendSeries(rows, { ...trendOptions, type: focusType, filter });
+    focus.pace = buildPace(rows, { ...trendOptions, type: focusType, filter });
+  }
   const investmentIncome = incomeGroups.find(group => group.category === '投資') || null;
   const investmentCostTransactions = expenseTransactions.filter(row => row.category === '投資' || isInvestmentTransfer(row));
   const investmentCost = investmentCostTransactions.reduce((sum, row) => sum + expenseAmount(row), 0);
@@ -536,6 +560,11 @@ export function buildAnalysisWorkspace(transactions, options = {}) {
     expenseGroups,
     incomeExpenseSeries,
     incomeExpenseMax,
+    overviewTrend,
+    overviewPace,
+    expenseMovers,
+    sectionTrend,
+    sectionPace,
     expenseComparisonSeries,
     incomeComparisonSeries,
     expenseChanges: expenseChangesRows,
@@ -543,8 +572,8 @@ export function buildAnalysisWorkspace(transactions, options = {}) {
     expenseSubcategorySeries: expenseComposition?.subcategorySeries || [],
     incomeComposition,
     incomeSubcategorySeries: incomeComposition?.subcategorySeries || [],
-    budgetCumulativeSeries: budgetCumulativeSeries(currentObserved, options.budgets, currentObservedRange, period),
-    merchantGroups: merchantGroups(currentObserved),
+    budgetCumulativeSeries: advanced ? budgetCumulativeSeries(currentObserved, options.budgets, currentObservedRange, period) : [],
+    merchantGroups: advanced ? merchantGroups(currentObserved) : [],
     liquidInvestmentSeries: investmentHistoryData.series,
     investmentCheckpoints: investmentHistoryData.checkpoints,
     incomeInsights,
@@ -559,12 +588,15 @@ export function buildAnalysisWorkspace(transactions, options = {}) {
     currentDate: options.currentDate || options.today,
     period,
     scoped,
+    periodRows,
     expenseTransactions,
     totals: totalsNow,
     previousTotals,
     comparison: {
       range: previousRange,
       elapsedDays: previousComparison.elapsedDays,
+      hasData: previousScoped.some(row => amountFor(row, 'income') !== 0 || amountFor(row, 'expense') !== 0),
+      count: previousScoped.length,
       balance: previousTotals.income - previousTotals.expense,
       savingsRate: previousTotals.income
         ? Math.round(((previousTotals.income - previousTotals.expense) / previousTotals.income) * 100)

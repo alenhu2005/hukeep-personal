@@ -73,7 +73,7 @@ describe('GAS 同步合約', () => {
 
   it('提供不寫入 Sheet 的已授權模式能力檢查', () => {
     const capabilities = new Function(`${source}\nreturn getLedgerCapabilities_;`)();
-    expect(capabilities()).toEqual({ transferFeeModeVersion: 1, enhancementsVersion: 1, bitoAccountVersion: 1 });
+    expect(capabilities()).toEqual({ transferFeeModeVersion: 1, lineNotificationVersion: 1, enhancementsVersion: 1, bitoAccountVersion: 1, categoryTaxonomyVersion: 2 });
   });
 
   it('不再提供發票或銀行連線操作與轉送端點', () => {

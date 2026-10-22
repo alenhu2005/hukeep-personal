@@ -29,4 +29,11 @@ export const CATEGORY_TONES = {
   '退款': 'violet',
   '禮金': 'coral',
   '其他收入': 'slate',
+  '個人照護': 'violet',
+  '運動健身': 'mint',
+  '旅遊': 'blue',
+  '家庭育兒': 'coral',
+  '工作': 'blue',
+  '訂閱服務': 'violet',
+  '行政規費': 'slate',
 };

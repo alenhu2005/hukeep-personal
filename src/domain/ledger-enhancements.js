@@ -230,6 +230,32 @@ export function applyRecurringRules(rules, transactions, today) {
   return { created };
 }
 
+export function nextRecurringDate(rule, today, transactions = []) {
+  if (!rule?.enabled || !validDate(today) || !validDate(rule.startDate)) return null;
+  const existing = new Set((transactions || []).flatMap(row => [row?.sourceId, String(row?.id || '').replace(/^recurring:/, '')]));
+  if (rule.cadence === 'daily' || rule.cadence === 'weekly') {
+    const step = rule.cadence === 'daily' ? 1 : 7;
+    const start = new Date(`${rule.startDate}T00:00:00Z`);
+    const elapsed = Math.max(0, Math.ceil((Date.parse(`${today}T00:00:00Z`) - start.valueOf()) / 86400000 / step));
+    start.setUTCDate(start.getUTCDate() + elapsed * step);
+    let date = start.toISOString().slice(0, 10);
+    while (existing.has(`${rule.id}:${date}`)) {
+      start.setUTCDate(start.getUTCDate() + step);
+      date = start.toISOString().slice(0, 10);
+    }
+    return date;
+  }
+  const from = rule.startDate > today ? rule.startDate : today;
+  const [year, month] = from.split('-').map(Number);
+  for (let offset = 0; offset < 13; offset += 1) {
+    const cursor = new Date(Date.UTC(year, month - 1 + offset, 1));
+    const y = cursor.getUTCFullYear(), m = cursor.getUTCMonth() + 1;
+    const date = dateText(y, m, Math.min(rule.day, lastDayOfMonth(y, m)));
+    if (date >= from && !existing.has(`${rule.id}:${date}`)) return date;
+  }
+  return null;
+}
+
 function normalizedName(value) {
   return cleanText(value, 120).toLocaleLowerCase('zh-Hant').replace(/[\s\p{P}]/gu, '');
 }

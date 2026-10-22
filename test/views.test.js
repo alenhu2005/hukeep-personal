@@ -334,12 +334,12 @@ describe('趨勢每日淨額', () => {
       insightFilters: { period: 'month', section: 'expense', category: '飲食', subcategory: '飲料', selectedDate: '', anchorDate: '2026-09-02' },
     });
 
-    expect(html).toContain('aria-label="支出大分類排行"');
+    expect(html).toContain('aria-label="支出分類分析"');
     expect(html).toContain('data-insight-category="飲食"');
-    expect(html).toContain('aria-label="飲食小分類圖表"');
-    expect(html).toContain('data-insight-subcategory="飲料"');
-    expect(html).toContain('analysis-time-bars');
-    expect(html).toContain('analysis-account-bars');
+    expect(html).toContain('飲料期間趨勢');
+    expect(html).toContain('data-subcategory="飲料"');
+    expect(html).toContain('workbench-time-chart');
+    expect(html).toContain('付款帳戶');
     expect(html).toContain('紅茶');
     expect(html).not.toContain('analysis-donut');
     expect(html).not.toContain('分析重點');
@@ -359,7 +359,8 @@ describe('趨勢每日淨額', () => {
     expect(html).toContain('淨投入');
     expect(html).toContain('NT$ 10,000');
     expect(html).toContain('NT$ 3,000');
-    expect(html).toContain('investment-split-bar');
+    expect(html).toContain('data-subcategory="ETF"');
+    expect(html).toContain('data-subcategory="股票"');
   });
 });
 

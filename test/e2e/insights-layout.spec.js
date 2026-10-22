@@ -53,7 +53,7 @@ for (const [width, theme] of [[360, 'dark'], [401, 'light'], [768, 'light'], [14
     await expect(shell.getByText('顏色深淺說明')).toHaveCount(0);
     expect(await page.locator('.analysis-cal-cell').first().evaluate(el => el.getBoundingClientRect().height)).toBe(35);
     await expect(page.locator('.analysis-calendar-footer')).toHaveCount(0);
-    expect(await page.locator('.analysis-metric-strip strong').first().evaluate(el => parseFloat(getComputedStyle(el).fontSize))).toBeGreaterThanOrEqual(19);
+    expect(await page.locator('.workbench-balance > strong').first().evaluate(el => parseFloat(getComputedStyle(el).fontSize))).toBeGreaterThanOrEqual(25);
     const contrast = await page.locator('.analysis-cal-cell').evaluateAll(cells => {
       const ctx = document.createElement('canvas').getContext('2d');
       const luminance = color => {
@@ -87,9 +87,9 @@ for (const [width, theme] of [[360, 'dark'], [401, 'light'], [768, 'light'], [14
       .evaluateAll(elements => elements.filter(element => element.scrollWidth > element.clientWidth + 1).map(element => element.className));
     expect(overflowingCharts).toEqual([]);
     await noOverflow();
-    await page.locator('.analysis-upgrade-paired').first().screenshot({ path: `test-results/trends-${width}-${theme}-comparison-chart.png` });
+    await page.locator('.workbench-chart').first().screenshot({ path: `test-results/trends-${width}-${theme}-comparison-chart.png` });
     await page.locator('.analysis-disclosure').evaluateAll(elements => elements.forEach(element => { element.open = false; }));
-    await expect(page.locator('[data-analysis-disclosure="expense-飲食--comparison"]')).not.toHaveAttribute('open');
+    await expect(page.locator('[data-analysis-disclosure="expense-飲食--accounts"]')).not.toHaveAttribute('open');
     await page.locator('[data-insight-subcategory="咖啡"]').click();
     await expect(page.locator('.analysis-focus h2')).toHaveText('咖啡');
     await expect(page.getByRole('button', { name: '查看 拿鐵與下午茶 詳情' })).toBeVisible();
@@ -105,10 +105,10 @@ for (const [width, theme] of [[360, 'dark'], [401, 'light'], [768, 'light'], [14
     await noOverflow();
     await screenshot('income');
     await page.locator('[data-insight-section="investment"]').click();
-    await expect(page.locator('.investment-flow-row')).toHaveCount(2);
+    await expect(page.locator('[data-analysis-disclosure="investment-categories"] [data-analysis-drill="investment"]')).toHaveCount(2);
     await noOverflow();
     await screenshot('investment');
-    expect(await page.locator('.analysis-investment-series').evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    expect(await page.locator('.investment-analysis').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
     await page.locator('.investment-analysis').screenshot({ path: `test-results/trends-${width}-${theme}-investment-card.png` });
 
     await page.locator('[data-insight-period="week"]').click();

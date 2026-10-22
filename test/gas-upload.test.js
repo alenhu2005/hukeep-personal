@@ -77,6 +77,40 @@ describe('GAS spoken upload batching', () => {
     expect(lock.releaseLock).toHaveBeenCalledOnce();
   });
 
+  it('queues whole LINE notification text and safely replays a saved request before and after review', () => {
+    const { context, sheets } = harness();
+    const transcript = '付款帳戶：LINE。收到通知時間：2026-10-01T20:44:47+08:00\n'
+      + '付款完成\n商家資訊'.repeat(40) + '\n實付金額 NT$120';
+    const body = { transcript, groupId: 'line-20261001204447000-123456-987654' };
+    const first = context.enqueueSpokenEntry_(body);
+    expect(first.transaction).toBeNull();
+    expect(sheets.get('小帳_語音佇列').rows[1][1]).toBe(transcript);
+    expect(context.enqueueSpokenEntry_(body).queueId).toBe(first.queueId);
+    expect(sheets.get('小帳_語音佇列').rows).toHaveLength(2);
+    const [job] = context.claimPendingSpokenEntries_(3);
+    expect(job.transcript).toBe(transcript);
+    const reviewed = context.validateSpokenReview_({ type: 'expense', amount: 120,
+      date: '2026-10-01', account: 'line', name: '午餐', category: '飲食', subcategory: '便當', note: '', confidence: 0.9 }, null, transcript);
+    reviewed.id = job.transactionId;
+    reviewed.sourceId = job.queueId;
+    const transactions = sheets.get('小帳_交易');
+    transactions.rows.push(Array.from(context.LEDGER_TRANSACTION_HEADERS), context.ledgerTransactionRow_(reviewed));
+    const replayed = context.enqueueSpokenEntry_(body);
+    expect(replayed.transactions[0]).toMatchObject({ id: job.transactionId, amount: 120, account: 'line', rawTranscript: transcript });
+    expect(transactions.rows).toHaveLength(2);
+    expect(sheets.get('小帳_語音佇列').rows).toHaveLength(2);
+    // Same amount/content can be a separate purchase; only the saved request ID deduplicates.
+    context.enqueueSpokenEntry_({ ...body, groupId: 'line-20261001204448000-123456-987654' });
+    expect(sheets.get('小帳_語音佇列').rows).toHaveLength(3);
+  });
+
+  it('rejects oversized notification text before any Sheet write instead of silently truncating', () => {
+    const { context, sheets } = harness();
+    expect(() => context.enqueueSpokenEntry_({ transcript: '字'.repeat(2049) })).toThrow('2048');
+    expect(sheets.size).toBe(0);
+    expect(() => context.validateSpokenReview_({ type: 'expense', amount: 0 }, null, '付款完成')).toThrow('金額');
+  });
+
   it('persists a linked refund and keeps its income classification through AI review', () => {
     const { context } = harness();
     const row = context.ledgerTransactionRow_({

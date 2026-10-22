@@ -253,22 +253,22 @@ test('本期與前期的圖表鑽取只顯示所選日期、類型與分類，�
   await page.getByRole('button', { name: '趨勢', exact: true }).click();
   await page.locator('[data-insight-section="expense"]').click();
   await page.locator('[data-insight-category="飲食"]').click();
+  await page.locator('[data-insight-chart-mode="multi"]').click();
   await expect(page.locator('[data-insight-compare-subcategory]')).toHaveCount(2);
-  await page.locator('[data-analysis-disclosure="expense-budget-history"] > summary').click();
-  await expect(page.locator('.analysis-upgrade-budget-chart')).toBeVisible();
-  await page.locator('[data-analysis-disclosure="expense-飲食-multi"] > summary').click();
   for (const value of ['咖啡', '飲料']) {
     await page.locator(`[data-insight-compare-subcategory="${value}"]`).click();
   }
   await expect(page.locator('[data-insight-compare-subcategory][aria-pressed="true"]')).toHaveCount(2);
-  await expect(page.locator('[data-analysis-disclosure="expense-飲食-multi"]')).toHaveAttribute('open');
   expect(await page.evaluate(() => document.activeElement.dataset.insightCompareSubcategory)).toBe('飲料');
-  await expect(page.locator('.analysis-upgrade-compare-value')).not.toHaveCount(0);
-  await page.locator('[data-analysis-disclosure="expense-飲食--comparison"] > summary').click();
+  await page.locator('[data-analysis-disclosure="expense-tools"] > summary').click();
+  await page.locator('[data-insight-tool="budget"]').click();
+  await expect(page.locator('.analysis-upgrade-budget-chart')).toBeVisible();
+  await page.locator('[data-insight-chart-mode="previous"]').click();
+  await page.locator('[data-chart-point]').selectOption('1');
 
   for (const [selector, expectedIds] of [
-    ['.analysis-upgrade-value.current[data-date="2026-10-02"]', ['food-current-coffee', 'food-current-drink']],
-    ['.analysis-upgrade-value.previous[data-date="2026-09-02"]', ['food-previous-coffee', 'food-previous-drink']],
+    ['.workbench-chart-readout button[data-date="2026-10-02"]', ['food-current-coffee', 'food-current-drink']],
+    ['.workbench-chart-readout button[data-date="2026-09-02"]', ['food-previous-coffee', 'food-previous-drink']],
   ]) {
     const chart = page.locator(selector);
     await expect(chart).toHaveCount(1);
@@ -287,9 +287,8 @@ test('本期與前期的圖表鑽取只顯示所選日期、類型與分類，�
     await expect(workspace).not.toBeVisible();
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(returnScroll);
     await expect(page.locator('[data-insight-section="expense"]')).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.locator('[data-insight-category="飲食"]')).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.locator('[data-insight-compare-subcategory="咖啡"]')).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.locator('[data-insight-compare-subcategory="飲料"]')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('.analysis-focus h2')).toHaveText('飲食');
+    await expect(page.locator('[data-insight-chart-mode="previous"]')).toHaveAttribute('aria-pressed', 'true');
   }
 });
 
@@ -301,12 +300,12 @@ test('360px 深色與減少動態偏好下的分析頁沒有水平溢出', async
   await page.getByRole('button', { name: '趨勢', exact: true }).click();
   await page.locator('[data-insight-section="expense"]').click();
   await page.locator('[data-insight-category="飲食"]').click();
+  await page.locator('[data-insight-chart-mode="multi"]').click();
   await expect(page.locator('[data-insight-compare-subcategory]')).toHaveCount(2);
-  await page.locator('[data-analysis-disclosure="expense-飲食-multi"] > summary').click();
   await page.locator('[data-insight-compare-subcategory="咖啡"]').click();
   await page.locator('[data-insight-compare-subcategory="飲料"]').click();
-  await expect(page.locator('.analysis-upgrade-compare-value')).not.toHaveCount(0);
-  await page.locator('.analysis-upgrade-compare-value').first().scrollIntoViewIfNeeded();
+  await expect(page.locator('.workbench-time-chart')).toHaveCount(1);
+  await page.locator('.workbench-time-chart').first().scrollIntoViewIfNeeded();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: 'test-results/expense-compare-360.png', fullPage: true });
 });

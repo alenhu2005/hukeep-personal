@@ -120,7 +120,7 @@ function normalizeOptionalMetadata(input, transactionId) {
   const userEditedAt = cleanBoundedText(input?.userEditedAt, MAX_TIMESTAMP_LENGTH);
   const aiStatus = cleanBoundedText(input?.aiStatus, 24);
   const aiReviewedAt = cleanBoundedText(input?.aiReviewedAt, MAX_TIMESTAMP_LENGTH);
-  const rawTranscript = cleanBoundedText(input?.rawTranscript, 240);
+  const rawTranscript = cleanBoundedText(input?.rawTranscript, 2048);
   const groupId = cleanBoundedText(input?.groupId, 80);
   const receiptId = cleanBoundedText(input?.receiptId, 160);
   const receiptName = cleanBoundedText(input?.receiptName, 160);

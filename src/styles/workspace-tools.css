@@ -19,3 +19,10 @@
 .sync-inspector-item span { color:var(--muted); font-size:11px; overflow-wrap:anywhere; }
 .sync-inspector-actions { display:flex; align-items:center; gap:4px; flex-shrink:0; }
 @media (max-width:400px) { .sync-inspector-item { flex-wrap:wrap; } }
+.settings-maintenance { padding: 12px 0; border-top: 1px solid var(--line); }
+.settings-maintenance > summary { min-height: 44px; padding-block: 12px; cursor: pointer; font-weight: 700; }
+.app-version-section { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; color: var(--ink-soft); font-size: 13px; }
+.app-version-section p { width: 100%; margin: 0; }
+#recurring-rule-list article > div > small, #reconciliation-list article > div > small { display: block; color: var(--ink-soft); font-size: 13px; }
+.history-active-filters button { max-width: 100%; overflow-wrap: anywhere; font-size: 13px; }
+.history-view .history-filter-group > span, .history-advanced-filters > summary { font-size: 13px; }

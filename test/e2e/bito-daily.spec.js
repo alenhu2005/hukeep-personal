@@ -63,6 +63,10 @@ test('每日 Bito 定期記帳補登、不重複，隔日繼續且可暫停', as
   await expect(page.locator('#recurring-rule-list')).toContainText('每日');
   const entries = () => page.evaluate(() => JSON.parse(localStorage.getItem('hukeep_personal_state_v1')).transactions.filter(row => row.source === 'recurring'));
   expect(await entries()).toHaveLength(3);
+  await expect(page.locator('#recurring-rule-list')).toContainText('下次 2026-10-22');
+  await page.locator('[data-recurring-history]').click();
+  await expect(page.locator('#workspace-dialog [data-detail-id]')).toHaveCount(3);
+  await page.locator('#workspace-dialog .dialog-close').click();
   await page.reload();
   expect(await entries()).toHaveLength(3);
   await page.clock.setFixedTime(new Date('2026-10-22T04:00:00Z'));

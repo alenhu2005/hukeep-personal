@@ -366,6 +366,7 @@ describe('備份', () => {
       monthlySnapshots: { added: 0, changed: 0, removed: 0 },
       reconciliations: { added: 0, changed: 0, removed: 0 },
       preferences: { added: 0, changed: 0, removed: 0 },
+      conflicts: [],
       hasChanges: false,
     });
   });

@@ -4,6 +4,7 @@ import {
   calculateBudgetProgress,
   calculateTotalAssets,
   expenseAmount,
+  expenseCategory,
   incomeAmount,
   summarizeMonth,
 } from './domain/insights.js';
@@ -13,7 +14,8 @@ import { filterTransactions } from './domain/transactions.js';
 import { findTransactionSignals, reconciliationStatus } from './domain/ledger-enhancements.js';
 import { reconciliationAdjustmentStatus, transactionsAtReconciliation } from './domain/reconciliation.js';
 import { buildAnalysisWorkspace, analysisHeatIntensity } from './domain/analysis-workspace.js';
-import { analysisChartValues, analysisDisclosure, renderAnalysisUpgrades } from './views/analysis-upgrades.js';
+import { analysisDisclosure } from './views/analysis-upgrades.js';
+import { renderAnalysisWorkbench } from './views/analysis-workbench.js';
 import {
   investmentDirection,
   isInvestmentTransfer,
@@ -30,12 +32,13 @@ function emptyState(title, body = '') {
 function categoryMark(category) {
   const tone = CATEGORY_TONES[category] || 'slate';
   const symbols = {
-    '飲食': '◒', '交通': '⇆', '居家': '⌂', '購物': '◇', '娛樂': '▷', '醫療': '+',
-    '學習': '▤', '帳單': '≡', '投資': '↗', '人情': '♡', '寵物': '●', '其他': '…',
-    '薪資': '$', '獎金': '★', '接案': '◈', '租賃': '⌂', '退款與理賠': '↩', '補助': '+',
-    '零用與贈與': '♡', '禮金': '♡', '銷售': '◇', '中獎': '★', '其他收入': '…', '轉': '⇆',
+    '飲食': 'food', '交通': 'transit', '居家': 'home', '購物': 'bag', '娛樂': 'chart', '醫療': 'health',
+    '學習': 'book', '帳單': 'receipt', '投資': 'chart', '人情': 'heart', '寵物': 'paw',
+    '接案': 'work', '租賃': 'home', '退款與理賠': 'repeat', '補助': 'heart',
+    '零用與贈與': 'heart', '禮金': 'heart', '銷售': 'bag', '轉': 'swap',
+    '個人照護': 'scissors', '運動健身': 'fitness', '旅遊': 'plane', '家庭育兒': 'heart', '工作': 'work', '訂閱服務': 'repeat', '行政規費': 'mail',
   };
-  return `<span class="category-mark tone-${tone}" aria-hidden="true">${escapeHtml(symbols[category] || category?.slice(0, 1) || '其')}</span>`;
+  return `<span class="category-mark tone-${tone}" aria-hidden="true">${symbols[category] ? icon(symbols[category], 18) : escapeHtml(category?.slice(0, 1) || '其')}</span>`;
 }
 
 function transactionTime(transaction) {
@@ -79,7 +82,7 @@ export function transactionRows(transactions, accounts, options = {}) {
           ? `${accountNames[transaction.account] || transaction.account} → ${accountNames[transaction.toAccount] || transaction.toAccount}`
           : '',
         options.showTime ? transactionTime(transaction) : '',
-        formatDate(transaction.date),
+        options.hideDate ? '' : formatDate(transaction.date),
       ]
         .filter(Boolean)
         .join(' · ');
@@ -98,10 +101,10 @@ export function transactionRows(transactions, accounts, options = {}) {
               <span>${isInvestmentTransfer(transaction) ? (investmentDirection(transaction) === 'contributed' ? '投入' : investmentDirection(transaction) === 'withdrawn' ? '領回' : '投資內轉') : escapeHtml(accountNames[transaction.account] || transaction.account)}</span>
             </span>
           </button>
-          <div class="row-actions">
+          ${options.hideActions ? '' : `<div class="row-actions">
             <button type="button" data-edit-id="${escapeHtml(transaction.id)}" aria-label="編輯 ${escapeHtml(primaryName)}">${icon('edit', 16)}</button>
             <button type="button" data-delete-id="${escapeHtml(transaction.id)}" aria-label="刪除 ${escapeHtml(primaryName)}">${icon('trash', 16)}</button>
-          </div>
+          </div>`}
         </article>`;
     })
     .join('');
@@ -230,7 +233,7 @@ function expenseDisplayTransactions(transactions) {
         ...row,
         type: 'expense',
         amount: expenseAmount(row),
-        category: '帳單',
+        category: expenseCategory(row),
         subcategory: '轉帳手續費',
         name: `${row.name || '轉帳'}（手續費）`,
       }
@@ -457,9 +460,11 @@ export function renderHistory(state, month, filters, historySelection = {}) {
     ['category', filters.category, filters.category],
     ['subcategory', filters.subcategory, filters.subcategory],
     ['account', filters.account, state.accounts.find(account => account.id === filters.account)?.name],
+    ['query', filters.query, `搜尋：${filters.query || ''}`],
+    ['preset', filters.preset !== 'all' ? filters.preset : '', { today: '今天', week: '最近 7 天', review: 'AI 待審', attention: '需確認' }[filters.preset]],
   ].filter(([, value]) => value);
   const activeBreadcrumb = activeFilters.length
-    ? `<div class="history-active-filters" role="group" aria-label="目前篩選">${activeFilters.map(([key, value, label]) => `<button type="button" data-history-filter="${key}" data-history-value="" aria-label="移除${escapeHtml(label || value)}篩選">${escapeHtml(label || value)} <span aria-hidden="true">×</span></button>`).join('')}</div>`
+    ? `<div class="history-active-filters" role="group" aria-label="目前篩選">${activeFilters.map(([key, value, label]) => `<button type="button" data-history-filter="${key}" data-history-value="${key === 'preset' ? 'all' : ''}" aria-label="移除${escapeHtml(label || value)}篩選">${escapeHtml(label || value)} <span aria-hidden="true">×</span></button>`).join('')}<button type="button" data-history-clear-all>清除篩選</button></div>`
     : '';
   const hasAdvancedFilter = Boolean(filters.category || filters.subcategory || filters.account);
   const selection = { enabled: historySelection?.enabled === true, ids: historySelection?.ids || [] };
@@ -472,7 +477,7 @@ export function renderHistory(state, month, filters, historySelection = {}) {
         <label class="search-field"><span class="visually-hidden">搜尋紀錄</span><span aria-hidden="true">⌕</span><input id="history-search" aria-label="搜尋紀錄" type="search" value="${escapeHtml(filters.query)}" placeholder="搜尋備註、分類、帳戶" /></label>
         <div class="history-filter-group history-preset-group" role="group" aria-label="快速篩選"><span>快速篩選</span><div class="filter-chip-scroll">${presetButtons}</div></div>
         <div class="history-filter-group history-type-group" role="group" aria-label="篩選類型"><span>類型</span><div class="filter-chip-scroll">${typeButtons}</div></div>
-        <details class="history-advanced-filters"${hasAdvancedFilter ? ' open' : ''}>
+        <details class="history-advanced-filters" data-analysis-disclosure="history-filters"${hasAdvancedFilter ? ' open' : ''}>
           <summary>分類與帳戶${hasAdvancedFilter ? ' · 已套用' : ''}</summary>
           <div class="history-advanced-filter-fields">
             <div class="history-filter-group" role="group" aria-label="篩選分類"><span>分類</span><div class="filter-chip-scroll">${categoryButtons}</div></div>
@@ -523,7 +528,7 @@ export function renderBudgets(state, month) {
                     : `月底預估（本月日均）${formatMoney(forecast.expectedExpense)}${forecast.expectedOverage > 0 ? ` · 可能超出 ${formatMoney(forecast.expectedOverage)}` : ''}`;
                   return `<article class="budget-row ${item.status}">
                   ${categoryMark(item.category)}
-<div class="budget-row-main"><span><strong>${escapeHtml(item.category)}預算</strong><small>${formatMoney(item.spent)} / ${formatMoney(item.limit)}</small></span><div class="progress-track"><i style="width:${Math.max(0, Math.min(100, item.ratio * 100))}%"></i></div><p>${item.remaining >= 0 ? `還剩 ${formatMoney(item.remaining)}` : `已超出 ${formatMoney(Math.abs(item.remaining))}`}</p><small class="budget-daily-average">${isCurrentMonth ? '本月至今日平均' : '當月日平均'} ${average == null ? '—' : formatMoney(average)}</small><small class="budget-daily-limit">${item.remaining >= 0 ? `每天還能用 ${formatMoney(Math.floor(item.remaining / daysLeft))}` : `每天需少用 ${formatMoney(Math.ceil(Math.abs(item.remaining) / daysLeft))}`} · ${isCurrentMonth ? `剩 ${daysLeft} 天` : '按整月計算'}</small>${forecastLabel ? `<small class="budget-forecast${forecast.expectedOverage > 0 ? ' over' : ''}">${forecastLabel}</small>` : ''}</div>
+<div class="budget-row-main"><span><strong>${escapeHtml(item.category)}預算</strong><small>已用 ${formatMoney(item.spent)} / ${formatMoney(item.limit)}</small></span><div class="progress-track"><i style="width:${Math.max(0, Math.min(100, item.ratio * 100))}%"></i></div><p>${item.remaining >= 0 ? `還剩 ${formatMoney(item.remaining)}` : `已超出 ${formatMoney(Math.abs(item.remaining))}`}</p><small class="budget-daily-average">${isCurrentMonth ? '本月至今日平均' : '當月日平均'} ${average == null ? '—' : formatMoney(average)}</small><small class="budget-daily-limit">${month < today.slice(0, 7) ? '本月已結束' : item.remaining >= 0 ? `每天還能用 ${formatMoney(Math.floor(item.remaining / daysLeft))} · ${isCurrentMonth ? `剩 ${daysLeft} 天` : '按整月計算'}` : `本月預算已用完 · 超支 ${formatMoney(Math.abs(item.remaining))}`}</small>${forecastLabel ? `<small class="budget-forecast${forecast.expectedOverage > 0 ? ' over' : ''}">${forecastLabel}</small>` : ''}</div>
                   <button type="button" data-remove-budget="${escapeHtml(item.category)}" aria-label="移除 ${escapeHtml(item.category)} 預算">×</button>
                 </article>`;
                 })
@@ -546,189 +551,45 @@ function daysInRange(from, to) {
   return result;
 }
 
-function changeLabel(value) {
-  if (value == null) return '無前期資料';
-  if (value === 0) return '與前期相同';
-  return `較前期 ${value > 0 ? '+' : ''}${value}%`;
-}
-
-function analysisTimeBars(rows, label, type, category, subcategory) {
-  const max = Math.max(1, ...rows.map(row => Math.abs(row.amount)));
-  const attributes = row => `data-analysis-drill="${escapeHtml(type)}" data-${row.key.length === 7 ? 'month' : 'date'}="${escapeHtml(row.key)}" data-category="${escapeHtml(category)}" data-subcategory="${escapeHtml(subcategory || '')}"`;
-  return `<div class="analysis-time-bars${rows.length > 7 ? ' is-dense' : ''}" style="--points:${rows.length}" role="group" aria-label="${escapeHtml(label)}">${rows.map((row, index) => {
-    const height = row.amount ? Math.round(Math.abs(row.amount) / max * 100) : 0;
-    const tick = rows.length <= 7 ? row.label : row.key.length === 7 ? `${Number(row.key.slice(5))}月` : index % 5 === 0 || index === rows.length - 1 ? Number(row.key.slice(8)) : '';
-    return `<button type="button" class="analysis-time-bar" ${attributes(row)} title="${escapeHtml(row.label)} ${formatMoney(row.amount)}" aria-label="${escapeHtml(row.label)} ${formatMoney(row.amount)}"><span><b>${row.amount ? formatCompactMoney(row.amount) : ''}</b><i style="height:${height}%"></i></span><small>${escapeHtml(tick)}</small></button>`;
-  }).join('')}</div>${analysisChartValues(`${type}-${category}-${subcategory || ''}-series-values`, rows.map(row => `<div><strong>${escapeHtml(row.label)}</strong><button type="button" ${attributes(row)}>${formatMoney(row.amount)}</button></div>`).join(''))}`;
-}
-
-function rankedBarRows(groups, options) {
-  const max = Math.max(1, ...groups.map(group => Math.abs(group.amount)));
-  const accountNames = options.accountNames || {};
-  return groups.map(group => {
-    const key = group[options.key];
-    const label = options.key === 'account' ? accountNames[key] || key : key;
-    const width = Math.max(0, Math.round(Math.abs(group.amount) / max * 100));
-    const selected = options.selected === key;
-    const attribute = options.attribute ? `${options.attribute}="${escapeHtml(key)}"` : `data-analysis-drill="${escapeHtml(options.drillType || 'all')}" data-${escapeHtml(options.key)}="${escapeHtml(key)}"${options.category ? ` data-category="${escapeHtml(options.category)}"` : ''}${options.subcategory ? ` data-subcategory="${escapeHtml(options.subcategory)}"` : ''}`;
-    const tag = 'button';
-    return `<${tag} type="button" class="analysis-ranked-row${options.showMark ? ' has-mark' : ''}${selected ? ' is-selected' : ''}" ${attribute}${options.attribute ? ` aria-pressed="${selected}"` : ''}>
-      ${options.showMark ? categoryMark(key) : ''}
-      <span class="analysis-ranked-copy"><span><strong>${escapeHtml(label)}</strong><small>${group.count} 筆 · ${group.percent}%</small></span><i><b style="width:${width}%"></b></i></span>
-      <span class="analysis-ranked-value"><strong>${formatMoney(group.amount)}</strong>${options.showPrevious ? `<small>${changeLabel(group.changePercent)}</small>` : ''}${options.attribute ? '<span class="analysis-row-arrow" aria-hidden="true">›</span>' : ''}</span>
-    </${tag}>`;
-  }).join('');
-}
-
-function analysisMetricStrip(items, label) {
-  return `<div class="analysis-metric-strip" aria-label="${escapeHtml(label)}">${items.map(item => `<div><span>${escapeHtml(item.label)}</span><strong class="${item.tone || ''}">${item.value}</strong>${item.detail ? `<small>${escapeHtml(item.detail)}</small>` : ''}</div>`).join('')}</div>`;
-}
 
 function renderSelectedDay(state, selectedDay) {
   if (!selectedDay) return '';
-  const flow = selectedDay.investmentFlows;
-  return `<section class="analysis-history-section" aria-label="${escapeHtml(formatDate(selectedDay.date))}當日明細">
-    <div class="analysis-history-head"><div><strong>${escapeHtml(formatDate(selectedDay.date))}</strong><span>當日明細</span></div><button type="button" data-insight-date="" aria-label="關閉當日明細">關閉</button></div>
-    ${analysisMetricStrip([
-      { label: '生活結餘', value: formatMoney(selectedDay.balance, { showPlus: true }), tone: selectedDay.balance < 0 ? 'negative' : 'positive' },
-      { label: '收入', value: formatMoney(selectedDay.totals.income), tone: 'positive' },
-      { label: '生活支出', value: formatMoney(selectedDay.totals.expense), tone: 'negative' },
-      { label: '投資投入', value: formatMoney(flow.contributed) },
-      { label: '投資領回', value: formatMoney(flow.withdrawn) },
-    ], '當日收支摘要')}
-    <div class="transaction-list compact">${rowsForState(state, selectedDay.transactions, { showTime: true })}</div>
+  const { investmentFlows: flow, totals, balance } = selectedDay;
+  return `<section class="analysis-history-section workbench-day" aria-label="${escapeHtml(formatDate(selectedDay.date))}當日明細">
+    <div class="analysis-history-head"><div><strong>${formatDate(selectedDay.date)} 當日明細</strong><span>${selectedDay.transactions.length} 筆</span></div><button type="button" data-insight-date="" aria-label="關閉當日明細">關閉</button></div>
+    <div class="workbench-day-totals"><span>收入 <b>${formatMoney(totals.income)}</b></span><span>支出 <b>${formatMoney(totals.expense)}</b></span><span>結餘 <b class="${balance < 0 ? 'negative' : 'positive'}">${formatMoney(balance, { showPlus: true })}</b></span></div>
+    ${flow.contributed || flow.withdrawn ? `<p class="workbench-caption">投資投入 ${formatMoney(flow.contributed)} · 領回 ${formatMoney(flow.withdrawn)}</p>` : ''}
+    <div class="transaction-list compact workbench-transactions">${rowsForState(state, selectedDay.transactions, { showTime: true, hideDate: true, hideActions: true })}</div>
   </section>`;
 }
 
-function renderOverviewAnalysis(workspace, periodLabel) {
-  const currentMax = Math.max(1, workspace.totals.income, workspace.totals.expense, Math.abs(workspace.balance));
-  const previousMax = Math.max(1, workspace.previousTotals.income, workspace.previousTotals.expense, Math.abs(workspace.comparison.balance));
-  const scale = Math.max(currentMax, previousMax);
-  const comparisonRows = [
-    ['收入', workspace.totals.income, workspace.previousTotals.income, 'income'],
-    ['生活支出', workspace.totals.expense, workspace.previousTotals.expense, 'expense'],
-    ['生活結餘', workspace.balance, workspace.comparison.balance, 'balance'],
-  ];
-  return `<section class="analysis-section-panel analysis-summary-panel" aria-label="總覽分析">
-    <div class="analysis-block-head"><div><h2>收支總覽</h2><small>${escapeHtml(periodLabel)}</small></div></div>
-    ${analysisMetricStrip([
-      { label: '收入', value: formatMoney(workspace.totals.income) },
-      { label: '生活支出', value: formatMoney(workspace.totals.expense) },
-      { label: '生活結餘', value: formatMoney(workspace.balance, { showPlus: true }), tone: workspace.balance < 0 ? 'negative' : 'positive' },
-      { label: '儲蓄率', value: workspace.savingsRate == null ? '—' : `${workspace.savingsRate}%` },
-    ], `${periodLabel}總覽`)}
-    ${analysisDisclosure('overview-comparison', '與前期比較', '收入、生活支出與結餘', `<p class="analysis-note">前期 ${formatDate(workspace.comparison.range.from)}–${formatDate(workspace.comparison.range.to)} · 比較相同經過天數</p>
-    <div class="analysis-comparison-bars">${comparisonRows.map(([label, current, previous, tone]) => `<div class="analysis-comparison-row">
-      <strong>${label}</strong><button type="button" data-analysis-drill="${tone === 'balance' ? 'living' : tone}"><span>本期</span><i><b class="${tone}" style="width:${Math.round(Math.abs(current) / scale * 100)}%"></b></i><em>${formatMoney(current, { showPlus: label === '生活結餘' })}</em></button>
-      <button type="button" data-analysis-drill="${tone === 'balance' ? 'living' : tone}" data-start="${workspace.comparison.range.from}" data-end="${workspace.comparison.range.to}"><span>前期</span><i><b class="previous" style="width:${Math.round(Math.abs(previous) / scale * 100)}%"></b></i><em>${formatMoney(previous, { showPlus: label === '生活結餘' })}</em></button>
-    </div>`).join('')}</div>`)}
-  </section>`;
-}
-
-function renderFocusAnalysis(state, workspace, type, accountNames) {
-  const focus = workspace.focus;
-  if (!focus) return '';
-  const title = focus.subcategory || focus.category;
-  const childRegion = `<div class="analysis-focus-block" role="region" aria-label="${escapeHtml(focus.category)}小分類圖表">
-    <div class="analysis-block-head"><div><strong>小分類排行</strong><small>點選可看獨立趨勢與明細</small></div></div>
-    <div class="analysis-ranked-bars">${rankedBarRows(focus.children, {
-      key: 'subcategory', attribute: 'data-insight-subcategory', selected: focus.subcategory,
-    })}</div>
-  </div>`;
-  return `<div class="analysis-focus">
-    <div class="analysis-focus-title"><button type="button" ${focus.subcategory ? 'data-insight-subcategory="" aria-label="返回大分類"' : 'data-insight-category="" aria-label="返回全部大分類"'}>‹</button><div><small>${focus.subcategory ? escapeHtml(focus.category) + ' / 小分類分析' : '大分類分析'}</small><h2 tabindex="-1">${escapeHtml(title)}</h2></div></div>
-    ${analysisMetricStrip([
-      { label: '金額', value: formatMoney(focus.amount) },
-      { label: focus.subcategory ? `占${focus.category}` : `占${type === 'expense' ? '總支出' : '總收入'}`, value: `${focus.percent}%` },
-      { label: '筆數', value: `${focus.count} 筆` },
-      { label: '平均每筆', value: formatMoney(focus.average), detail: changeLabel(focus.changePercent) },
-    ], `${title}數據`)}
-    <div class="analysis-focus-block"><div class="analysis-block-head"><div><strong>${escapeHtml(title)}趨勢</strong><small>點柱狀圖查看明細 · 金額單位：元</small></div></div>${analysisTimeBars(focus.timeSeries, `${title}期間趨勢`, type, focus.category, focus.subcategory)}</div>
-    ${childRegion}
-    ${analysisDisclosure(`${type}-${focus.category}-${focus.subcategory || ''}-accounts`, `${type === 'expense' ? '付款' : '入帳'}帳戶分布`, `${focus.accounts.length} 個帳戶`, `<div class="analysis-focus-block analysis-account-bars">
-      <div class="analysis-ranked-bars">${rankedBarRows(focus.accounts, { key: 'account', accountNames, drillType: type, category: focus.category, subcategory: focus.subcategory })}</div>
-    </div>`)}
-    ${focus.subcategory ? `<div class="analysis-focus-block"><div class="analysis-block-head"><div><strong>${escapeHtml(title)}明細</strong><small>${focus.count} 筆</small></div></div><div class="transaction-list compact">${rowsForState(state, type === 'expense' ? expenseDisplayTransactions(focus.transactions) : focus.transactions)}</div></div>` : ''}
-  </div>`;
-}
-
-function renderCategoryAnalysis(state, workspace, type, filters, accountNames, budgetProgress) {
-  const label = type === 'expense' ? '支出' : '收入';
-  const groups = type === 'expense' ? workspace.expenseGroups : workspace.incomeGroups;
-  const noFocus = filters.category && !workspace.focus
-    ? emptyState(`這個期間沒有「${escapeHtml(filters.category)}」資料`)
-    : '';
-  const budget = type === 'expense' && budgetProgress?.length
-    ? analysisDisclosure('expense-budget-progress', '本月預算進度', '僅計生活支出，不含投資本金', `<div class="analysis-focus-block analysis-budget-bars"><div class="analysis-ranked-bars">${budgetProgress.map(item => `<div class="analysis-ranked-row"><span class="analysis-ranked-copy"><span><strong>${escapeHtml(item.category)}</strong><small>已用 ${Math.round(item.ratio * 100)}%</small></span><i><b class="${item.ratio > 1 ? 'over' : ''}" style="width:${Math.max(0, Math.min(100, Math.round(item.ratio * 100)))}%"></b></i></span><span class="analysis-ranked-value"><strong>${formatMoney(item.spent)}</strong><small>/ ${formatMoney(item.limit)}</small></span></div>`).join('')}</div></div>`)
-    : '';
-  const ranking = `<div class="analysis-ranked-bars">${groups.length ? rankedBarRows(groups, {
-    key: 'category', attribute: 'data-insight-category', selected: filters.category, showMark: true, showPrevious: true,
-  }) : emptyState(`本期沒有${label}`)}</div>`;
-  return `<section class="analysis-section-panel" aria-label="${label}大分類排行">
-    ${filters.category ? analysisDisclosure(`${type}-categories-${filters.category}`, '切換大分類', `${groups.length} 個${label}分類`, ranking) : `<div class="analysis-category-ranking">
-    <div class="analysis-block-head"><div><h2>${label}分類</h2><small>${groups.length} 個大分類 · 依金額排序</small></div><div class="analysis-heading-total"><small>本期${label}</small><b>${formatMoney(workspace.totals[type])}</b></div></div>
-    <p class="analysis-note">點選大分類，查看小分類圖表與交易。</p>${ranking}
-    </div>`}
-    ${noFocus || renderFocusAnalysis(state, workspace, type, accountNames)}
-    ${budget}
-  </section>`;
-}
-
-function renderInvestmentAssetAnalysis(state, range) {
-  const accounts = investmentAssetHistory(state, range);
+function renderInvestmentAssetAnalysis(state, range, filters = {}) {
+  const allAccounts = investmentAssetHistory(state, range);
+  const accounts = allAccounts.filter(account => !filters.assetAccount || filters.assetAccount === 'all' || filters.assetAccount === account.id);
   const points = accounts.flatMap(account => account.points);
   const max = Math.max(1, ...points.map(point => point.value));
   const start = Date.parse(`${range.from}T00:00:00Z`);
   const span = Math.max(86400000, Date.parse(`${range.to}T00:00:00Z`) - start);
   const x = point => 36 + (Date.parse(`${point.date}T00:00:00Z`) - start) / span * 548;
   const y = point => 150 - point.value / max * 128;
-  const total = accounts.reduce((sum, account) => sum + Math.max(0, account.balance), 0);
+  const total = allAccounts.reduce((sum, account) => sum + Math.max(0, account.balance), 0);
   return `<section class="investment-asset-analysis" aria-label="投資資產變化">
-    <div class="analysis-block-head"><div><h2>投資資產</h2><small>以新臺幣分開記錄股票與虛擬貨幣市值</small></div></div>
+    <p class="workbench-caption">目前投資資產 ${formatMoney(total)} · 下方走勢為所選期間的實際市值紀錄</p>
     <div class="investment-asset-cards">${accounts.map(account => `<div class="investment-asset-card ${account.id === 'bito' ? 'crypto' : 'securities'}">
       <strong>${account.id === 'bito' ? '虛擬貨幣 · Bito' : '股票與其他證券'}</strong><b>${formatMoney(account.balance)}</b>
-      <small>${account.checkpoint ? `市值更新 ${escapeHtml(formatDate(account.checkpoint.date))}` : '尚未更新市值 · 依帳面本金'}</small>
+      <small>${account.checkpoint ? `最近市值更新 ${escapeHtml(formatDate(account.checkpoint.date))} · 含其後本金流動` : '尚未更新市值 · 依帳面本金'}</small>
       <div class="progress-track"><i style="width:${total ? Math.max(0, account.balance) / total * 100 : 0}%"></i></div>
       <small>投資占比 ${total ? Math.round(Math.max(0, account.balance) / total * 100) : 0}%</small>
       <button type="button" data-open-investment-valuation="${account.id}">更新市值</button>
     </div>`).join('')}</div>
-    <div class="analysis-focus-block"><div class="analysis-block-head"><div><strong>市值紀錄走勢</strong><small>僅連接實際更新點；資產增減不等於投資損益</small></div></div>
+    ${filters.chartMode === 'flow' ? '' : `<div class="analysis-focus-block"><div class="analysis-block-head"><div><strong>市值紀錄走勢</strong><small>僅連接實際更新點；資產增減不等於投資損益</small></div></div>
     ${points.length ? `<svg class="investment-value-chart" viewBox="0 0 620 190" role="img" aria-label="股票與虛擬貨幣市值紀錄折線圖"><text x="4" y="16">${escapeHtml(formatCompactMoney(max))}</text><text x="10" y="154">0</text><path class="chart-axis" d="M36 20 V150 H584"/>${accounts.map(account => `<g class="${account.id === 'bito' ? 'crypto' : 'securities'}"><polyline points="${account.points.map(point => `${x(point)},${y(point)}`).join(' ')}"/>${account.points.map(point => `<circle cx="${x(point)}" cy="${y(point)}" r="4"><title>${escapeHtml(account.name)} ${escapeHtml(point.date)} ${formatMoney(point.value)}</title></circle>`).join('')}</g>`).join('')}<text x="36" y="182">${escapeHtml(range.from.slice(5).replace('-', '/'))}</text><text x="584" y="182" text-anchor="end">${escapeHtml(range.to.slice(5).replace('-', '/'))}</text></svg>` : emptyState('本期尚無市值紀錄', '更新股票或 Bito 市值後，就會在這裡累積走勢。')}
     <div class="investment-value-changes">${accounts.map(account => `<p><strong>${account.id === 'bito' ? 'Bito' : '證券'}</strong><span>紀錄間增減 ${account.change == null ? '—' : formatMoney(account.change, { showPlus: true })}</span><small>${account.points.length >= 2 ? `${escapeHtml(formatDate(account.points[0].date))} → ${escapeHtml(formatDate(account.points.at(-1).date))}` : '至少需兩次市值紀錄'}</small></p>`).join('')}</div>
     ${points.length ? analysisDisclosure('investment-valuations', '查看市值紀錄', `${points.length} 個更新點`, `<div class="analysis-chart-table">${accounts.flatMap(account => account.points.map(point => `<div><strong>${escapeHtml(point.date)}</strong><span>${account.id === 'bito' ? 'Bito' : '證券'}</span><b>${formatMoney(point.value)}</b></div>`)).join('')}</div>`) : ''}
-    </div>
+    </div>`}
   </section>`;
 }
 
-function renderInvestmentAnalysis(state, workspace) {
-  const investmentAsset = investmentAccountValues(state).reduce((sum, account) => sum + account.balance, 0);
-  const maxFlow = Math.max(1, ...workspace.investmentGroups.flatMap(group => [group.contributed, group.withdrawn]));
-  const maxSeries = Math.max(1, ...workspace.investmentSeries.flatMap(row => [row.contributed, row.withdrawn]));
-  const costGroups = Object.values(workspace.investmentCostTransactions.reduce((result, row) => {
-    const name = row.type === 'transfer' ? '交易手續費' : row.subcategory || '其他投資支出';
-    const current = result[name] || { subcategory: name, amount: 0, count: 0, percent: 0 };
-    return { ...result, [name]: { ...current, amount: current.amount + expenseAmount(row), count: current.count + 1 } };
-  }, {})).map(group => ({ ...group, percent: workspace.investmentCost ? Math.round(group.amount / workspace.investmentCost * 100) : 0 }))
-    .toSorted((left, right) => right.amount - left.amount);
-  return `<section class="analysis-section-panel investment-analysis" aria-label="投資分析">
-    ${renderInvestmentAssetAnalysis(state, workspace.observedRange || workspace.range)}
-    <div class="analysis-block-head"><div><h2>投資資金</h2><small>本金流向與投資收支分開查看</small></div></div>
-    ${analysisMetricStrip([
-      { label: '目前投資資產', value: formatMoney(investmentAsset) },
-      { label: '本期投入', value: formatMoney(workspace.investmentFlows.contributed) },
-      { label: '本期領回', value: formatMoney(workspace.investmentFlows.withdrawn) },
-      { label: '淨投入', value: formatMoney(workspace.investmentFlows.net, { showPlus: true }) },
-    ], '投資摘要')}
-    <div class="analysis-focus-block"><div class="analysis-block-head"><div><strong>投資流向</strong><small>投入／領回</small></div></div>
-<div class="analysis-upgrade-legend"><span class="contributed">投入</span><span class="withdrawn">領回</span></div><div class="analysis-investment-series" style="--points:${workspace.investmentSeries.length}">${workspace.investmentSeries.map((row, index) => `<button type="button" data-analysis-drill="investment" data-date="${row.key}" aria-label="${escapeHtml(row.label)} 投入 ${formatMoney(row.contributed)}，領回 ${formatMoney(row.withdrawn)}"><span><i class="in" style="height:${Math.round(row.contributed / maxSeries * 100)}%"></i><i class="out" style="height:${Math.round(row.withdrawn / maxSeries * 100)}%"></i></span><small>${row.key.length === 7 ? `${Number(row.key.slice(5))}月` : workspace.investmentSeries.length <= 7 || index % 5 === 0 || index === workspace.investmentSeries.length - 1 ? Number(row.key.slice(8)) : ''}</small></button>`).join('')}</div>
-${analysisChartValues('investment-flow-values', workspace.investmentSeries.map(row => `<div><strong>${escapeHtml(row.label)}</strong><button type="button" data-analysis-drill="investment" data-date="${row.key}">投入 ${formatMoney(row.contributed)}<small>領回 ${formatMoney(row.withdrawn)}</small></button></div>`).join(''))}
-    </div>
-    <div class="analysis-focus-block"><div class="analysis-block-head"><div><strong>資產細分類</strong><small>點選查看投資交易</small></div></div><div class="investment-flow-list">${workspace.investmentGroups.length ? workspace.investmentGroups.map(group => `<button type="button" data-analysis-drill="investment" data-subcategory="${escapeHtml(group.subcategory)}" class="investment-flow-row"><div><strong>${escapeHtml(group.subcategory)}</strong><small>${group.count} 筆</small></div><span><small>投入</small><strong>${formatMoney(group.contributed)}</strong></span><span><small>領回</small><strong>${formatMoney(group.withdrawn)}</strong></span><span><small>淨投入</small><strong>${formatMoney(group.net, { showPlus: true })}</strong></span><div class="investment-split-bar"><i class="in" style="width:${Math.round(group.contributed / maxFlow * 100)}%"></i><i class="out" style="width:${Math.round(group.withdrawn / maxFlow * 100)}%"></i></div></button>`).join('') : emptyState('本期沒有投資流向')}</div></div>
-    <div class="analysis-focus-block"><div class="analysis-block-head"><div><strong>投資收入</strong><small>股息、配息與利息</small></div><b>${formatMoney(workspace.investmentIncome?.amount || 0)}</b></div><div class="analysis-ranked-bars">${workspace.investmentIncome?.children?.length ? rankedBarRows(workspace.investmentIncome.children, { key: 'subcategory', drillType: 'income', category: '投資' }) : emptyState('本期沒有投資收入')}</div></div>
-    <div class="analysis-focus-block"><div class="analysis-block-head"><div><strong>投資相關支出</strong><small>手續費、稅與工具課程</small></div><b>${formatMoney(workspace.investmentCost)}</b></div><div class="analysis-ranked-bars">${costGroups.length ? rankedBarRows(costGroups, { key: 'subcategory', drillType: 'expense', category: '投資' }) : emptyState('本期沒有投資相關支出')}</div></div>
-    ${workspace.investmentCostTransactions.length ? `<div class="transaction-list compact">${rowsForState(state, expenseDisplayTransactions(workspace.investmentCostTransactions))}</div>` : ''}
-  </section>`;
-}
 
 export function renderInsights(state, month, options = {}) {
   const today = todayInTaipei();
@@ -741,6 +602,9 @@ export function renderInsights(state, month, options = {}) {
     selectedDate: rawFilters.selectedDate ?? rawFilters.date ?? '',
     anchorDate: rawFilters.anchorDate || today,
     compareSubcategories: rawFilters.compareSubcategories || [],
+    chartMode: rawFilters.chartMode || '',
+    tool: rawFilters.tool || '',
+    assetAccount: rawFilters.assetAccount || 'all',
   };
   const period = ['week', 'month', 'year'].includes(filters.period) ? filters.period : 'month';
   const anchorDate = /^\d{4}-\d{2}-\d{2}$/.test(filters.anchorDate) ? filters.anchorDate : today;
@@ -756,8 +620,9 @@ export function renderInsights(state, month, options = {}) {
     budgets: state.budgets || [],
     accounts: state.accounts || [],
     reconciliations: state.featureSettings?.reconciliations || [],
+    includeAdvanced: Boolean(filters.tool || (filters.chartMode && filters.chartMode !== 'current')),
   });
-  const dailyTotalsByDate = dailyNetByDate(workspace.scoped);
+  const dailyTotalsByDate = dailyNetByDate(workspace.periodRows);
   const selectedDate = workspace.selectedDay?.date || '';
   const periodTabs = [['week', '本週'], ['month', '本月'], ['year', '本年']]
     .map(([value, label]) => `<button type="button" data-insight-period="${value}" aria-pressed="${period === value}">${label}</button>`)
@@ -814,20 +679,14 @@ export function renderInsights(state, month, options = {}) {
     : period === 'month'
       ? `<div class="analysis-cal-weekdays" aria-hidden="true"><span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span></div><div class="analysis-cal-grid" role="group" aria-label="月曆，點選單日">${calendarCells}</div>`
       : `<div class="analysis-year-months" role="group" aria-label="各月收支">${yearMonths}</div>`;
-  const accountNames = Object.fromEntries((state.accounts || []).map(account => [account.id, account.name]));
-  const currentBudgetProgress = period === 'month' && month === today.slice(0, 7)
-    ? calculateBudgetProgress(state.budgets || [], state.transactions || [], month)
-    : [];
   const sectionTabs = [
     ['overview', '總覽'], ['expense', '支出'], ['income', '收入'], ['investment', '投資'],
   ].map(([value, label]) => `<button type="button" data-insight-section="${value}" aria-label="${label}分析" aria-pressed="${filters.section === value}">${label}</button>`).join('');
-  const sectionContent = filters.section === 'expense'
-    ? renderCategoryAnalysis(state, workspace, 'expense', filters, accountNames, currentBudgetProgress)
-    : filters.section === 'income'
-      ? renderCategoryAnalysis(state, workspace, 'income', filters, accountNames, [])
-      : filters.section === 'investment'
-        ? renderInvestmentAnalysis(state, workspace)
-        : renderOverviewAnalysis(workspace, periodLabel);
+  const sectionContent = renderAnalysisWorkbench(state, workspace, filters, {
+    categoryMark,
+    transactions: (rows, type) => rowsForState(state, type === 'expense' ? expenseDisplayTransactions(rows) : rows, { hideActions: true }),
+    assets: assetFilters => renderInvestmentAssetAnalysis(state, workspace.observedRange, assetFilters),
+  });
   return `<section class="view insights-view" aria-labelledby="insights-title">
     <h1 id="insights-title" class="visually-hidden">趨勢</h1>
     <section class="daily-analysis-shell">
@@ -842,7 +701,6 @@ export function renderInsights(state, month, options = {}) {
       <div class="analysis-section-tabs" role="group" aria-label="分析類型">${sectionTabs}</div>
       ${filters.category ? `<nav class="analysis-filter-breadcrumb" aria-label="目前分析篩選"><button type="button" data-insight-category="">全部分類</button><span aria-hidden="true">/</span>${filters.subcategory ? `<button type="button" data-insight-subcategory="">${escapeHtml(filters.category)}</button><span aria-hidden="true">/</span><span>${escapeHtml(filters.subcategory)}</span>` : `<span>${escapeHtml(filters.category)}</span>`}</nav>` : ''}
       ${sectionContent}
-      ${renderAnalysisUpgrades(state, workspace, filters)}
     </section>
   </section>`;
 }
