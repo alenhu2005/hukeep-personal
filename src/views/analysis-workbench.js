@@ -1,6 +1,7 @@
 import { escapeHtml, formatCompactMoney, formatMoney, formatDate } from '../format.js';
 import { analysisDisclosure, renderAnalysisTool } from './analysis-upgrades.js';
 import { CATEGORY_TONES } from '../config.js';
+import { buildAssetHistory } from '../domain/asset-history.js';
 
 const money = value => formatMoney(value);
 const signed = value => formatMoney(value, { showPlus: true });
@@ -84,23 +85,30 @@ function chart(rows, series, label, fields = {}, options = {}) {
   if (!rows.length) return empty('這個期間尚無圖表資料。');
   const values = rows.flatMap(row => series.map(item => Number(row[item.field]) || 0));
   if (options.referenceValue > 0) values.push(options.referenceValue);
-  const low = Math.min(0, ...values), high = Math.max(1, ...values);
+  const minimum = Math.min(...values), maximum = Math.max(...values);
+  const padding = Math.max(1, (maximum - minimum) * .15, Math.abs(maximum) * .01);
+  const low = options.line ? minimum - padding : Math.min(0, ...values);
+  const high = options.line ? maximum + padding : Math.max(1, ...values);
+  const axisLabel = value => options.line
+    ? new Intl.NumberFormat('zh-TW', { notation: Math.abs(value) >= 10000 ? 'compact' : 'standard', maximumSignificantDigits: 4 }).format(Math.round(value))
+    : formatCompactMoney(Math.round(value));
   const y = value => 180 - (value - low) / (high - low) * 158;
   const width = 532 / rows.length;
   const ticks = options.allTicks && rows.length <= 12
     ? rows.map((_, index) => index)
     : [...new Set([0, Math.floor((rows.length - 1) / 2), rows.length - 1])];
-  const initial = Math.max(0, rows.findLastIndex(row => series.some(item => row[item.field])));
-  const model = { rows, series, fields, style: 'bar' };
+  const initial = options.line ? rows.length - 1 : Math.max(0, rows.findLastIndex(row => series.some(item => row[item.field])));
+  const model = { rows, series, fields, style: options.line ? 'line' : 'bar' };
+  const lineX = index => rows.length <= 1 ? 362 : 96 + index * 532 / (rows.length - 1);
   const refLine = options.referenceValue > 0
     ? `<line x1="96" x2="628" y1="${y(options.referenceValue)}" y2="${y(options.referenceValue)}" class="workbench-avg-line"/>`
     : '';
   return `<div class="workbench-chart" data-chart-model="${escapeHtml(JSON.stringify(model))}">
     <div class="workbench-legend">${series.map(item => `<span style="--series-color:${item.color}"><i></i>${escapeHtml(item.label)}</span>`).join('')}${options.referenceValue > 0 ? `<span class="is-dashed" style="--series-color:var(--ink-soft)"><i></i>${escapeHtml(options.referenceLabel || '平均')} ${money(options.referenceValue)}</span>` : ''}</div>
     <svg class="workbench-time-chart" viewBox="0 0 640 220" role="img" aria-label="${escapeHtml(label)}；可用下方日期選擇器查看數字">
-      ${[low, (low + high) / 2, high].map(value => `<line x1="96" x2="628" y1="${y(value)}" y2="${y(value)}" class="workbench-grid"/><text x="86" y="${y(value) + 7}" text-anchor="end">${formatCompactMoney(Math.round(value))}</text>`).join('')}
+      ${[low, (low + high) / 2, high].map(value => `<line x1="96" x2="628" y1="${y(value)}" y2="${y(value)}" class="workbench-grid"/><text x="86" y="${y(value) + 7}" text-anchor="end">${axisLabel(value)}</text>`).join('')}
       ${refLine}
-      ${rows.map((row, index) => series.map((item, part) => {
+      ${options.line ? series.map(item => `<polyline points="${rows.map((row, index) => `${lineX(index)},${y(row[item.field])}`).join(' ')}" fill="none" stroke="${item.color}" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>${rows.map((row, index) => `<circle cx="${lineX(index)}" cy="${y(row[item.field])}" r="3" fill="${item.color}"><title>${escapeHtml(row.longLabel)} ${money(row[item.field])}</title></circle>`).join('')}`).join('') : rows.map((row, index) => series.map((item, part) => {
         const value = row[item.field] || 0;
         const barX = 96 + index * width + width * (.1 + part * .8 / series.length);
         const barW = Math.max(2, width * .72 / series.length);
@@ -108,8 +116,8 @@ function chart(rows, series, label, fields = {}, options = {}) {
         const barH = Math.abs(y(value) - y(0));
         return `<rect x="${barX}" y="${barY}" width="${barW}" height="${barH}" rx="2.5" fill="${item.color}"${row.partial ? ' fill-opacity="0.58" stroke-dasharray="3 2"' : ''}/>`;
       }).join('')).join('')}
-      <line class="workbench-chart-marker" x1="${96 + (initial + .5) * width}" x2="${96 + (initial + .5) * width}" y1="18" y2="184"/>
-      ${ticks.map(index => `<text x="${96 + (index + .5) * width}" y="212" text-anchor="${ticks.length > 3 ? 'middle' : index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'}">${escapeHtml(rows[index].tick || rows[index].label)}</text>`).join('')}
+      <line class="workbench-chart-marker" x1="${options.line ? lineX(initial) : 96 + (initial + .5) * width}" x2="${options.line ? lineX(initial) : 96 + (initial + .5) * width}" y1="18" y2="184"/>
+      ${ticks.map(index => `<text x="${options.line ? lineX(index) : 96 + (index + .5) * width}" y="212" text-anchor="${ticks.length > 3 ? 'middle' : index === 0 ? 'start' : index === rows.length - 1 ? 'end' : 'middle'}">${escapeHtml(rows[index].tick || rows[index].label)}</text>`).join('')}
     </svg>
     <label class="workbench-date-picker"><span>${escapeHtml(options.pickerLabel || '檢視日期')}</span><select data-chart-point aria-label="${escapeHtml(label)}日期">${rows.map((row, index) => `<option value="${index}"${index === initial ? ' selected' : ''}>${escapeHtml(row.label)}</option>`).join('')}</select></label>
     <div class="workbench-chart-readout" aria-live="polite">${pointMarkup(rows[initial], series, fields)}</div>
@@ -240,7 +248,27 @@ function overviewChart(workspace, filters) {
   return `<div class="workbench-block"><div class="workbench-heading"><h3>收支走勢</h3>${modeButtons({ ...filters, chartMode: mode }, modes)}</div>${body}</div>`;
 }
 
-function overview(workspace, filters) {
+function assetHistory(state, workspace, stocks = false) {
+  const label = stocks ? '股票資產變化' : '總資產變化';
+  const field = stocks ? 'stocks' : 'totalAssets';
+  const rows = buildAssetHistory(state, workspace.observedRange, workspace.period);
+  if (!rows.length) return `<section class="workbench-block" aria-label="${label}"><h3>${label}</h3>${empty('此期間尚未開始。')}</section>`;
+  if (stocks && rows[0].stocks == null) return `<section class="workbench-block" aria-label="${label}"><h3>${label}</h3>${empty('尚未設定股票資產帳戶。')}</section>`;
+  const first = rows[0][field], last = rows.at(-1)[field], difference = last - first;
+  const percent = first > 0 ? `（${(difference / first * 100).toFixed(1)}%）` : '';
+  const caption = stocks
+    ? '依市值更新與其後買賣估算；未更新市值前採本金。增減包含投入與領回，並非報酬率。'
+    : '含股票與 Bito，依初始金額、交易與當時市值紀錄估算；帳戶間轉帳不增加總資產。';
+  return `<section class="workbench-block workbench-asset-history" aria-label="${label}">
+    <h3>${label}</h3>
+    ${metrics([['期初', money(first)], ['期末', money(last)]], `${label}摘要`)}
+    <p class="workbench-asset-change">期間增減 <strong class="${difference < 0 ? 'negative' : difference > 0 ? 'positive' : ''}">${signed(difference)}${percent}</strong></p>
+    ${chart(rows, [{ field, label: stocks ? '股票資產' : '總資產', color: 'var(--primary)', noDrill: true }], `${label}折線圖`, {}, { line: true })}
+    <p class="workbench-caption">${caption}</p>
+  </section>`;
+}
+
+function overview(state, workspace, filters) {
   const current = workspace.totals, previous = workspace.previousTotals;
   const movers = workspace.expenseMovers;
   const useMovers = movers?.baselineCount >= 2 && movers.rows.length > 0;
@@ -254,6 +282,7 @@ function overview(workspace, filters) {
     <header class="workbench-heading"><h2>收支總覽</h2><span>${workspace.comparison.elapsedDays} 天${dailyExpense != null ? ` · 日均 ${money(dailyExpense)}` : ''} · 儲蓄率 ${workspace.savingsRate == null ? '—' : `${workspace.savingsRate}%`}</span></header>
     <div class="workbench-balance workbench-overview-balance"><span>生活結餘</span><strong class="${workspace.balance < 0 ? 'negative' : 'positive'}">${signed(workspace.balance)}</strong><small>${workspace.comparison.hasData ? `較前期 ${signed(workspace.balance - workspace.comparison.balance).replace('NT$ ', '')}` : '無前期紀錄'}</small></div>
     ${metrics(summaryItems, '收支摘要')}
+    ${assetHistory(state, workspace)}
     ${overviewChart(workspace, filters)}
     <div class="workbench-block"><h3>支出變化</h3>${useMovers
       ? `<p class="workbench-caption">${formatDate(movers.window.from)}–${formatDate(movers.window.to)} · 對照前 ${movers.baselineCount} 期同期平均</p>`
@@ -378,6 +407,7 @@ function investment(state, workspace, filters, helpers) {
     <div class="workbench-modes" role="group" aria-label="市值帳戶">${[['all', '全部'], ['investment', '股票'], ['bito', 'Bito']].map(([key, text]) => `<button type="button" data-insight-asset="${key}" aria-pressed="${assetFilter === key}">${text}</button>`).join('')}</div>
     ${modeButtons(filters, [['current', '市值變化'], ['flow', '資金流向']])}
     ${helpers.assets(filters)}
+    ${filters.chartMode === 'flow' || assetFilter === 'bito' ? '' : assetHistory(state, workspace, true)}
     <div class="workbench-block"><h3>投資流向</h3>${metrics([['投入', money(flow.contributed)], ['領回', money(flow.withdrawn)], ['淨投入', signed(flow.net)]], '投資摘要')}
     ${filters.chartMode === 'flow' ? chart(workspace.investmentSeries, [{ field: 'contributed', label: '投入', color: 'var(--amber)' }, { field: 'withdrawn', label: '領回', color: 'var(--muted)' }], '投資流向', { 'analysis-drill': 'investment' }) : ''}</div>
     ${workspace.investmentGroups.length ? analysisDisclosure('investment-categories', '資金細分類', `${workspace.investmentGroups.length} 種資產`, `<div class="workbench-changes">${workspace.investmentGroups.map(group => `<button type="button" data-analysis-drill="investment" data-subcategory="${escapeHtml(group.subcategory)}"><span>${escapeHtml(group.subcategory)}<small>投入 ${money(group.contributed)} · 領回 ${money(group.withdrawn)}</small></span><strong>${signed(group.net)}</strong></button>`).join('')}</div>`) : ''}
@@ -390,5 +420,5 @@ function investment(state, workspace, filters, helpers) {
 export function renderAnalysisWorkbench(state, workspace, filters, helpers) {
   if (filters.section === 'investment') return investment(state, workspace, filters, helpers);
   if (filters.section === 'expense' || filters.section === 'income') return category(state, workspace, filters, helpers);
-  return overview(workspace, filters);
+  return overview(state, workspace, filters);
 }

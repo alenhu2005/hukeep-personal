@@ -582,11 +582,11 @@ function renderInvestmentAssetAnalysis(state, range, filters = {}) {
       <small>投資占比 ${total ? Math.round(Math.max(0, account.balance) / total * 100) : 0}%</small>
       <button type="button" data-open-investment-valuation="${account.id}">更新市值</button>
     </div>`).join('')}</div>
-    ${filters.chartMode === 'flow' ? '' : `<div class="analysis-focus-block"><div class="analysis-block-head"><div><strong>市值紀錄走勢</strong><small>僅連接實際更新點；資產增減不等於投資損益</small></div></div>
+    ${filters.chartMode === 'flow' || filters.assetAccount !== 'bito' ? '' : `<div class="analysis-focus-block"><div class="analysis-block-head"><div><strong>市值紀錄走勢</strong><small>僅連接實際更新點；資產增減不等於投資損益</small></div></div>
     ${points.length ? `<svg class="investment-value-chart" viewBox="0 0 620 190" role="img" aria-label="股票與虛擬貨幣市值紀錄折線圖"><text x="4" y="16">${escapeHtml(formatCompactMoney(max))}</text><text x="10" y="154">0</text><path class="chart-axis" d="M36 20 V150 H584"/>${accounts.map(account => `<g class="${account.id === 'bito' ? 'crypto' : 'securities'}"><polyline points="${account.points.map(point => `${x(point)},${y(point)}`).join(' ')}"/>${account.points.map(point => `<circle cx="${x(point)}" cy="${y(point)}" r="4"><title>${escapeHtml(account.name)} ${escapeHtml(point.date)} ${formatMoney(point.value)}</title></circle>`).join('')}</g>`).join('')}<text x="36" y="182">${escapeHtml(range.from.slice(5).replace('-', '/'))}</text><text x="584" y="182" text-anchor="end">${escapeHtml(range.to.slice(5).replace('-', '/'))}</text></svg>` : emptyState('本期尚無市值紀錄', '更新股票或 Bito 市值後，就會在這裡累積走勢。')}
     <div class="investment-value-changes">${accounts.map(account => `<p><strong>${account.id === 'bito' ? 'Bito' : '證券'}</strong><span>紀錄間增減 ${account.change == null ? '—' : formatMoney(account.change, { showPlus: true })}</span><small>${account.points.length >= 2 ? `${escapeHtml(formatDate(account.points[0].date))} → ${escapeHtml(formatDate(account.points.at(-1).date))}` : '至少需兩次市值紀錄'}</small></p>`).join('')}</div>
-    ${points.length ? analysisDisclosure('investment-valuations', '查看市值紀錄', `${points.length} 個更新點`, `<div class="analysis-chart-table">${accounts.flatMap(account => account.points.map(point => `<div><strong>${escapeHtml(point.date)}</strong><span>${account.id === 'bito' ? 'Bito' : '證券'}</span><b>${formatMoney(point.value)}</b></div>`)).join('')}</div>`) : ''}
     </div>`}
+    ${points.length ? analysisDisclosure('investment-valuations', '查看市值紀錄', `${points.length} 個更新點`, `<div class="analysis-chart-table">${accounts.flatMap(account => account.points.map(point => `<div><strong>${escapeHtml(point.date)}</strong><span>${account.id === 'bito' ? 'Bito' : '證券'}</span><b>${formatMoney(point.value)}</b></div>`)).join('')}</div>`) : ''}
   </section>`;
 }
 

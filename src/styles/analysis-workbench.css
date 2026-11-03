@@ -31,6 +31,9 @@
 .workbench-modes button { flex: 1 1 auto; min-width: max-content; min-height: 44px; padding: 8px 6px; border: 0; border-radius: 8px; color: var(--ink-soft); background: transparent; font-size: 12.5px; white-space: nowrap; }
 .workbench-modes button[aria-pressed='true'] { background: var(--surface); color: var(--primary); font-weight: 700; box-shadow: var(--shadow-sm); }
 .workbench-chart { display: grid; gap: 8px; min-width: 0; }
+.workbench-asset-change { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; margin: 0; color: var(--ink-soft); font-size: 13px; }
+.workbench-asset-change strong { color: var(--ink); font-size: 16px; font-variant-numeric: tabular-nums; }
+.workbench-asset-history .workbench-time-chart { max-width: 640px; margin-inline: auto; }
 .workbench-time-chart { display: block; width: 100%; height: auto; overflow: visible; touch-action: pan-y; cursor: pointer; }
 .workbench-time-chart text { fill: var(--ink-soft); font-size: 26px; font-variant-numeric: tabular-nums; }
 .workbench-grid { stroke: var(--line); stroke-width: 1; }
