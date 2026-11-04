@@ -1,6 +1,6 @@
 import { calculateAccountBalances, calculateTotalAssets } from './insights.js';
 import { investmentAccountValues } from './investment-valuation.js';
-import { INVESTMENT_ACCOUNT_ID, isInvestmentAccount } from './investment-accounting.js';
+import { BITO_ACCOUNT, INVESTMENT_ACCOUNT_ID, isInvestmentAccount } from './investment-accounting.js';
 
 function date(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return null;
@@ -28,7 +28,8 @@ export function buildAssetHistory(state, range, period = 'month') {
         ? `${cursor.getUTCMonth() + 1}月`
         : `${cursor.getUTCMonth() + 1}/${cursor.getUTCDate()}`;
       rows.push({ key, label, longLabel: `${key}${opening ? '（期初）' : '（日終）'}`,
-        totalAssets: liquid + calculateTotalAssets(investments),
+        totalAssets: liquid + calculateTotalAssets(investments), liquid,
+        cryptoBalance: investments.find(account => account.id === BITO_ACCOUNT.id)?.balance ?? 0,
         stocks: stocks?.balance ?? null,
         stockValued: Boolean(stocks?.checkpoint),
       });

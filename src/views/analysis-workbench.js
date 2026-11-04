@@ -54,6 +54,10 @@ function pointRange(point, field) {
 }
 
 function pointMarkup(point, series, fields) {
+  const detail = series[0]?.field === 'totalAssets'
+    ? `流動資產 ${money(point.liquid)} · 股票 ${money(point.stocks ?? 0)} · Bito ${money(point.cryptoBalance)}`
+    : series[0]?.field === 'stocks'
+      ? (point.stockValued ? '依最近市值及其後交易估算' : '依帳面本金估算') : '';
   return `<span class="workbench-point-date">${escapeHtml(point.longLabel || point.label)}${point.partial ? '（進行中）' : ''}</span><div>${series.map(item => {
     const value = point[item.field];
     if (value == null && item.optional) return '';
@@ -62,7 +66,7 @@ function pointMarkup(point, series, fields) {
     }
     const rangeAttrs = pointRange(point, item.field);
     return `<button type="button" ${attrs({ 'analysis-drill': item.kind || fields['analysis-drill'], ...fields, ...(item.fields || {}), ...rangeAttrs })}><span style="--series-color:${item.color}"><i></i>${escapeHtml(item.label)}</span><strong>${money(value || 0)}</strong></button>`;
-  }).filter(Boolean).join('')}</div>`;
+  }).filter(Boolean).join('')}</div>${detail ? `<small class="workbench-caption">${detail}</small>` : ''}`;
 }
 
 export function updateAnalysisChartPoint(chart, index) {

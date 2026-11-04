@@ -36,6 +36,7 @@ describe('資產歷史折線圖', () => {
     expect(rows.map(item => item.stocks)).toEqual([10000, 10000, 16000, 16000]);
     expect(rows.map(item => item.totalAssets)).toEqual([30500, 30500, 35500, 35800]);
     expect(rows[2].stockValued).toBe(true);
+    for (const point of rows) expect(point.totalAssets).toBe(point.liquid + point.stocks + point.cryptoBalance);
   });
 
   it('繼承期初前最近市值，賣出與跨銀行轉帳守恆，內扣手續費只扣一次', () => {

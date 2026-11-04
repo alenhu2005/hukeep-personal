@@ -38,7 +38,7 @@ export function investmentAccountValues(state, through) {
 }
 
 export function investmentAssetHistory(state, range) {
-  return investmentAccountValues(state).map(account => {
+  return investmentAccountValues(state, range.to).map(account => {
     const byDate = new Map();
     (state.featureSettings?.reconciliations || [])
       .filter(item => item.accountId === account.id && validDate(item.date)

@@ -134,7 +134,7 @@ describe('總覽', () => {
     const html = renderInsights(state, '2026-09', { insightFilters: {
       period: 'month', section: 'investment', selectedDate: '', anchorDate: '2026-09-30',
     } });
-    expect(html).toContain('目前投資資產');
+    expect(html).toContain('期間末投資資產');
     expect(html).toContain('NT$ 1,200');
   });
 });

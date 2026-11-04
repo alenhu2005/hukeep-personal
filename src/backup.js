@@ -4,7 +4,7 @@ const APP_ID = 'hukeep-personal';
 
 function protectFormula(value) {
   const text = String(value ?? '');
-  return /^[=+\-@]/.test(text) ? `'${text}` : text;
+  return /^\s*[=+\-@]/.test(text) ? `'${text}` : text;
 }
 
 function csvCell(value) {

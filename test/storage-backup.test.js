@@ -66,9 +66,10 @@ describe('ledger repository', () => {
     expect(repository.load().transactions).toHaveLength(1);
   });
 
-  it('遇到壞掉的 JSON 時安全回復空狀態', () => {
-    const repository = createLedgerRepository(createMemoryStorage({ [STORAGE_KEY]: '{bad' }));
-    expect(repository.load()).toEqual(createEmptyState());
+  it('帳本損毀時停止載入並保留原始資料', () => {
+    const storage = createMemoryStorage({ [STORAGE_KEY]: '{bad' });
+    expect(() => createLedgerRepository(storage).load()).toThrow();
+    expect(storage.getItem(STORAGE_KEY)).toBe('{bad');
   });
 
   it('把舊版通用銀行與信用卡轉成客製帳戶且保留紀錄', () => {
@@ -345,6 +346,7 @@ describe('備份', () => {
 
   it('CSV 會處理逗號、引號與公式注入', () => {
     const csv = transactionsToCsv(state.transactions);
+    expect(transactionsToCsv([{ name: '  =1+1' }])).toContain("'  =1+1");
     expect(csv).toContain('類型,名稱,金額,手續費,分類,帳戶,目的帳戶,日期,備註');
     expect(csv).toContain('expense,午餐,120');
     expect(csv).toContain("\"'=SUM(1,2) 「午餐」\"");

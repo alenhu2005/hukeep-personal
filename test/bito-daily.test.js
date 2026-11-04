@@ -57,7 +57,7 @@ describe('Bito 與證券分開計價', () => {
     ];
     const rows = investmentAssetHistory(state, { from: '2026-10-01', to: '2026-10-21' });
     expect(rows.find(account => account.id === 'investment').points).toEqual([]);
-    expect(rows.find(account => account.id === 'bito')).toMatchObject({ change: 300,
+    expect(rows.find(account => account.id === 'bito')).toMatchObject({ balance: 1500, change: 300,
       points: [{ date: '2026-10-02', value: 1200 }, { date: '2026-10-10', value: 1500 }] });
   });
 

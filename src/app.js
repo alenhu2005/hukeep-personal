@@ -151,10 +151,30 @@ export function createApp() {
     deviceBinding.remember(incomingDeviceBinding);
     history.replaceState(null, '', `${location.pathname}${location.search}#overview`);
   }
-  let state = repository.load();
+  let state;
+  try {
+    state = repository.load();
+  } catch {
+    const panel = document.createElement('main');
+    panel.className = 'panel';
+    panel.innerHTML = '<h1>無法讀取本機帳本</h1><p role="status">記帳與同步已暫停。可先下載原始資料，再重新開啟。</p><button type="button" data-export>下載原始資料</button> <button type="button" data-retry>重新讀取</button>';
+    document.body.replaceChildren(panel);
+    panel.querySelector('[data-retry]').onclick = () => location.reload();
+    panel.querySelector('[data-export]').onclick = () => {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw == null) throw new Error();
+        downloadText('小帳-本機原始資料.txt', raw, 'text/plain');
+      } catch {
+        panel.querySelector('[role="status"]').textContent = '目前無法讀取原始資料，請先確認瀏覽器允許本機儲存。';
+      }
+    };
+    return;
+  }
   let view = safeViewFromHash();
   let selectedMonth = todayInTaipei().slice(0, 7);
-  let historyFilters = { query: '', type: '', category: '', subcategory: '', account: '', preset: 'all', monthScope: 'month' };
+  const defaultHistoryFilters = { query: '', type: '', category: '', subcategory: '', account: '', preset: 'all', monthScope: 'month' };
+  let historyFilters = { ...defaultHistoryFilters };
   let historySelection = { enabled: false, ids: [] };
   const deletedDuringSession = new Set();
   let insightFilters = {
@@ -907,7 +927,7 @@ export function createApp() {
         ? '已先儲存在本機，正在背景同步；若離線會在恢復連線後自動上傳'
         : '已先儲存在本機，綁定 Sheet 後會自動上傳',
     });
-    showToast(`已先記下 ${localTransactions.length} 筆，網路恢復後會自動上傳。`);
+    showToast(`已記下 ${localTransactions.length} 筆${credentials.bound ? '，將自動同步。' : '，已存在本機。'}`);
     if (!credentials.bound) {
       schedulePendingSheetSync();
       return;
@@ -1430,7 +1450,7 @@ export function createApp() {
       return;
     }
     if (target.dataset.historyPreset) {
-      historyFilters = { ...historyFilters, preset: target.dataset.historyPreset };
+      historyFilters = { ...(target.dataset.goView ? defaultHistoryFilters : historyFilters), preset: target.dataset.historyPreset };
       if (target.dataset.goView) {
         const targetMonth = latestPresetMonth(state.transactions, target.dataset.historyPreset);
         if (targetMonth) selectedMonth = targetMonth;
@@ -1465,6 +1485,7 @@ export function createApp() {
       render();
       return;
     }
+    if (target.dataset.goView === 'history') historyFilters = { ...defaultHistoryFilters };
     if (target.dataset.goView) navigate(target.dataset.goView);
     if (target.dataset.detailId) {
       openTransactionDetail(target.dataset.detailId);
@@ -1488,22 +1509,14 @@ export function createApp() {
   }
 
   function handleHistoryFilters(event) {
-    if (event.target.id !== 'history-search') return;
-    historyFilters = {
-      query: document.querySelector('#history-search')?.value || '',
-      type: historyFilters.type,
-      category: historyFilters.category,
-      subcategory: historyFilters.subcategory,
-      account: historyFilters.account,
-      preset: historyFilters.preset,
-      monthScope: historyFilters.monthScope,
-    };
+    const field = event.target;
+    if (field.id !== 'history-search' || event.isComposing || field.value === historyFilters.query) return;
+    const { selectionStart, selectionEnd } = field;
+    historyFilters = { ...historyFilters, query: field.value };
     render();
-    if (event.target.id === 'history-search') {
-      const input = document.querySelector('#history-search');
-      input?.focus();
-      input?.setSelectionRange(input.value.length, input.value.length);
-    }
+    const input = document.querySelector('#history-search');
+    input?.focus();
+    input?.setSelectionRange(selectionStart, selectionEnd);
   }
 
   function saveBudget(event) {
@@ -1864,7 +1877,6 @@ export function createApp() {
 
   async function syncPendingSheetChanges() {
     const changes = readPendingSheetChanges();
-    const stateAtRequest = repository.load();
     let completed = false;
     const credentials = proxySession();
     if (
@@ -1880,6 +1892,7 @@ export function createApp() {
     sheetWriteInFlight = true;
     setSyncStatus('syncing');
     try {
+      const stateAtRequest = repository.load();
       await syncLedgerChangesToSheet({ ...credentials, state: stateAtRequest, changes });
       if (!writePendingSheetChanges(acknowledgePendingSheetChanges(
         readPendingSheetChanges(), changes, stateAtRequest, repository.load(),
@@ -1901,7 +1914,7 @@ export function createApp() {
       return false;
     } finally {
       sheetWriteInFlight = false;
-      if (completed && state !== stateAtRequest && hasPendingSheetChanges(readPendingSheetChanges())) {
+      if (completed && hasPendingSheetChanges(readPendingSheetChanges())) {
         // A local edit landed while this request was in flight. Drain it
         // immediately after the response so it cannot sit behind the normal
         // debounce window (and never gets folded into a duplicate retry).
@@ -2297,7 +2310,7 @@ export function createApp() {
     document.querySelector('#voice-review').hidden = true;
   });
   document.querySelector('#voice-transcript').addEventListener('keydown', event => {
-    if (event.key === 'Enter') {
+    if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) {
       event.preventDefault();
       submitSpokenEntry(event.currentTarget.value);
     }
@@ -2341,7 +2354,7 @@ export function createApp() {
 
   window.addEventListener('storage', event => {
     if (event.key !== STORAGE_KEY || !event.newValue) return;
-    state = repository.load();
+    try { state = repository.load(); } catch { location.reload(); return; }
     const aligned = resolveAlignedReconciliations(state);
     if (aligned !== state) persist(aligned);
     applyTheme();

@@ -150,12 +150,12 @@ export function normalizeLedgerState(value) {
 export function createLedgerRepository(storage, key = STORAGE_KEY) {
   return {
     load() {
-      try {
-        const text = storage.getItem(key);
-        return text ? normalizeLedgerState(JSON.parse(text)) : createEmptyState();
-      } catch {
-        return createEmptyState();
-      }
+      const text = storage.getItem(key);
+      if (text == null) return createEmptyState();
+      const stored = JSON.parse(text);
+      if (!stored || typeof stored !== 'object' || Array.isArray(stored)
+        || !Array.isArray(stored.transactions)) throw new Error('無法辨識本機帳本');
+      return normalizeLedgerState(stored);
     },
     save(state) {
       const normalized = normalizeLedgerState(state);
