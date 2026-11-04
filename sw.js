@@ -1,5 +1,5 @@
-const CACHE_NAME = 'hukeep-personal-shell-v2';
-const APP_SHELL = ['./', './manifest.json', './icons/icon.svg'];
+const CACHE_NAME = 'hukeep-personal-shell-assets/index-DhZJEx01.css-assets/index-B8cV1grQ.js';
+const APP_SHELL = ['./', './manifest.json', './icons/icon.svg', "./assets/index-DhZJEx01.css", "./assets/index-B8cV1grQ.js"];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(APP_SHELL)));
@@ -53,7 +53,7 @@ self.addEventListener('fetch', event => {
   }
 
   event.respondWith(
-    caches.match(request).then(cached => {
+    caches.match(request, { ignoreVary: true }).then(cached => {
       if (cached) return cached;
       return fetch(request).then(response => {
         if (response.ok) {
