@@ -40,8 +40,10 @@ test('投資卡片展開兩帳戶、更新 Bito 市值並查看資產走勢，�
   await page.locator('[data-open-investment-analysis]').click();
   await expect(page).toHaveURL(/#insights$/);
   await expect(page.locator('.investment-asset-cards')).toContainText('2,500');
+  await expect(page.getByRole('region', { name: '股票資產變化', exact: true })).toBeVisible();
+  await page.locator('[data-insight-asset="bito"]').click();
   await expect(page.locator('.investment-value-chart')).toBeVisible();
-  await expect(page.locator('.investment-value-chart circle')).toHaveCount(4);
+  await expect(page.locator('.investment-value-chart circle')).toHaveCount(2);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.locator('.investment-asset-analysis').screenshot({ path: 'test-results/bito-investment-mobile-dark.png', animations: 'disabled' });
   expect(errors).toEqual([]);

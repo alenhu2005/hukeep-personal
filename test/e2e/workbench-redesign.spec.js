@@ -95,7 +95,7 @@ test('篩選可逐項清除，設定可查實際版本與新版提示', async ({
 test('收支總覽緊湊，金額保持完整一行，舊小分類編輯不會被默默更換', async ({ page }) => {
   await openFixture(page);
   const panel = page.locator('.workbench-panel');
-  const chart = panel.locator('.workbench-time-chart');
+  const chart = panel.getByRole('img', { name: '收支走勢；可用下方日期選擇器查看數字', exact: true });
   expect(await chart.evaluate(el => el.getBoundingClientRect().top) - await panel.evaluate(el => el.getBoundingClientRect().top)).toBeLessThan(270);
   expect(await panel.locator('.workbench-metrics dd').evaluateAll(nodes => nodes.every(node => node.getBoundingClientRect().height <= parseFloat(getComputedStyle(node).lineHeight) * 1.1))).toBe(true);
   await page.screenshot({ path: 'test-results/workbench-overview-compact.png', fullPage: true });

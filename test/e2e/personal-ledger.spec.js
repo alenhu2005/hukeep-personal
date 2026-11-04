@@ -385,7 +385,7 @@ test('口語內容直接上傳 Sheet，不等待 AI 審查', async ({ page }) =>
   await page.getByLabel('口語記帳內容').fill('昨天搭高鐵 1490 元刷卡');
   await expect(page.getByRole('button', { name: '解析', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: '直接記帳', exact: true }).click();
-  await expect(page.getByText('已先記下 1 筆，網路恢復後會自動上傳。')).toBeVisible();
+  await expect(page.getByText('已記下 1 筆，將自動同步。')).toBeVisible();
 
   await expect.poll(() => page.evaluate(() =>
     JSON.parse(localStorage.getItem('hukeep_personal_state_v1')).transactions[0]?.name,
@@ -415,7 +415,7 @@ test('未連線時口語記帳先儲存在本機，不顯示上傳失敗', async
   await page.getByLabel('口語記帳內容').fill('現金買早餐 80');
   await page.getByRole('button', { name: '直接記帳', exact: true }).click();
 
-  await expect(page.getByText('已先記下 1 筆，網路恢復後會自動上傳。')).toBeVisible();
+  await expect(page.getByText('已記下 1 筆，已存在本機。')).toBeVisible();
   await expect(page.getByRole('button', { name: '查看 早餐 詳情' })).toBeVisible();
   await expect(page.getByText('同步失敗')).toHaveCount(0);
   const saved = await page.evaluate(() => JSON.parse(
@@ -509,7 +509,7 @@ test('多品項背景上傳失敗仍保留本機交易，之後自動續傳', as
   await page.getByRole('button', { name: '快速記一筆' }).click();
   await page.locator('#voice-transcript').fill('滷肉飯20、貢丸湯30都用現金');
   await page.locator('#voice-submit-button').click();
-  await expect(page.getByText('已先記下 2 筆，網路恢復後會自動上傳。')).toBeVisible();
+  await expect(page.getByText('已記下 2 筆，將自動同步。')).toBeVisible();
   await expect(page.getByRole('button', { name: '查看 滷肉飯 詳情' })).toBeVisible();
   await expect.poll(() => calls).toBe(2);
   await expect(page.getByRole('button', { name: '查看 貢丸湯 詳情' })).toBeVisible();
@@ -582,7 +582,7 @@ test('口語多品項會自動拆單並把各自帳戶直接上傳 Sheet', async
   await page.getByLabel('口語記帳內容').fill('滷肉飯20、貢丸湯三十，滷肉飯用現金支付，另一個用line');
   await page.getByRole('button', { name: '直接記帳', exact: true }).click();
 
-  await expect(page.getByText('已先記下 2 筆，網路恢復後會自動上傳。')).toBeVisible();
+  await expect(page.getByText('已記下 2 筆，將自動同步。')).toBeVisible();
   const saved = await page.evaluate(() =>
     JSON.parse(localStorage.getItem('hukeep_personal_state_v1')).transactions,
   );
@@ -808,6 +808,7 @@ test('預算儲存後會自動同步，切換頁面會立即讀取 Sheet', async
     changes: { budgets: [{ category: '飲食', limit: 4500 }] },
   });
 
+  await page.locator('.budget-editor > summary').click();
   await page.getByLabel('預算分類').selectOption('飲食');
   await page.getByLabel('每月上限').fill('5000');
   await page.getByRole('button', { name: '儲存預算' }).click();

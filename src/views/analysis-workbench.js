@@ -286,8 +286,8 @@ function overview(state, workspace, filters) {
     <header class="workbench-heading"><h2>收支總覽</h2><span>${workspace.comparison.elapsedDays} 天${dailyExpense != null ? ` · 日均 ${money(dailyExpense)}` : ''} · 儲蓄率 ${workspace.savingsRate == null ? '—' : `${workspace.savingsRate}%`}</span></header>
     <div class="workbench-balance workbench-overview-balance"><span>生活結餘</span><strong class="${workspace.balance < 0 ? 'negative' : 'positive'}">${signed(workspace.balance)}</strong><small>${workspace.comparison.hasData ? `較前期 ${signed(workspace.balance - workspace.comparison.balance).replace('NT$ ', '')}` : '無前期紀錄'}</small></div>
     ${metrics(summaryItems, '收支摘要')}
-    ${assetHistory(state, workspace)}
     ${overviewChart(workspace, filters)}
+    ${assetHistory(state, workspace)}
     <div class="workbench-block"><h3>支出變化</h3>${useMovers
       ? `<p class="workbench-caption">${formatDate(movers.window.from)}–${formatDate(movers.window.to)} · 對照前 ${movers.baselineCount} 期同期平均</p>`
       : comparisonNote(workspace)}${(useMovers || workspace.comparison.hasData) && changes.length ? `<div class="workbench-changes">${changes.map(row => {
