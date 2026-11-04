@@ -727,6 +727,7 @@ export function createApp() {
 
   function renderEntryTemplates() {
     const templates = normalizeFeatureSettings(state.featureSettings).templates || [];
+    document.querySelector('#entry-template-menu').hidden = !templates.length || Boolean(transactionForm.elements.id.value);
     document.querySelector('#entry-templates').innerHTML = templates.map(item =>
       `<span><button type="button" data-entry-template="${escapeHtml(item.id)}">${escapeHtml(item.label || item.name)} · ${escapeHtml(formatMoney(item.amount))}</button><button type="button" data-remove-entry-template="${escapeHtml(item.id)}" aria-label="移除 ${escapeHtml(item.label || item.name)} 範本">×</button></span>`,
     ).join('');
@@ -2094,6 +2095,16 @@ export function createApp() {
     const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
     if (!persist({ ...state, preferences: { ...state.preferences, theme } })) return;
     applyTheme();
+  });
+  document.querySelector('#settings-jump').addEventListener('change', event => {
+    const destination = document.getElementById(event.target.value);
+    if (!destination || !toolsDialog.contains(destination)) return;
+    const details = destination.closest('details');
+    if (details) details.open = true;
+    destination.tabIndex = -1;
+    destination.focus({ preventScroll: true });
+    destination.scrollIntoView({ block: 'start' });
+    event.target.value = '';
   });
   document.querySelector('#tools-button').addEventListener('click', () => {
     configureToolsForms();

@@ -546,3 +546,5 @@
   font-size: 12px;
   line-height: 1.65;
 }
+
+.budget-list .budget-daily-limit { font-size: 14px; line-height: 1.45; }

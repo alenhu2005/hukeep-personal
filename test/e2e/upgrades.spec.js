@@ -88,6 +88,7 @@ test('手動表單可儲存範本，重新載入後套用範本', async ({ page 
   await page.getByRole('button', { name: '快速記一筆' }).click();
   const template = page.locator('#entry-templates [data-entry-template]');
   await expect(template).toHaveCount(1);
+  await page.locator('#entry-template-menu > summary').click();
   await template.click();
   const manualEntry = page.locator('#manual-entry');
   if (!(await manualEntry.evaluate(element => element.open))) await manualEntry.locator('summary').click();

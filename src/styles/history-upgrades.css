@@ -203,3 +203,15 @@
     grid-column: 1 / -1;
   }
 }
+
+.history-result-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; border-bottom: 1px solid var(--line); }
+.history-result-head .history-result-meta { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin: 0; padding: 4px 0; border: 0; }
+.history-result-head .history-bulk-toolbar { margin: 0; padding: 2px 0; }
+.history-advanced-filter-fields .filter-chip-scroll { flex-wrap: wrap; }
+@media (max-width: 540px) {
+  .history-view .page-heading { align-items: center; flex-wrap: wrap; gap: 6px; }
+  .history-heading-controls { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 5px; }
+  .history-heading-controls .month-stepper { min-width: 0; margin: 0; }
+  .history-heading-controls .month-stepper button { width: 36px; min-height: 44px; }
+  .history-heading-controls .filter-chip-scroll button { padding-inline: 6px; }
+}

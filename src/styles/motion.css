@@ -3,28 +3,11 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes row-enter {
-  from { opacity: 0; transform: translateX(-5px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-
-@keyframes amount-enter {
-  from { opacity: 0; transform: translateY(4px) scale(0.985); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
 @keyframes toast-enter {
   from { opacity: 0; transform: translateY(12px) scale(0.98); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-.view { animation: view-enter 180ms ease-out both; }
-.transaction-row { animation: row-enter 180ms ease-out both; }
-.transaction-row:nth-child(2) { animation-delay: 25ms; }
-.transaction-row:nth-child(3) { animation-delay: 50ms; }
-.transaction-row:nth-child(4) { animation-delay: 75ms; }
-.transaction-row:nth-child(5) { animation-delay: 100ms; }
-.cashflow-main strong, .asset-total strong { animation: amount-enter 240ms ease-out both; }
 .toast:not([hidden]) { animation: toast-enter 180ms ease-out both; }
 
 .bottom-nav button, .quick-add, .filter-chip-scroll button, .operation-actions button, .settings-list article, .account-item {

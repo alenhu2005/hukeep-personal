@@ -31,11 +31,6 @@
 
       <main id="app-main" tabindex="-1"></main>
 
-      <button id="quick-add-button" class="quick-add" type="button" aria-label="快速記一筆">
-        <span aria-hidden="true">+</span>
-        <span>快速記一筆</span>
-      </button>
-
       <nav class="bottom-nav" aria-label="主要導覽">
         <button type="button" data-nav-view="overview" aria-label="總覽">
           <span class="nav-icon" data-icon="home" aria-hidden="true"></span>
@@ -44,6 +39,10 @@
         <button type="button" data-nav-view="history" aria-label="紀錄">
           <span class="nav-icon" data-icon="list" aria-hidden="true"></span>
           <span>紀錄</span>
+        </button>
+        <button id="quick-add-button" class="quick-add" type="button" aria-label="快速記一筆">
+          <span aria-hidden="true">+</span>
+          <span>記一筆</span>
         </button>
         <button type="button" data-nav-view="budgets" aria-label="預算">
           <span class="nav-icon" data-icon="target" aria-hidden="true"></span>
@@ -60,7 +59,6 @@
       <form id="transaction-form" novalidate>
         <div class="dialog-header">
           <div>
-            <p class="eyebrow">新增流水</p>
             <h2 id="transaction-dialog-title">記一筆</h2>
           </div>
           <button class="icon-button dialog-close" type="button" aria-label="關閉">×</button>
@@ -68,7 +66,7 @@
 
         <input id="transaction-id" name="id" type="hidden" />
         <input id="transaction-type" name="type" type="hidden" value="expense" />
-        <div id="entry-templates" class="entry-templates" aria-label="快速記帳範本"></div>
+
         <button id="discard-entry-draft" class="secondary-button" type="button" hidden>捨棄草稿</button>
 
         <section id="voice-entry" class="voice-entry" aria-labelledby="voice-entry-title">
@@ -83,6 +81,10 @@
           </div>
         </section>
 
+        <details id="entry-template-menu" class="manual-entry" hidden>
+          <summary>快速範本</summary>
+          <div id="entry-templates" class="entry-templates" aria-label="快速記帳範本"></div>
+        </details>
         <details id="manual-entry" class="manual-entry">
           <summary>手動記帳</summary>
           <div class="manual-entry-body">
@@ -159,11 +161,13 @@
     <dialog id="tools-dialog" class="app-dialog tools-dialog">
       <div class="dialog-header">
         <div>
-          <p class="eyebrow">本機工具</p>
           <h2>設定</h2>
         </div>
         <button class="icon-button dialog-close" type="button" aria-label="關閉">×</button>
       </div>
+      <label class="settings-jump">快速前往
+        <select id="settings-jump"><option value="">選擇設定項目</option><option value="automation-title">固定流水</option><option value="reconciliation-title">帳戶對帳</option><option value="sheet-sync-title">Google Sheet 同步</option><option value="backup-settings">備份與匯出</option><option value="opening-balance-title">帳戶初始金額</option><option value="category-rules-title">分類規則</option></select>
+      </label>
       <section class="settings-section" aria-labelledby="automation-title">
         <div class="settings-section-heading">
           <h3 id="automation-title">固定流水</h3>
@@ -240,13 +244,9 @@
           <button id="inspect-pending-sync" class="secondary-button" type="button">查看待上傳項目</button>
         </form>
       </section>
-      <div class="privacy-note">
-        <span aria-hidden="true">●</span>
-        <p><strong>離線優先</strong><br />帳本先存在裝置；只有同步與後台 AI 審查時才會連到你的私人 GAS 與 Sheet。</p>
-      </div>
       <details class="settings-maintenance">
-        <summary>備份、初始金額與分類規則</summary>
-      <p class="tools-intro">紀錄會先儲存在本機，連線後同步到已綁定的 Google Sheet。JSON 可保留完整備份。</p>
+        <summary id="backup-settings">備份、初始金額與分類規則</summary>
+
       <div class="tool-actions">
         <button id="export-json" class="tool-action" type="button">
           <strong>匯出完整備份</strong><span>JSON · 可還原</span>

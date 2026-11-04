@@ -114,3 +114,8 @@
 .workbench-panel .positive, .workbench-day .positive { color: var(--income); }
 .workbench-panel .negative, .workbench-day .negative { color: color-mix(in srgb, var(--expense) 70%, var(--ink)); }
 .workbench-ranking .analysis-ranked-copy > i > b { background: var(--rank-color, var(--primary)); }
+
+/* The heading already names a single asset series. */
+.workbench-asset-history .workbench-legend { display: none; }
+.workbench-asset-history .workbench-readout-item.is-static { min-height: 0; padding-block: 3px; }
+.workbench-asset-history .workbench-chart-readout { padding-block: 6px; }

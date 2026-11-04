@@ -369,7 +369,7 @@ export function renderOverview(state, month) {
       </section>
     </div>
     <section class="panel operations-panel">
-      <div class="section-heading"><h2>待處理</h2><span>點選後開啟紀錄</span></div>
+      <div class="section-heading"><h2>紀錄捷徑</h2></div>
       <div class="operation-actions">
         <button type="button" data-go-view="history" data-history-preset="review">AI 待審 <strong>${pendingReviews}</strong></button>
         <button type="button" data-go-view="history" data-history-preset="attention">需確認 <strong>${attentionCount}</strong></button>
@@ -481,17 +481,18 @@ export function renderHistory(state, month, filters, historySelection = {}) {
           <summary>分類與帳戶${hasAdvancedFilter ? ' · 已套用' : ''}</summary>
           <div class="history-advanced-filter-fields">
             <div class="history-filter-group" role="group" aria-label="篩選分類"><span>分類</span><div class="filter-chip-scroll">${categoryButtons}</div></div>
-            <div class="history-filter-group" role="group" aria-label="篩選帳戶"><span>帳戶</span><div class="filter-chip-scroll">${accountButtons}</div></div>
             ${subcategoryButtons ? `<div class="history-filter-group history-subcategory-group" role="group" aria-label="篩選小分類"><span>小分類</span><div class="filter-chip-scroll">${subcategoryButtons}</div></div>` : ''}
+            <div class="history-filter-group" role="group" aria-label="篩選帳戶"><span>帳戶</span><div class="filter-chip-scroll">${accountButtons}</div></div>
           </div>
         </details>
       </div>
       ${activeBreadcrumb}
+      <div class="history-result-head"><div class="history-result-meta"><strong>${results.length} 筆紀錄</strong><span id="history-filter-status">${filterStatus}</span></div>
       <div class="history-bulk-toolbar" aria-label="批次選取">
         <button type="button" data-bulk-toggle aria-pressed="${selection.enabled}">${selection.enabled ? '完成選取' : '選取紀錄'}</button>
         ${selection.enabled ? `<span aria-live="polite"><strong data-selected-count>${selectedCount}</strong> 筆已選</span><button type="button" data-bulk-edit${selectedCount ? '' : ' disabled'}>批次編輯</button><button type="button" data-bulk-clear${selectedCount ? '' : ' disabled'}>清除</button>` : ''}
       </div>
-      <div class="history-result-meta"><strong>${results.length} 筆紀錄</strong><span id="history-filter-status">${filterStatus}</span></div>
+      </div>
       <div id="history-list" class="transaction-list">${rowsForState(state, results, { selection })}</div>
     </section>
   </section>`;
@@ -509,12 +510,12 @@ export function renderBudgets(state, month) {
   return `<section class="view budgets-view" aria-labelledby="budgets-title">
     <div class="page-heading"><div><p class="eyebrow">${monthLabel(month)}</p><h1 id="budgets-title">預算</h1></div></div>
     <div class="budgets-layout">
-      <form id="budget-form" class="panel budget-form">
-        <h2>新增預算</h2>
+      <details class="panel budget-editor" data-analysis-disclosure="budget-editor"${progress.length ? '' : ' open'}><summary>設定分類預算</summary>
+      <form id="budget-form" class="budget-form">
         <label><span>預算分類</span><select name="category" aria-label="預算分類">${EXPENSE_CATEGORIES.map(category => `<option value="${category}">${category}</option>`).join('')}</select></label>
         <label><span>每月上限</span><div class="inline-money"><small>NT$</small><input name="limit" aria-label="每月上限" type="number" min="1" step="1" inputmode="numeric" placeholder="5,000" required /></div></label>
         <button class="primary-button" type="submit">儲存預算</button>
-      </form>
+      </form></details>
       <section class="panel budget-list-panel">
         <div class="section-heading"><h2>預算清單</h2><span>${progress.length} 個分類</span></div>
         <div class="budget-list">${

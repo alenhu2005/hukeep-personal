@@ -295,18 +295,7 @@ button,
   width: min(calc(100% - 40px), var(--content-width));
   min-height: calc(100vh - 150px);
   margin: 0 auto;
-  padding: 64px 0 128px;
-}
-
-.view {
-  animation: view-in 280ms ease both;
-}
-
-@keyframes view-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
+  padding: 28px 0 calc(88px + env(safe-area-inset-bottom));
 }
 
 @media (prefers-reduced-motion: reduce) {
